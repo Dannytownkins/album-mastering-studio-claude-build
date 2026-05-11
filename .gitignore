@@ -1,0 +1,37 @@
+# Build outputs
+dist/
+build/
+target/
+out/
+.next/
+.vite/
+
+# Dependencies
+node_modules/
+.venv/
+venv/
+__pycache__/
+*.pyc
+
+# Private audio and generated renders
+private-audio-fixtures/
+outputs/
+renders/
+test-output/
+*.wav
+*.aiff
+*.aif
+*.flac
+*.mp3
+*.m4a
+*.aac
+*.ogg
+*.opus
+
+# Local/editor
+.env
+.env.*
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
