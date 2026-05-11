@@ -11,7 +11,9 @@ Before planning or coding:
 1. Read `docs/PRODUCT.md`.
 2. Read `docs/CLAUDE_BUILD_BRIEF.md`.
 3. Read `docs/CLAUDE_WORK_LOOP.md`.
-4. Skim `docs/research/README.md`.
+4. Read `docs/PARALLEL_BUILD_NOTES.md`.
+5. Read `docs/PRIVATE_AUDIO_FIXTURES.md` before using real audio.
+6. Skim `docs/research/README.md`.
 
 Do not read `docs/reference/` by default. Those files are optional Codex-path context, not startup reading.
 

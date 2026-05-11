@@ -11,8 +11,10 @@ Claude should read:
 1. `docs/PRODUCT.md`
 2. `CLAUDE.md`
 3. `docs/CLAUDE_BUILD_BRIEF.md`
-4. `docs/research/README.md`
-5. The relevant research files for the decision at hand
+4. `docs/PARALLEL_BUILD_NOTES.md`
+5. `docs/PRIVATE_AUDIO_FIXTURES.md`
+6. `docs/research/README.md`
+7. The relevant research files for the decision at hand
 
 Optional context:
 

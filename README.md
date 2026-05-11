@@ -12,7 +12,9 @@ This is a parallel independent build, not a competition brief and not a porting 
 2. Read `CLAUDE.md`.
 3. Read `docs/CLAUDE_BUILD_BRIEF.md`.
 4. Read `docs/CLAUDE_WORK_LOOP.md`.
-5. Use the research files in `docs/research/` when making mastering, DSP, metering, preset, delivery, or architecture decisions.
+5. Read `docs/PARALLEL_BUILD_NOTES.md`.
+6. Read `docs/PRIVATE_AUDIO_FIXTURES.md` before using real audio.
+7. Use the research files in `docs/research/` when making mastering, DSP, metering, preset, delivery, or architecture decisions.
 
 Do not read the Codex reference docs by default. They are available only if the user explicitly asks for Codex context or Claude needs a specific historical detail.
 
