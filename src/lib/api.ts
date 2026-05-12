@@ -18,6 +18,11 @@ import type {
   WaveformPeaks,
 } from "../bindings";
 
+// Tauri 2 auto-converts camelCase invoke arg keys to snake_case Rust parameter
+// names. So `trackId` here lands as `track_id` in the Rust handler signature.
+// Sending snake_case keys directly does NOT work — Tauri's command arg parser
+// rejects them with "missing required key <camelCaseName>". Phase 11.3 fix.
+
 export const api = {
   importTracks: (paths: string[]) =>
     invoke<ImportedTrack[]>("import_tracks", { paths }),
@@ -31,8 +36,8 @@ export const api = {
     settings: MasteringSettings,
   ) =>
     invoke<RenderJob>("render_track_preview", {
-      track_id: trackId,
-      track_path: trackPath,
+      trackId,
+      trackPath,
       settings,
     }),
 
@@ -42,8 +47,8 @@ export const api = {
     settings: MasteringSettings,
   ) =>
     invoke<RenderJob>("render_track_master", {
-      track_id: trackId,
-      track_path: trackPath,
+      trackId,
+      trackPath,
       settings,
     }),
 
@@ -62,8 +67,8 @@ export const api = {
 
   prepareSourcePlayback: (trackId: TrackId, trackPath: string) =>
     invoke<PlaybackHandle>("prepare_source_playback", {
-      track_id: trackId,
-      track_path: trackPath,
+      trackId,
+      trackPath,
     }),
 
   prepareMasterPlayback: (
@@ -72,8 +77,8 @@ export const api = {
     settings: MasteringSettings,
   ) =>
     invoke<PlaybackHandle>("prepare_master_playback", {
-      track_id: trackId,
-      track_path: trackPath,
+      trackId,
+      trackPath,
       settings,
     }),
 
@@ -84,10 +89,10 @@ export const api = {
     volumeMatch: boolean,
   ) =>
     invoke<AbPreview>("prepare_ab_preview", {
-      track_id: trackId,
-      track_path: trackPath,
+      trackId,
+      trackPath,
       settings,
-      volume_match: volumeMatch,
+      volumeMatch,
     }),
 
   prepareWaveform: (
@@ -96,16 +101,16 @@ export const api = {
     targetPixels?: number,
   ) =>
     invoke<WaveformPeaks>("prepare_waveform", {
-      track_id: trackId,
-      track_path: trackPath,
-      target_pixels: targetPixels ?? null,
+      trackId,
+      trackPath,
+      targetPixels: targetPixels ?? null,
     }),
 
   runExportChecks: (report: ExportReport) =>
     invoke<QualityCheck[]>("run_export_checks", { report }),
 
   openOutput: (outputPath: string) =>
-    invoke<null>("open_output", { output_path: outputPath }),
+    invoke<null>("open_output", { outputPath }),
 
   saveProject: (path: string, state: ProjectState) =>
     invoke<null>("save_project", { path, state }),
@@ -134,9 +139,9 @@ export const api = {
     startPositionSec?: number,
   ) =>
     invoke<null>("play_track", {
-      track_id: trackId,
-      track_path: trackPath,
-      start_position_sec: startPositionSec ?? null,
+      trackId,
+      trackPath,
+      startPositionSec: startPositionSec ?? null,
     }),
 
   playMaster: (
@@ -146,10 +151,10 @@ export const api = {
     startPositionSec?: number,
   ) =>
     invoke<null>("play_master", {
-      track_id: trackId,
-      track_path: trackPath,
+      trackId,
+      trackPath,
       settings,
-      start_position_sec: startPositionSec ?? null,
+      startPositionSec: startPositionSec ?? null,
     }),
 
   updateChain: (settings: MasteringSettings) =>
@@ -159,7 +164,7 @@ export const api = {
   resumePlayback: () => invoke<null>("resume_playback"),
   stopPlayback: () => invoke<null>("stop_playback"),
   seekPlayback: (positionSec: number) =>
-    invoke<null>("seek_playback", { position_sec: positionSec }),
+    invoke<null>("seek_playback", { positionSec }),
   setLoopRegion: (region: LoopRegion | null) =>
     invoke<null>("set_loop_region", { region }),
 };
@@ -169,4 +174,3 @@ export function onPlaybackTick(
 ): Promise<UnlistenFn> {
   return listen<PlaybackTick>("playback:tick", (event) => handler(event.payload));
 }
-
