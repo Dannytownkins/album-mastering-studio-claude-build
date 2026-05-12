@@ -8,11 +8,41 @@ For the rolling-update entry point see `docs/HANDOFF.md`. For canonical product 
 
 ## TL;DR
 
-Four objective P0 slices shipped on `origin/master` this session (commits `977a2d0` → `31b3c38`); one slice (warmth + presence_air) is fully designed, planned, and committed but not executed — waiting for a fresh session to run.
+Four objective Phase 12.2 (wired-controls) slices shipped on `origin/master` this session (commits `977a2d0` → `31b3c38`); one more Phase 12.2 slice (warmth + presence_air) is fully designed, planned, and committed but not executed — waiting for a fresh session to run. After that, the only remaining Phase 12.2 item is `compression_density`, which is large enough to need its own brainstorm + spec + plan cycle.
 
 The session converted three "(coming soon)" labels into real controls (Width, LUFS target — and the warmth/presence_air plan will add two more) and added the live clipping indicator + album-render progress bar. **No subjective sound-quality decisions were made.** Every numeric value pinned in this session came from cited industry research, the HANDOFF design notes, or empirical synthetic-signal testing.
 
+See the next section ("Phase context") for how Phase 12.2 fits into the formal `docs/IMPLEMENTATION_PLAN.md` phase map.
+
 Test count went from 39 → 56 (current) → 61 (after the queued plan executes). Real-fixture tests still pass unchanged. The bundle stayed essentially flat (~253.6 KB / ~77.6 KB gzipped) across all four shipped slices.
+
+## Phase context (how this session fits into `docs/IMPLEMENTATION_PLAN.md`)
+
+The formal phase map lives in `docs/IMPLEMENTATION_PLAN.md`. The implementation plan defines 15 phases (0 through 14). Each gets a `PHASE N CONFIRMED — proceed to N+1` sentinel line in `docs/progress.md` that **only Dan writes by hand** — agents don't advance phases.
+
+**Where we are: Phase 12 — Private Real-Audio Fixture Loop.** Per `IMPLEMENTATION_PLAN.md`, this is the workstream that drives the app from "structurally complete" to "release-candidate quality" by listening to real material and wiring whatever the listening exposes as broken or missing.
+
+Within Phase 12 there are informal sub-iterations the commits and earlier handoffs track:
+
+- **Phase 12.1 — Listening response (earlier today, morning session).** Captured in `docs/HANDOFF_2026-05-12.md`. Dan's first listening pass on real audio (`It's a coat (Remastered).wav`) flagged: real-time audition wasn't actually live, presets clipping on already-mastered material with no warning, advanced sliders unwired, no Input/Output gain, etc. Phase 12.1 shipped 19 commits (`7b35e34` → `ed777e1`) addressing the immediately-fixable items: live-update bug fix, decode cache, undo/redo, Input/Output gain, "(coming soon)" labels added to placeholder sliders, render progress bar, type-in number fields.
+- **Phase 12.2 — Wired-controls campaign (this evening session).** Phase 12.1 ended with a P0 backlog of unwired Advanced controls and one missing safety affordance (the live clipping indicator). Phase 12.2 is the explicit campaign to clear that backlog. Status:
+  - ✓ Live clipping / output peak indicator (`977a2d0`)
+  - ✓ Wire Width (`fc2674b`)
+  - ✓ Album render progress events (`058794e`)
+  - ✓ Wire LUFS target — refuse-upward landing (`31b3c38`)
+  - ⧗ Wire Warmth + Presence/Air — **spec + plan ready, not yet executed** (`8c4c412`, `1349186`)
+  - ☐ Wire `compression_density` — **needs fresh brainstorm + spec + plan** (large slice, ~300–500 lines)
+
+**Phase 12.2 finishes when the warmth+presence_air plan ships AND compression_density ships.** That leaves Track Master with every Advanced control wired (no "(coming soon)" labels remaining) and the live clipping safety net in place.
+
+**After Phase 12.2:** the next iteration depends on what Dan's next listening pass exposes. Possible paths:
+- More Phase 12 sub-iterations if listening reveals more gaps.
+- Preset rebalancing (subjective; needs Dan's ear).
+- `PHASE 12 CONFIRMED — proceed to 13` if Dan is satisfied — moving to **Phase 13 (Performance Budgets)** per `IMPLEMENTATION_PLAN.md`.
+
+**Agents do not cross phase boundaries autonomously.** Stop and ask Dan when:
+- The current Phase 12 backlog is empty and there's no `PHASE 12 CONFIRMED` line.
+- A proposed slice would touch Phase 13+ scope (performance work, installer hardening, etc.) before Phase 12 is sealed.
 
 ## Long-term goal (from `docs/PRODUCT.md`)
 
@@ -144,11 +174,19 @@ If the next slice's design isn't already pinned by an approved spec or by HANDOF
 
 Roughly ordered by readiness. Items already in `docs/HANDOFF_2026-05-12.md` are not duplicated here unless their status changed; consult that file for full design notes.
 
-### P0 — objective, no listening required (one item left)
+**Phase mapping for everything below:**
+- **Still inside Phase 12.2 (this session's campaign):** `compression_density`. The queued warmth+presence_air plan plus this item finish Phase 12.2.
+- **Still inside Phase 12 broadly:** preset rebalancing (listening-driven response), the rendered-LUFS export-receipt gap (sub-iteration of the listening loop).
+- **Future-phase items, gated by `PHASE 12 CONFIRMED`:** Phase 8.x Album Master refinements, Phase 9.2 editable role UI, Phase 11.2.d polyphase FIR, Phase 13 performance budgets, Phase 14 release / installer hardening.
+- **Ongoing / cross-phase polish:** typography pass, SVG preset icons, deferred infrastructure (vitest, multi-slot decode cache).
+
+Do not jump into a future-phase item without checking `progress.md` for a `PHASE N CONFIRMED — proceed to N+1` line. If it's missing, ask Dan.
+
+### P0 — objective, no listening required (one item left, finishes Phase 12.2)
 
 #### `compression_density` (real envelope-following compressor)
 
-- **Status:** Last remaining unwired Advanced control after warmth/presence_air ships.
+- **Status:** Last remaining unwired Advanced control after warmth/presence_air ships. Shipping this closes Phase 12.2.
 - **Scope per HANDOFF_2026-05-12 estimate:** ~300–500 lines. Real attack/release envelope follower + gain-reduction curve, applied before the brick-wall limiter.
 - **Recommendation:** **Brainstorm + spec + plan first** using `superpowers:brainstorming` and `superpowers:writing-plans` (same flow this session used for warmth/presence_air). Don't dive into code without an approved design.
 - **Research to consult:** `docs/research/most-recent-mastering-app-research.md` covers commercial compressor behavior; an Explore subagent extract on "compression / glue / multiband dynamics" would mirror the LUFS-landing and warmth-air research passes this session ran.
