@@ -772,6 +772,10 @@ fn handle_play_master(
 // ============================================================================
 
 const COEFFS_CHECK_INTERVAL: usize = 256;
+// Crossfade length when coefficients change. ~12 ms at 44.1 kHz stereo
+// (1024 interleaved samples = 512 frames). Long enough to mask filter-state
+// transients on preset/intensity changes; short enough to feel instantaneous.
+const COEFFS_CROSSFADE_SAMPLES: usize = 1024;
 
 struct MasteringSource {
     samples: Vec<f32>,
@@ -779,6 +783,9 @@ struct MasteringSource {
     channels: u16,
     sample_rate: u32,
     chain: crate::dsp::MasteringChain,
+    pending_chain: Option<crate::dsp::MasteringChain>,
+    crossfade_remaining: usize,
+    crossfade_total: usize,
     coeffs_rx: mpsc::Receiver<crate::dsp::ChainCoeffs>,
     samples_since_check: usize,
 }
@@ -797,6 +804,9 @@ impl MasteringSource {
             channels,
             sample_rate,
             chain,
+            pending_chain: None,
+            crossfade_remaining: 0,
+            crossfade_total: 0,
             coeffs_rx,
             samples_since_check: 0,
         }
@@ -813,15 +823,42 @@ impl Iterator for MasteringSource {
         self.samples_since_check += 1;
         if self.samples_since_check >= COEFFS_CHECK_INTERVAL {
             self.samples_since_check = 0;
-            while let Ok(new_coeffs) = self.coeffs_rx.try_recv() {
-                self.chain.coeffs = new_coeffs;
+            // Drain all pending updates; keep only the latest.
+            let mut latest: Option<crate::dsp::ChainCoeffs> = None;
+            while let Ok(c) = self.coeffs_rx.try_recv() {
+                latest = Some(c);
+            }
+            if let Some(new_coeffs) = latest {
+                self.pending_chain = Some(
+                    crate::dsp::MasteringChain::with_coeffs_inheriting_state(new_coeffs, &self.chain),
+                );
+                self.crossfade_remaining = COEFFS_CROSSFADE_SAMPLES;
+                self.crossfade_total = COEFFS_CROSSFADE_SAMPLES;
             }
         }
         let channels = self.channels.max(1) as usize;
         let ch = self.position % channels;
         let raw = self.samples[self.position];
         self.position += 1;
-        Some(self.chain.process_sample(raw, ch))
+
+        let y_current = self.chain.process_sample(raw, ch);
+
+        if self.pending_chain.is_some() && self.crossfade_total > 0 {
+            let pending = self.pending_chain.as_mut().expect("pending checked");
+            let y_pending = pending.process_sample(raw, ch);
+            // t goes 0 -> 1 as the crossfade progresses; we mix more pending as t rises.
+            let t = 1.0
+                - (self.crossfade_remaining as f32 / self.crossfade_total as f32);
+            let mixed = y_current * (1.0 - t) + y_pending * t;
+            self.crossfade_remaining = self.crossfade_remaining.saturating_sub(1);
+            if self.crossfade_remaining == 0 {
+                self.chain = self.pending_chain.take().expect("pending checked");
+                self.crossfade_total = 0;
+            }
+            Some(mixed)
+        } else {
+            Some(y_current)
+        }
     }
 }
 
@@ -856,6 +893,9 @@ impl rodio::Source for MasteringSource {
         self.position = target_sample.min(self.samples.len());
         // Drop accumulated biquad state to avoid clicks across discontinuities.
         self.chain.reset_states();
+        self.pending_chain = None;
+        self.crossfade_remaining = 0;
+        self.crossfade_total = 0;
         Ok(())
     }
 }

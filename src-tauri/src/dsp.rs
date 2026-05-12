@@ -183,20 +183,11 @@ impl ChainCoeffs {
     }
 }
 
+#[derive(Debug, Clone, Default)]
 pub struct ChannelState {
     low: BiquadState,
     mid: BiquadState,
     high: BiquadState,
-}
-
-impl Default for ChannelState {
-    fn default() -> Self {
-        Self {
-            low: BiquadState::default(),
-            mid: BiquadState::default(),
-            high: BiquadState::default(),
-        }
-    }
 }
 
 pub struct MasteringChain {
@@ -209,6 +200,16 @@ impl MasteringChain {
         let coeffs = ChainCoeffs::from_settings(sample_rate, settings);
         let states = (0..channels).map(|_| ChannelState::default()).collect();
         Self { coeffs, states }
+    }
+
+    /// Build a sibling chain that inherits the current biquad state but uses
+    /// fresh coefficients. Used by `MasteringSource` to crossfade between old
+    /// and new coefficients without re-ringing the filters from zero state.
+    pub fn with_coeffs_inheriting_state(coeffs: ChainCoeffs, prior: &Self) -> Self {
+        Self {
+            coeffs,
+            states: prior.states.clone(),
+        }
     }
 
     pub fn process_interleaved(&mut self, samples: &mut [f32], channels: usize) {
