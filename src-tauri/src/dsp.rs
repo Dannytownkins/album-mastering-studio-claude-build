@@ -213,9 +213,28 @@ pub struct ChannelState {
 
 // ============================================================================
 // Limiter — linked-stereo brick-wall limiter with lookahead.
-// Phase 11.2.a: sample-peak detection (not yet true-peak), instant attack,
-// exponential release. Phase 11.2.b can upgrade to 4× oversampled true-peak.
+// Phase 11.2.a: sample-peak detection, instant attack, exponential release.
+// Phase 11.2.b: 2× upsample inter-sample peak via Lagrange-4 midpoint (x=0.5).
+// Phase 11.2.c: 4× upsample by also evaluating x=0.25 and x=0.75. The three
+//   coefficient triplets below are the 4-point Lagrange basis polynomials
+//   evaluated at fractional positions 0.25, 0.5, and 0.75 between samples
+//   `b` and `c`, with neighbors `a` and `d` providing curvature. ITU-R
+//   BS.1770 recommends ≥ 4× oversampling for true-peak; this estimator is a
+//   close approximation that avoids the cost of a polyphase FIR.
 // ============================================================================
+
+/// 4-point Lagrange interpolator coefficients at three fractional positions
+/// inside a (b, c) sample pair. For samples (a, b, c, d) at indices
+/// (-1, 0, 1, 2), each row gives the basis weights at one of (x = 0.25, 0.5,
+/// 0.75) so that `L(x) = w[0]·a + w[1]·b + w[2]·c + w[3]·d`.
+///
+/// Coefficients verified by hand-computing the 4-point Lagrange polynomial at
+/// each fractional position. Each row sums to 1.0 (interpolation invariant).
+const LAGRANGE_INTERSAMPLE_COEFFS: [[f32; 4]; 3] = [
+    [-0.0546875, 0.8203125, 0.2734375, -0.0390625], // x = 0.25
+    [-0.0625, 0.5625, 0.5625, -0.0625],             // x = 0.5
+    [-0.0390625, 0.2734375, 0.8203125, -0.0546875], // x = 0.75 (mirror of 0.25)
+];
 
 #[derive(Debug, Clone)]
 pub struct Limiter {
@@ -290,12 +309,12 @@ impl Limiter {
 
         // Scan the buffer for the peak. Two passes:
         //   1) Raw sample peaks (linked stereo, single max across channels).
-        //   2) Lagrange-4 midpoint between every adjacent frame pair — catches
-        //      inter-sample peaks that sample-peak limiting misses. The
-        //      `(-0.0625, 0.5625, 0.5625, -0.0625)` coefficients are the
-        //      4-point Lagrange interpolator evaluated at x=0.5; it's a 2×
-        //      true-peak estimate that's cheap and conservative enough for a
-        //      brick-wall limiter (Phase 11.2.b vs Phase 11.2.a sample peak).
+        //   2) Lagrange-4 inter-sample peaks at x ∈ {0.25, 0.5, 0.75} between
+        //      every adjacent frame pair — catches the true peak across the
+        //      sub-sample positions that a 4× upsample would expose. Phase
+        //      11.2.b checked x=0.5 only; sign-asymmetric patterns can place
+        //      the true peak near x=0.25 or x=0.75 with a relatively small
+        //      x=0.5 estimate, which is what this loop now covers.
         let mut peak: f32 = 0.0;
         for &s in &self.buffer {
             let a = s.abs();
@@ -311,10 +330,12 @@ impl Limiter {
                     let a = self.frame_sample(f, c);
                     let b = self.frame_sample(f + 1, c);
                     let nxt = self.frame_sample(f + 2, c);
-                    let mid = -0.0625 * prev + 0.5625 * a + 0.5625 * b - 0.0625 * nxt;
-                    let abs_mid = mid.abs();
-                    if abs_mid > peak {
-                        peak = abs_mid;
+                    for w in &LAGRANGE_INTERSAMPLE_COEFFS {
+                        let mid = w[0] * prev + w[1] * a + w[2] * b + w[3] * nxt;
+                        let abs_mid = mid.abs();
+                        if abs_mid > peak {
+                            peak = abs_mid;
+                        }
                     }
                 }
             }

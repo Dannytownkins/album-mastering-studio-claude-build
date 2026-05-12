@@ -534,6 +534,88 @@ fn dsp_chain_applies_input_gain_at_default_intensity() {
 }
 
 #[test]
+fn limiter_catches_quarter_point_lagrange_intersample_peak() {
+    // Phase 11.2.c — verifies that the limiter also bounds inter-sample peaks
+    // at fractional positions x=0.25 and x=0.75, not just x=0.5 (which is what
+    // Phase 11.2.b covered). For sign-asymmetric patterns, the true peak can
+    // sit near x=0.25 with a relatively small x=0.5 estimate; without the
+    // additional checks the 2×-only limiter would let those through.
+    //
+    // Pattern designed against the default -1 dBFS ceiling (≈ 0.891):
+    //
+    //   sample peak    = 0.85                                <  0.891  ✓ raw passes
+    //   midpoint(0.5)  = -0.0625·(-0.85) + 0.5625·0.85
+    //                    + 0.5625·0.6   - 0.0625·0   ≈ 0.869 <  0.891  ✓ 2× passes
+    //   midpoint(0.25) = -0.0547·(-0.85) + 0.8203·0.85
+    //                    + 0.2734·0.6   - 0.0391·0   ≈ 0.908 >  0.891  ✗ 4× catches
+    use album_mastering_studio_lib::dsp::Limiter;
+
+    let sample_rate = 44_100;
+    let channels = 1;
+    let ceiling_dbfs = -1.0_f32;
+    let ceiling_lin = 10.0_f32.powf(ceiling_dbfs / 20.0);
+    let pattern = [-0.85_f32, 0.85, 0.6, 0.0];
+
+    // Sanity-check that the pattern still exercises the 4× gap. If a future
+    // refactor changes the Lagrange coefficients or this pattern, the test
+    // must complain loudly rather than silently pass on a degenerate case.
+    let in_mid_05 = -0.0625 * pattern[0]
+        + 0.5625 * pattern[1]
+        + 0.5625 * pattern[2]
+        - 0.0625 * pattern[3];
+    let in_mid_025 = -0.0546875 * pattern[0]
+        + 0.8203125 * pattern[1]
+        + 0.2734375 * pattern[2]
+        - 0.0390625 * pattern[3];
+    assert!(
+        in_mid_05.abs() < ceiling_lin,
+        "test pattern broken: midpoint(0.5) = {:.4} should be below ceiling {:.4}",
+        in_mid_05.abs(),
+        ceiling_lin
+    );
+    assert!(
+        in_mid_025.abs() > ceiling_lin,
+        "test pattern broken: midpoint(0.25) = {:.4} should exceed ceiling {:.4}",
+        in_mid_025.abs(),
+        ceiling_lin
+    );
+
+    let mut limiter = Limiter::new(sample_rate, channels, ceiling_dbfs, 3.0, 50.0);
+    let cycles = 1024;
+    let mut output = Vec::with_capacity(pattern.len() * cycles);
+    for _ in 0..cycles {
+        for &s in pattern.iter() {
+            let mut frame = [s];
+            limiter.process_frame_inplace(&mut frame);
+            output.push(frame[0]);
+        }
+    }
+
+    // Skip the lookahead-delayed warmup region (3 ms at 44.1 kHz + slack so
+    // the gain envelope finishes settling).
+    let warmup = ((3.0e-3 * 44_100.0) as usize) + 32;
+    for win in output[warmup..].windows(4) {
+        let a = win[0];
+        let b = win[1];
+        let c = win[2];
+        let d = win[3];
+        let mid_025 = -0.0546875 * a + 0.8203125 * b + 0.2734375 * c - 0.0390625 * d;
+        let mid_050 = -0.0625 * a + 0.5625 * b + 0.5625 * c - 0.0625 * d;
+        let mid_075 = -0.0390625 * a + 0.2734375 * b + 0.8203125 * c - 0.0546875 * d;
+        for (name, mid) in &[("0.25", mid_025), ("0.5", mid_050), ("0.75", mid_075)] {
+            assert!(
+                mid.abs() <= ceiling_lin + 0.005,
+                "Lagrange-4 midpoint({}) overshoot: {:.4} > ceiling {:.4} on window {:?}",
+                name,
+                mid.abs(),
+                ceiling_lin,
+                win
+            );
+        }
+    }
+}
+
+#[test]
 fn limiter_catches_lagrange_intersample_peak() {
     // Pattern designed so the Lagrange-4 midpoint exceeds the sample peak.
     // Samples [a, b, c, d] = [0, X, X, 0] -> midpoint(b,c) = 0.5625*X + 0.5625*X

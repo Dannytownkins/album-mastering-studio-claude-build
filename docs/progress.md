@@ -1040,3 +1040,57 @@ What failed or remains partial:
 Next recommended slice:
 
 Phase 12.1 - work-machine real-audio smoke and listening checkpoint. Run the app interactively on Dan's provided fixture(s) and verify the core Track Master path by ear and behavior: drag/drop/import, Analyze, waveform, source playback, mastered playback live controls, Original/Mastered toggle at the same playhead, Volume Match off by default and audible when enabled, region selection, loop, preview WAV render, Export Master, quality receipt, and open output. Record failures honestly in this file. If no private fixture is available, do not claim listening progress; instead choose a small non-listening slice such as codec-preview warnings or 4x true-peak improvement.
+
+## 2026-05-12 — Phase 11.2.c: 4× inter-sample peak detection (x=0.25, 0.5, 0.75)
+
+Goal:
+
+Phase 12.1 (real-audio smoke) was not runnable on this work machine — no `private-audio-fixtures/` directory present, so per the previous progress entry's own fallback rule we pick a small non-listening slice that's purely objective. Closing the 2× → 4× true-peak gap (the slice Phase 11.2.b's own "What failed or remains partial" called out as the next refinement) is exactly that: it improves Track Master's streaming-grade safety, is verifiable with synthetic patterns, and needs no listening session to confirm correctness.
+
+What changed:
+
+`src-tauri/src/dsp.rs` — `Limiter::process_frame_inplace`:
+
+- Extracted the inter-sample peak weights into a module-level `const LAGRANGE_INTERSAMPLE_COEFFS: [[f32; 4]; 3]`. Three rows: x=0.25 → `(-0.0547, 0.8203, 0.2734, -0.0391)`, x=0.5 → `(-0.0625, 0.5625, 0.5625, -0.0625)`, x=0.75 → mirror of 0.25 = `(-0.0391, 0.2734, 0.8203, -0.0547)`. Each row sums to 1.0 (interpolation invariant); coefficients are the canonical 4-point Lagrange basis polynomials evaluated at the three fractional positions between samples `b` and `c`.
+- The inner Lagrange scan now loops over all three coefficient rows and tracks the max abs across all of them — previously only x=0.5 was checked. This brings the limiter from a 2× upsampled true-peak estimate to a 4× estimate, which is what ITU-R BS.1770 recommends.
+- Compute cost: roughly 3× over the previous Lagrange pass (one row → three rows). At 3 ms lookahead × stereo at 44.1 kHz the inner loop is now ~36 M weighted-sums/sec — still ≪ 1% of a modern core, and the existing benchmark in `cargo test` came in at 0.58 s for all 28 tests (similar to the 11.2.b baseline once the warm cache settles).
+- The comment block above the limiter now spells out the Phase 11.2.a/b/c progression so the next reader doesn't have to guess what the three rows are for.
+
+`src-tauri/tests/contracts.rs` — new test `limiter_catches_quarter_point_lagrange_intersample_peak`:
+
+- Constructs a 4-sample pattern `[-0.85, 0.85, 0.6, 0.0]` designed against the default -1 dBFS ceiling (≈ 0.891):
+  - Sample peak max = 0.85 — below ceiling, so sample-peak limiting alone does not engage.
+  - Lagrange-4 at x=0.5 ≈ 0.869 — below ceiling, so the Phase 11.2.b limiter would miss this entirely.
+  - Lagrange-4 at x=0.25 ≈ 0.908 — above ceiling, so Phase 11.2.c must catch it.
+- Two pre-process sanity assertions check those exact numbers on the input itself, so if a future refactor changes the Lagrange coefficients or the test pattern, the test fails loudly instead of silently passing on a degenerate case.
+- Calls `Limiter::process_frame_inplace` directly (no `MasteringChain` input-gain stage) so the test isolates the new logic from chain-level scaling.
+- After processing 1024 cycles of the pattern, asserts every output window's Lagrange-4 estimate at all three positions (0.25, 0.5, 0.75) stays at or below the ceiling. The existing Phase 11.2.b test (`limiter_catches_lagrange_intersample_peak`, x=0.5 case on a `[0, 0.85, 0.85, 0]` pattern) is preserved as regression coverage.
+
+Verification:
+
+- `cargo test` (from `src-tauri/`): **28/28** pass in 0.58 s. The new `limiter_catches_quarter_point_lagrange_intersample_peak` test passes; the existing `limiter_catches_lagrange_intersample_peak` and `limiter_keeps_loud_signal_under_ceiling` tests still pass (regression coverage of x=0.5 and sample-peak paths). All other 25 contract tests are unchanged.
+- `npm run build` (baseline, prior to changes): clean. No frontend changes in this slice — bundle still 245 KB / 75 KB gzipped.
+- `npm run tauri dev`: not run. Audible difference between 2× and 4× ISP detection is subtle on most material; the meaningful verification for this slice is the synthetic test demonstrating the previously-leaking sub-sample peak class is now bounded.
+
+Real-audio fixture used:
+
+- None. No `private-audio-fixtures/` directory exists on this work machine, so the Phase 12.1 listening checkpoint cannot run here. This slice is intentionally fixture-free objective work, per the previous entry's fallback rule.
+
+What failed or remains partial:
+
+- Phase 11.2.c uses the canonical 4-point Lagrange polynomial at three fractional positions, not a proper polyphase FIR. For a true sinc-interpolated signal the actual analog peak is bounded, but the Lagrange-4 estimate can occasionally overshoot or undershoot the true 4× upsampled value by a small fraction. Conservative = better here (we err on the side of slightly more attenuation), but a Phase 11.2.d could replace the three weighted sums with a properly-windowed polyphase FIR if profiling on real material ever justifies it.
+- The peak scan is still O(lookahead_frames × channels × 3) per frame — three times the work of Phase 11.2.b's Lagrange pass, six times the original 11.2.a sample-peak pass. Real-time budget is still comfortable (~1% of a modern core at 44.1 kHz stereo with 3 ms lookahead) but a future Phase 11.2.d could maintain a sliding monotonic-deque max if profiling shows this is a hot spot under heavier sample rates or higher lookahead.
+- No listening verification on real material yet — the 4× check only differs from 2× on sign-asymmetric transient patterns, which are common in dense pop/rock masters but rare in classical/acoustic. Phase 12.1 (when a private fixture is available) should A/B the 2× and 4× variants on a few representative tracks to confirm the audible difference is benign (slightly less peak overshoot, no audible tone change).
+- Album Master remains structurally present but still needs hands-on workflow validation with real songs (carried over from the prior entry — this slice did not address it).
+- Manual interactive smoke on this work machine is still deferred for drag/drop import, live A/B feel, Volume Match audibility, looped region behavior, export/open-output flow, and Album Master usability. None of those need 11.2.c to be testable.
+
+Next recommended slice:
+
+Phase 12.1 — work-machine real-audio smoke and listening checkpoint, the moment a private fixture is available on this machine. Until then, candidates for further fixture-free slices, in roughly increasing complexity:
+
+1. Phase 6.x — codec preview warnings in `run_export_checks`. Simulate an AAC/Opus encode of the master and surface a "codec preview suggests clipping risk" advisory in the export receipt. Objective DSP work, no listening required for the warning logic itself.
+2. Phase 9.2 — editable inferred-role UI. Lets the user override the heuristic role guess per track in Album Master. Mostly UI/state plumbing on top of the already-shipped inference.
+3. Phase 11.2.d — polyphase FIR true-peak (replaces the three Lagrange-4 weighted sums with a properly windowed sinc-based 4× upsample) if profiling ever shows the Lagrange estimate is materially different from a true 4× upsample on real material.
+4. Phase 14.x — installer / icon polish for portability to another machine.
+
+Pick (1) or (2) next; (1) has the larger Track Master quality return, (2) is the last remaining Album Master non-negotiable user-visible refinement.
