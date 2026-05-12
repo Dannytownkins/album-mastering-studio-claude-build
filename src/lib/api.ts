@@ -45,30 +45,45 @@ export const api = {
       per_track_overrides: perTrackOverrides ?? null,
     }),
 
-  prepareSourcePlayback: (trackId: TrackId) =>
-    invoke<PlaybackHandle>("prepare_source_playback", { track_id: trackId }),
+  prepareSourcePlayback: (trackId: TrackId, trackPath: string) =>
+    invoke<PlaybackHandle>("prepare_source_playback", {
+      track_id: trackId,
+      track_path: trackPath,
+    }),
 
-  prepareMasterPlayback: (trackId: TrackId, settings: MasteringSettings) =>
+  prepareMasterPlayback: (
+    trackId: TrackId,
+    trackPath: string,
+    settings: MasteringSettings,
+  ) =>
     invoke<PlaybackHandle>("prepare_master_playback", {
       track_id: trackId,
+      track_path: trackPath,
       settings,
     }),
 
   prepareAbPreview: (
     trackId: TrackId,
+    trackPath: string,
     settings: MasteringSettings,
     volumeMatch: boolean,
   ) =>
     invoke<AbPreview>("prepare_ab_preview", {
       track_id: trackId,
+      track_path: trackPath,
       settings,
       volume_match: volumeMatch,
     }),
 
-  prepareWaveform: (trackId: TrackId, samplesPerPixel: number) =>
+  prepareWaveform: (
+    trackId: TrackId,
+    trackPath: string,
+    targetPixels?: number,
+  ) =>
     invoke<WaveformPeaks>("prepare_waveform", {
       track_id: trackId,
-      samples_per_pixel: samplesPerPixel,
+      track_path: trackPath,
+      target_pixels: targetPixels ?? null,
     }),
 
   runExportChecks: (report: ExportReport) =>

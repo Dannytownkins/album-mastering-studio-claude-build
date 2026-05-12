@@ -159,9 +159,9 @@ export function useTrackMaster() {
 
         setIsLoadingWaveform(true);
         try {
-          for (const id of newIds) {
-            const wf = await api.prepareWaveform(id, 256);
-            setWaveformMap((prev) => ({ ...prev, [id]: wf }));
+          for (const track of imported) {
+            const wf = await api.prepareWaveform(track.id, track.path, 1200);
+            setWaveformMap((prev) => ({ ...prev, [track.id]: wf }));
           }
         } finally {
           setIsLoadingWaveform(false);

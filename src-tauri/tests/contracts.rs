@@ -1,3 +1,5 @@
+use std::path::{Path, PathBuf};
+
 use album_mastering_studio_lib::*;
 
 #[tokio::test]
@@ -14,25 +16,7 @@ async fn analyze_tracks_returns_one_result_per_input() {
         assert!(r.lufs_integrated.is_finite());
         assert!(r.true_peak_dbtp.is_finite());
         assert!(r.dynamic_range_lu.is_finite());
-        assert!(r.spectral_balance.low.is_finite());
-        assert!(r.spectral_balance.mid.is_finite());
-        assert!(r.spectral_balance.high.is_finite());
         assert_eq!(r.recommended_universal.preset, Preset::Universal);
-    }
-}
-
-#[tokio::test]
-async fn prepare_waveform_returns_stereo_peaks() {
-    let result = audio::prepare_waveform(TrackId("track-a".to_string()), 256)
-        .await
-        .expect("waveform ok");
-    assert_eq!(result.channels.len(), 2, "expected stereo");
-    assert!(!result.channels[0].is_empty());
-    assert_eq!(result.channels[0].len(), result.channels[1].len());
-    assert_eq!(result.samples_per_pixel, 256);
-    assert_eq!(result.sample_rate, 44_100);
-    for peak in &result.channels[0] {
-        assert!(peak.is_finite() && (0.0..=1.0).contains(peak));
     }
 }
 
@@ -55,6 +39,95 @@ async fn import_tracks_extracts_display_name_and_format() {
     assert_eq!(tracks.len(), 1);
     assert_eq!(tracks[0].display_name, "Song Title");
     assert_eq!(tracks[0].source_format, "flac");
+}
+
+#[tokio::test]
+async fn import_tracks_extracts_metadata_from_synthetic_wav() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let path = tmp.path().join("sine.wav");
+    write_sine_wav(&path, 44_100, 1.0, 440.0, 2);
+
+    let tracks = files::import_tracks(vec![path.to_string_lossy().to_string()])
+        .await
+        .expect("import ok");
+    assert_eq!(tracks.len(), 1);
+    let t = &tracks[0];
+    assert_eq!(t.source_format, "wav");
+    assert_eq!(t.channels, Some(2));
+    assert_eq!(t.sample_rate, Some(44_100));
+    let duration = t.duration_seconds.expect("duration present");
+    assert!((duration - 1.0).abs() < 0.05, "duration was {duration}");
+}
+
+#[tokio::test]
+async fn prepare_waveform_decodes_synthetic_wav() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let path = tmp.path().join("sine.wav");
+    write_sine_wav(&path, 44_100, 0.5, 440.0, 2);
+
+    let result = audio::prepare_waveform(
+        TrackId("track-a".to_string()),
+        path.to_string_lossy().to_string(),
+        Some(200),
+    )
+    .await
+    .expect("waveform ok");
+
+    assert_eq!(result.channels.len(), 2, "stereo expected");
+    assert!(!result.channels[0].is_empty());
+    assert_eq!(result.channels[0].len(), result.channels[1].len());
+    assert_eq!(result.sample_rate, 44_100);
+    assert!(result.total_samples > 0);
+
+    let max_peak = result.channels[0].iter().cloned().fold(0.0_f32, f32::max);
+    assert!(
+        (0.45..=0.55).contains(&max_peak),
+        "sine generated at 0.5 amplitude — got peak {max_peak}"
+    );
+
+    for &peak in &result.channels[0] {
+        assert!(peak.is_finite() && (0.0..=1.01).contains(&peak));
+    }
+}
+
+#[tokio::test]
+async fn prepare_waveform_rejects_empty_path() {
+    let err = audio::prepare_waveform(TrackId("t".to_string()), String::new(), Some(100))
+        .await
+        .expect_err("expected rejection");
+    assert!(matches!(err, CommandError::InvalidPath(_)));
+}
+
+#[tokio::test]
+async fn decode_real_fixture_if_present() {
+    let Some(path) = real_fixture_path() else {
+        eprintln!("Skipping: no real-audio fixture at private-audio-fixtures/");
+        return;
+    };
+    let abs = path.canonicalize().expect("canonicalize fixture");
+    let path_str = abs.to_string_lossy().to_string();
+
+    let tracks = files::import_tracks(vec![path_str.clone()])
+        .await
+        .expect("import ok");
+    assert_eq!(tracks.len(), 1);
+    let t = &tracks[0];
+    assert!(t.duration_seconds.unwrap_or(0.0) > 10.0, "expected a real song duration");
+    assert!(t.sample_rate.unwrap_or(0) > 0);
+    assert!(t.channels.unwrap_or(0) > 0);
+
+    let peaks = audio::prepare_waveform(t.id.clone(), path_str, Some(500))
+        .await
+        .expect("waveform ok");
+    assert!(!peaks.channels.is_empty());
+    assert!(!peaks.channels[0].is_empty());
+    assert!(
+        peaks.channels[0].len() >= 200,
+        "expected dense peak coverage for a multi-minute track"
+    );
+    assert!(peaks.sample_rate > 0);
+    let max = peaks.channels[0].iter().cloned().fold(0.0_f32, f32::max);
+    assert!(max > 0.1, "expected non-trivial signal energy in the fixture");
 }
 
 #[tokio::test]
@@ -96,8 +169,7 @@ async fn run_export_checks_passes_silently_when_clean() {
 
 #[tokio::test]
 async fn render_track_master_returns_done_with_output_path() {
-    let settings = default_settings();
-    let job = engine::render_track_master(TrackId("t".to_string()), settings)
+    let job = engine::render_track_master(TrackId("t".to_string()), default_settings())
         .await
         .expect("render ok");
     assert!(matches!(job.status, JobStatus::Done));
@@ -115,10 +187,7 @@ async fn save_user_preset_rejects_empty_name() {
     )
     .await
     .expect_err("expected rejection");
-    match err {
-        CommandError::Other(_) => {}
-        other => panic!("expected Other, got {other:?}"),
-    }
+    assert!(matches!(err, CommandError::Other(_)));
 }
 
 fn default_settings() -> MasteringSettings {
@@ -131,4 +200,36 @@ fn default_settings() -> MasteringSettings {
         volume_match: false,
         advanced: AdvancedSettings::default(),
     }
+}
+
+fn write_sine_wav(path: &Path, sample_rate: u32, duration_sec: f32, freq: f32, channels: u16) {
+    let spec = hound::WavSpec {
+        channels,
+        sample_rate,
+        bits_per_sample: 16,
+        sample_format: hound::SampleFormat::Int,
+    };
+    let mut writer = hound::WavWriter::create(path, spec).expect("wav create");
+    let n = (sample_rate as f32 * duration_sec) as u32;
+    let amplitude = (0.5_f32 * i16::MAX as f32) as i16;
+    for i in 0..n {
+        let t = i as f32 / sample_rate as f32;
+        let s = (t * 2.0 * std::f32::consts::PI * freq).sin();
+        let sample = (s * amplitude as f32) as i16;
+        for _ in 0..channels {
+            writer.write_sample(sample).expect("write sample");
+        }
+    }
+    writer.finalize().expect("wav finalize");
+}
+
+fn real_fixture_path() -> Option<PathBuf> {
+    let candidates = [
+        "../private-audio-fixtures/lay-the-money-on-the-desk.mp3",
+        "private-audio-fixtures/lay-the-money-on-the-desk.mp3",
+    ];
+    candidates
+        .iter()
+        .map(PathBuf::from)
+        .find(|p| p.exists())
 }

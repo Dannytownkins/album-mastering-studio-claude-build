@@ -123,3 +123,57 @@ What failed or remains partial:
 Next recommended slice:
 
 Phase 3.1 — wire `prepare_source_playback` to a real Rust audio thread using `cpal` + `symphonia`. Make the play button actually play the imported audio file. This is the biggest win for product feel and unblocks real waveform peaks in Phase 3.2.
+
+## 2026-05-11 — Phase 3.1: real audio decode + waveform peak generation
+
+Goal:
+
+Replace the mock waveform/import metadata with real audio decoding via `symphonia`. Frontend gets actual peak data from imported files; `import_tracks` populates `duration_seconds`, `sample_rate`, `channels` from the file itself. Playback in Phase 3.2 builds on this.
+
+What changed:
+
+Backend:
+
+- `src-tauri/Cargo.toml`: added `symphonia = "0.5"` with format features `mp3`, `aac`, `isomp4`, `flac`, `wav`, `pcm`, `ogg`, `vorbis`. Added `hound = "3"` and `tempfile = "3"` to dev-dependencies for synthetic WAV tests.
+- `src-tauri/src/files.rs`: `import_tracks` now probes the file with symphonia's format reader and fills in real `duration_seconds`/`sample_rate`/`channels` for every supported codec. Path-traversal check refactored from substring (`contains("..")`) to component-based (`Path::components().any(|c| c == Component::ParentDir)`) — the old check rejected any path containing `..` as a substring, breaking legitimate filenames like `something..mp3` and relative paths like `../fixtures/...`.
+- `src-tauri/src/audio.rs`: `prepare_waveform` now takes `(track_id, track_path, target_pixels)` and decodes the real file via symphonia. Streams packets, decodes into `SampleBuffer<f32>`, accumulates per-channel running peaks across `samples_per_pixel`-sized windows, flushes the trailing partial window. `prepare_source_playback`, `prepare_master_playback`, `prepare_ab_preview` also take `track_path` (parameter plumbing now, real audio thread wiring in Phase 3.2).
+
+Frontend:
+
+- `src/lib/api.ts`: matching signature updates for the four audio-path commands. `prepareWaveform` now takes `(trackId, trackPath, targetPixels?)`; `targetPixels` defaults to 1000 server-side when null.
+- `src/hooks/useTrackMaster.ts`: import loop now iterates over `imported` so it can pass each track's path to `prepareWaveform`. Default target is 1200 pixels for the waveform view.
+
+Fixtures:
+
+- Copied `Lay the Money on the Desk (1).mp3` into the gitignored `private-audio-fixtures/lay-the-money-on-the-desk.mp3` (4.28 MB).
+- Wrote `private-audio-fixtures/manifest.json` per the convention in `docs/PRIVATE_AUDIO_FIXTURES.md`.
+- Both files are gitignored (`private-audio-fixtures/` + `*.mp3`). The convention is documented but the audio itself never enters git.
+
+Tests (in `src-tauri/tests/contracts.rs`):
+
+- `import_tracks_extracts_metadata_from_synthetic_wav`: hound generates a 1-second 44.1 kHz stereo sine, asserts duration/sample rate/channels are recovered.
+- `prepare_waveform_decodes_synthetic_wav`: hound generates a 0.5-second sine at 0.5 amplitude, asserts the decoder returns stereo peaks within `(0.45, 0.55)` max.
+- `prepare_waveform_rejects_empty_path`.
+- `decode_real_fixture_if_present`: skips silently when `../private-audio-fixtures/lay-the-money-on-the-desk.mp3` is absent; otherwise asserts duration > 10s, sample rate > 0, channel count > 0, peak length ≥ 200, max peak > 0.1. The fixture path is canonicalized to absolute so the path-traversal check passes.
+- Replaced the old mock `prepare_waveform_returns_stereo_peaks` test (no longer relevant — the function now requires a real file path).
+- Existing 7 tests still pass.
+
+Verification:
+
+- `npm run build`: clean. Bundle 213 KB (66 KB gzipped).
+- `cargo test` (from `src-tauri/`): 11/11 contract tests pass. Total run time 5.57s including the real MP3 decode.
+- `cargo check`: clean.
+- The real-fixture test confirms symphonia successfully decodes the supplied MP3 end-to-end and produces structurally valid peak data.
+
+Real-audio fixture used: `private-audio-fixtures/lay-the-money-on-the-desk.mp3` — first real-mix fixture supplied by Dan. Used by the contract test, never committed.
+
+What failed or remains partial:
+
+- No playback yet. Transport buttons still toggle UI state only; real audio thread + cpal stream wiring is Phase 3.2.
+- No drag-on-window file events; "Add files" still uses the native dialog.
+- No cache. Every waveform call decodes the file end-to-end. For multi-minute tracks this is well under a second on the dev machine, but a peak/PCM cache in the Tauri app data directory would help re-opens. Adding it when needed.
+- The `recommended_universal` from `analyze_tracks` is still mock — analyzer doesn't run real metering yet. That's Phase 4 (offline mastering chain) territory.
+
+Next recommended slice:
+
+Phase 3.2 — real source playback. Add `cpal` to Cargo.toml; build a Rust audio thread that owns the cpal output stream; `prepare_source_playback` creates/replaces the stream for the requested track; new typed commands `play`, `pause`, `seek`, `stop` drive transport. Tauri events stream playback position back to the frontend so the transport time display updates and the waveform can show a playhead.
