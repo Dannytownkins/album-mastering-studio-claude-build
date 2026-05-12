@@ -256,27 +256,34 @@ export function useTrackMaster() {
         });
         markStale(id);
       }
-      // Phase 5 live chain: push fresh coeffs only when the change reaches the
-      // currently-playing master output. In album mode that depends on whether
-      // the loaded track is overriding or following.
+      // Phase 5 live chain: push fresh coeffs whenever the edit affects a track
+      // that's currently loaded as Mastered playback. The previous version of
+      // this check gated on `loadedTrackId` (from the backend playback tick),
+      // which has a ~50 ms round-trip latency from `playMaster` returning; that
+      // window let live edits silently no-op right after starting playback or
+      // during fast slider drags. `loadedKindByTrack` is set synchronously in
+      // `playWithKind`, so it's the authoritative "is this track playing as
+      // master right now?" signal from React's POV.
       if (!nextSettings) return;
-      if (
-        loadedTrackId !== null &&
-        loadedKindByTrack[loadedTrackId] === "master"
-      ) {
-        const loadedFollowsAlbum =
-          mode === "album" && !overrideAlbum.has(loadedTrackId);
-        const shouldPush = editingAlbumIntent
-          ? loadedFollowsAlbum
-          : loadedTrackId === id;
-        if (shouldPush) {
-          api.updateChain(nextSettings).catch((err) => {
-            setError(String(err));
-          });
-        }
+      let shouldPush = false;
+      if (editingAlbumIntent) {
+        // Album intent edit: push if any track currently loaded as master is
+        // following the album intent (not overriding).
+        shouldPush = Object.entries(loadedKindByTrack).some(
+          ([tid, kind]) =>
+            kind === "master" && !overrideAlbum.has(tid as TrackId),
+        );
+      } else {
+        // Per-track edit: push if THIS track is currently loaded as master.
+        shouldPush = loadedKindByTrack[id] === "master";
+      }
+      if (shouldPush) {
+        api.updateChain(nextSettings).catch((err) => {
+          setError(String(err));
+        });
       }
     },
-    [mode, overrideAlbum, markStale, loadedTrackId, loadedKindByTrack],
+    [mode, overrideAlbum, markStale, loadedKindByTrack],
   );
 
   const toggleOverrideAlbum = useCallback(
@@ -776,19 +783,20 @@ export function useTrackMaster() {
         }));
         markStale(selectedTrackId);
       }
-      // Push to live chain if currently playing the affected master.
-      if (
-        loadedTrackId !== null &&
-        loadedKindByTrack[loadedTrackId] === "master"
-      ) {
-        const loadedFollowsAlbum =
-          mode === "album" && !overrideAlbum.has(loadedTrackId);
-        const targets = mode === "album" && !selectedIsOverriding
-          ? loadedFollowsAlbum
-          : loadedTrackId === selectedTrackId;
-        if (targets) {
-          api.updateChain(preset.settings).catch((err) => setError(String(err)));
-        }
+      // Push to live chain if currently playing the affected master. Same
+      // shouldPush logic as updateSettings — `loadedKindByTrack` is the
+      // synchronous source of truth, not the tick-driven `loadedTrackId`.
+      let shouldPush = false;
+      if (mode === "album" && !selectedIsOverriding) {
+        shouldPush = Object.entries(loadedKindByTrack).some(
+          ([tid, kind]) =>
+            kind === "master" && !overrideAlbum.has(tid as TrackId),
+        );
+      } else if (selectedTrackId) {
+        shouldPush = loadedKindByTrack[selectedTrackId] === "master";
+      }
+      if (shouldPush) {
+        api.updateChain(preset.settings).catch((err) => setError(String(err)));
       }
     },
     [
@@ -796,7 +804,6 @@ export function useTrackMaster() {
       selectedIsOverriding,
       selectedTrackId,
       markStale,
-      loadedTrackId,
       loadedKindByTrack,
       overrideAlbum,
     ],

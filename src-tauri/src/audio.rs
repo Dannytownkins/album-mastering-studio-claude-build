@@ -607,12 +607,46 @@ fn audio_thread(rx: mpsc::Receiver<AudioCommand>, snapshot: Arc<RwLock<PlaybackS
                 let _ = reply.send(outcome);
             }
             Ok(AudioCommand::UpdateChain { settings }) => {
+                // Diagnostic: log every update_chain call so the running `tauri
+                // dev` console shows live edits arriving. Cheap (one eprintln
+                // per slider tick) and printable enough to confirm wiring at
+                // a glance. Remove or gate behind a feature flag once Dan's
+                // real-time confidence is back.
+                let state_present = state.is_some();
+                let tx_present = state
+                    .as_ref()
+                    .and_then(|s| s.live_coeffs_tx.as_ref())
+                    .is_some();
+                eprintln!(
+                    "[audio] update_chain: state={} live_tx={} preset={:?} intensity={:.2} eq=[{:.1}/{:.1}/{:.1}] vm={}",
+                    state_present,
+                    tx_present,
+                    settings.preset,
+                    settings.intensity,
+                    settings.eq_low_db,
+                    settings.eq_mid_db,
+                    settings.eq_high_db,
+                    settings.volume_match
+                );
                 if let Some(s) = state.as_ref() {
                     if let Some(tx) = s.live_coeffs_tx.as_ref() {
                         let coeffs =
                             crate::dsp::ChainCoeffs::from_settings(s.live_sample_rate, &settings);
-                        let _ = tx.send(coeffs);
+                        match tx.send(coeffs) {
+                            Ok(()) => {
+                                eprintln!("[audio] update_chain: coeffs sent to MasteringSource");
+                            }
+                            Err(e) => {
+                                eprintln!("[audio] update_chain: send FAILED: {e}");
+                            }
+                        }
+                    } else {
+                        eprintln!(
+                            "[audio] update_chain: SKIPPED — no live_coeffs_tx (master playback not active)"
+                        );
                     }
+                } else {
+                    eprintln!("[audio] update_chain: SKIPPED — no audio state yet");
                 }
             }
             Ok(AudioCommand::Pause) => {
@@ -860,6 +894,16 @@ impl Iterator for MasteringSource {
                     latest = Some(c);
                 }
                 if let Some(new_coeffs) = latest {
+                    // Diagnostic: confirm the MasteringSource is consuming
+                    // live updates. The frequency of this print equals slider
+                    // tick rate, so it should appear in lockstep with the
+                    // upstream `update_chain: coeffs sent` line.
+                    eprintln!(
+                        "[audio] MasteringSource: arming crossfade with new coeffs (input_gain_lin={:.3} ceiling_lin={:.3} vm_gain={:.3})",
+                        new_coeffs.input_gain_lin,
+                        new_coeffs.ceiling_lin,
+                        new_coeffs.volume_match_gain_lin
+                    );
                     self.pending_chain =
                         Some(crate::dsp::MasteringChain::with_coeffs_inheriting_state(
                             new_coeffs,
