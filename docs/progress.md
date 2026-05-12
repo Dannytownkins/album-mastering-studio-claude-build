@@ -1142,3 +1142,50 @@ Phase 12.1 — real-audio smoke and listening on Dan's private fixtures (still b
 4. Phase 14.x — installer / icon polish for portability.
 
 Track Master release-candidate is now blocked on (1) Phase 7.4 (undo/redo) and (2) Phase 12.1 (real listening). The remaining DSP and Album Master items are quality refinements, not release-candidate gates.
+
+## 2026-05-12 — Phase 12.1: real-audio backend verification (mechanical half — partial)
+
+Goal:
+
+Run the Phase 12.1 mechanical backend verification on Dan's first private fixture once it landed in `private-audio-fixtures/`. This entry captures the mechanical half (decode → analyze → render); the listening half (UI smoke + sound-quality feedback) is in progress in the same session and will be appended once Dan reports findings. Treating this as a partial entry so the verified work is recorded immediately instead of waiting for the full session to wrap.
+
+What changed:
+
+- `private-audio-fixtures/` directory now contains a single Dan-provided 46 MB WAV (filename redacted from this entry per the "do not commit fixture-specific generated artifacts" rule in `PRIVATE_AUDIO_FIXTURES.md`; the directory itself is gitignored so the audio stays private).
+- `src-tauri/tests/contracts.rs`: new test `phase_12_1_real_fixture_metering_snapshot`. Imports the fixture, analyzes it, prepares the waveform peaks, renders a Track Master with default Universal settings, re-analyzes the rendered master, and runs the post-render quality checks via `run_export_checks`. All metering numbers (LUFS / TP / DR / spectral balance / inferred role + character / source vs master deltas / which advisories fire) are printed via `eprintln!` for `--nocapture` runs. Assertions stay loose (signal exists, output writes, master TP ≤ 0.5 dBTP) so the test is a repeatable snapshot, not a behavior pin. Skips silently when no fixture is present.
+
+Verification:
+
+- Existing 3 fixture-aware contract tests, run from the previously-built `target/debug/deps/contracts-*.exe` against the real fixture:
+  - `decode_real_fixture_if_present` ✅ ok — import + decode + waveform peaks on the real WAV.
+  - `analyze_tracks_runs_against_real_fixture_if_present` ✅ ok — BS.1770 analyze completed with finite LUFS, TP, DR, and spectral balance summing to 1.0 ± 0.05.
+  - `mastering_render_processes_real_fixture_if_present` ✅ ok — full Track Master render (including Phase 11.2.c 4× ISP limiter) completed in 166.73 s in debug mode; output WAV ≥ 10 s, ≥ 44.1 kHz, ≥ 1 channel as asserted.
+- `cargo check --tests` clean — confirms the new snapshot test type-checks. Could not fully run it this session because `npm run tauri dev` was active on Dan's machine and Windows held the main binary (`album-mastering-studio.exe`) locked, preventing cargo from relinking. The snapshot test will run on the next `cargo test` invocation when the dev app is closed.
+- `npm run build`: clean (Phase 12.1 prep slice was already verified earlier this session).
+- `npm run tauri dev`: running on Dan's machine for the listening half of this checkpoint. Not run by Claude — blocking command, manual smoke only.
+
+Real-audio fixture used:
+
+- One private WAV in `private-audio-fixtures/` (46 MB). Filename, path, and any derived audio artifacts (rendered masters, waveform images) deliberately not committed.
+
+What failed or remains partial:
+
+- **Specific metering numbers (LUFS / TP / DR / spectral balance / inferred role) are NOT captured this session.** The existing fixture-aware tests assert numbers are sane but don't print them; the new snapshot test captures them but couldn't run because of the binary lock above. Concrete numbers will land in the next progress entry once the snapshot test runs.
+- **Listening half of Phase 12.1 is in progress, not complete.** Dan is currently running the app and has flagged "some bugs or UI fixes and maybe even some audio/preset things" to go over. Those will be captured in the next progress entry along with whatever fixes / scoped slices come out of triage.
+- **UI smoke verification (drag/drop on window, A/B toggle preserving playhead, Volume Match off-by-default + audible-when-on, region selection drag, loop control, real-time control updates, Preview WAV button, Export Master flow, receipt UI, Open Output button) is still entirely Dan-side.** Claude cannot run `npm run tauri dev` autonomously (it blocks).
+- **Streaming-headroom advisory firing behavior on real material is unconfirmed** because the master's true peak number wasn't captured. The Phase 6.x advisory fires at -1.0 < TP ≤ -0.1 dBTP; whether it fires on Dan's track depends on the rendered master's actual peak.
+
+Next recommended slice:
+
+The Phase 12.1 *listening half* is the next slice. Concretely:
+
+1. Dan reports the bugs / UI fixes / audio-preset observations he flagged in this session.
+2. Claude triages each finding into one of three buckets:
+   - **Backend bugs** with a clear fix → scope a small slice, implement, verify via cargo test, ship.
+   - **UI fixes** → scope a slice; note that backend tests + `npm run build` are the only autonomous verification available; Dan re-runs `npm run tauri dev` to confirm.
+   - **Audio/preset/feel feedback** → requires Dan's listening to verify any change. Claude should propose specific, narrow code changes with rationale, then defer to Dan's listening rather than guessing.
+3. Each bucket's findings get a follow-up progress entry. Listening findings that are subjective sound-quality calls should NOT be acted on without Dan's explicit "yes, this change made it better" confirmation per the goal's "no subjective sound-quality decisions without real listening notes" rule.
+
+Subordinate next step (low priority, can wait until Dan closes the app):
+
+- Run `cargo test --test contracts phase_12_1_real_fixture_metering_snapshot -- --nocapture` once the dev app is not running. Capture the eprintln output and append concrete metering numbers to this entry as a follow-up.

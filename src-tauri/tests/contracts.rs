@@ -403,6 +403,159 @@ async fn decode_real_fixture_if_present() {
     assert!(max > 0.1, "expected non-trivial signal energy in the fixture");
 }
 
+/// Phase 12.1 mechanical verification: imports the local fixture, runs analyze,
+/// renders a Track Master with default Universal settings, then re-analyzes the
+/// rendered master to capture concrete metering numbers. Eprintln output is the
+/// real deliverable (run with `--nocapture` to see it); assertions stay loose so
+/// the test is a snapshot, not a behavior pin. Skips silently when no fixture is
+/// present so the suite still passes on clean machines / CI.
+#[tokio::test]
+async fn phase_12_1_real_fixture_metering_snapshot() {
+    let Some(path) = real_fixture_path() else {
+        eprintln!("Phase 12.1 snapshot: no fixture in private-audio-fixtures/, skipping");
+        return;
+    };
+    let abs = path.canonicalize().expect("canonicalize fixture");
+    let path_str = abs.to_string_lossy().to_string();
+    let display_name = abs
+        .file_name()
+        .map(|s| s.to_string_lossy().to_string())
+        .unwrap_or_else(|| "<unnamed>".to_string());
+
+    eprintln!("===== Phase 12.1 fixture metering snapshot =====");
+    eprintln!("Fixture file: {display_name}");
+
+    // Import — exercises files::import_tracks (drag/drop pathway).
+    let tracks = files::import_tracks(vec![path_str.clone()])
+        .await
+        .expect("import");
+    assert_eq!(tracks.len(), 1, "expected one imported track");
+    let t = &tracks[0];
+    eprintln!(
+        "Import: display_name={:?} format={} channels={} sr={} duration={:.2}s",
+        t.display_name,
+        t.source_format,
+        t.channels.unwrap_or(0),
+        t.sample_rate.unwrap_or(0),
+        t.duration_seconds.unwrap_or(0.0),
+    );
+
+    // Analyze — exercises engine::analyze_tracks and the BS.1770 metering path.
+    let source_results = engine::analyze_tracks(vec![engine::AnalyzeRequest {
+        id: t.id.clone(),
+        path: path_str.clone(),
+    }])
+    .await
+    .expect("analyze source");
+    let source = &source_results[0];
+    eprintln!("Source analysis:");
+    eprintln!("  LUFS integrated:    {:>7.2}", source.lufs_integrated);
+    eprintln!("  LUFS short-term max:{:>7.2}", source.lufs_short_term_max);
+    eprintln!("  True peak (BS.1770):{:>7.2} dBTP", source.true_peak_dbtp);
+    eprintln!("  Dynamic range:      {:>7.2} LU", source.dynamic_range_lu);
+    eprintln!(
+        "  Spectral balance:   low={:.3} mid={:.3} high={:.3}",
+        source.spectral_balance.low, source.spectral_balance.mid, source.spectral_balance.high,
+    );
+    eprintln!("  Transient density:  {:>7.3}", source.transient_density);
+    eprintln!("  Stereo width:       {:>7.3}", source.stereo_width);
+    eprintln!(
+        "  Inferred role:      {:?} (confidence {:?})",
+        source.inferred_role, source.role_confidence
+    );
+    eprintln!(
+        "  Inferred character: {:?} (confidence {:?})",
+        source.inferred_character, source.character_confidence
+    );
+
+    // Waveform — exercises audio::prepare_waveform.
+    let peaks = audio::prepare_waveform(t.id.clone(), path_str.clone(), Some(500))
+        .await
+        .expect("waveform");
+    eprintln!(
+        "Waveform: {} channels, {} peaks per channel, sr={}",
+        peaks.channels.len(),
+        peaks.channels.first().map(|c| c.len()).unwrap_or(0),
+        peaks.sample_rate,
+    );
+
+    // Render — exercises engine::mastering_render (Track Master with default Universal).
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let job = engine::mastering_render(
+        t.id.clone(),
+        &abs,
+        &default_settings(),
+        tmp.path(),
+        RenderKind::Master,
+    )
+    .expect("render master");
+    assert!(matches!(job.status, JobStatus::Done));
+    let out_path = Path::new(&job.output_paths[0]);
+    eprintln!(
+        "Render: status={:?}, output exists={}, file size={} bytes",
+        job.status,
+        out_path.exists(),
+        std::fs::metadata(out_path).map(|m| m.len()).unwrap_or(0),
+    );
+
+    // Re-analyze the rendered master.
+    let master_results = engine::analyze_tracks(vec![engine::AnalyzeRequest {
+        id: TrackId("master".to_string()),
+        path: out_path.to_string_lossy().to_string(),
+    }])
+    .await
+    .expect("analyze master");
+    let master = &master_results[0];
+    eprintln!("Master analysis (default Universal at intensity 0.5):");
+    eprintln!(
+        "  LUFS integrated:    {:>7.2}  (delta {:+.2} LU)",
+        master.lufs_integrated,
+        master.lufs_integrated - source.lufs_integrated
+    );
+    eprintln!(
+        "  True peak:          {:>7.2} dBTP",
+        master.true_peak_dbtp
+    );
+    eprintln!(
+        "  Dynamic range:      {:>7.2} LU  (delta {:+.2} LU)",
+        master.dynamic_range_lu,
+        master.dynamic_range_lu - source.dynamic_range_lu
+    );
+
+    // Predict which advisories run_export_checks would fire on this master.
+    let report = ExportReport {
+        track_id: t.id.clone(),
+        output_path: out_path.to_string_lossy().to_string(),
+        measured_lufs: master.lufs_integrated,
+        measured_true_peak_dbtp: master.true_peak_dbtp,
+        measured_dynamic_range_lu: master.dynamic_range_lu,
+        source_format: t.source_format.clone(),
+        destination_format: "wav".to_string(),
+        sample_rate: t.sample_rate.unwrap_or(44_100),
+        bit_depth: 24,
+        checks: Vec::new(),
+    };
+    let checks = exports::run_export_checks(report).await.expect("checks");
+    eprintln!("Export checks ({} fired):", checks.len());
+    for c in &checks {
+        eprintln!("  [{:?}] {} -- {}", c.level, c.code, c.message);
+    }
+
+    // Loose sanity assertions — the snapshot prints are the deliverable.
+    assert!(source.lufs_integrated.is_finite());
+    assert!(master.lufs_integrated.is_finite());
+    assert!(
+        master.true_peak_dbtp <= 0.5,
+        "master TP {} > 0.5 dBTP suggests the limiter let too much through",
+        master.true_peak_dbtp
+    );
+    assert!(out_path.exists());
+    assert!(
+        std::fs::metadata(out_path).map(|m| m.len()).unwrap_or(0) > 1_000_000,
+        "rendered master is suspiciously small"
+    );
+}
+
 #[tokio::test]
 async fn run_export_checks_warns_on_high_true_peak() {
     let report = ExportReport {
