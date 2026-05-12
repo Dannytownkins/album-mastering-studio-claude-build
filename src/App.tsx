@@ -281,6 +281,7 @@ function TrackMaster({ tm }: { tm: ReturnType<typeof useTrackMaster> }) {
         volumeMatch={tm.transport.volumeMatch}
         durationSec={track.duration_seconds ?? 180}
         currentSec={tm.transport.currentTimeSec}
+        loopEnabled={!!tm.selectedRegion}
         onPlayPause={tm.togglePlay}
         onPlaybackKindChange={tm.setPlaybackKind}
         onLoopToggle={tm.toggleLoop}
@@ -647,6 +648,7 @@ function Transport({
   volumeMatch,
   durationSec,
   currentSec,
+  loopEnabled,
   onPlayPause,
   onPlaybackKindChange,
   onLoopToggle,
@@ -658,6 +660,7 @@ function Transport({
   volumeMatch: boolean;
   durationSec: number;
   currentSec: number;
+  loopEnabled: boolean;
   onPlayPause: () => void;
   onPlaybackKindChange: (kind: PlaybackKindUI) => void;
   onLoopToggle: () => void;
@@ -681,7 +684,12 @@ function Transport({
           type="button"
           className={"icon-btn " + (loop ? "on" : "")}
           onClick={onLoopToggle}
-          title="Loop region"
+          disabled={!loopEnabled}
+          title={
+            loopEnabled
+              ? "Loop region"
+              : "Shift+drag the waveform to define a region first"
+          }
         >
           ⟲
         </button>

@@ -606,10 +606,15 @@ button.primary:disabled {
   font-size: 0.9rem;
 }
 
-.icon-btn:hover,
+.icon-btn:hover:not(:disabled),
 .icon-btn.on {
   color: var(--accent);
   border-color: var(--accent);
+}
+
+.icon-btn:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
 }
 
 .ab-toggle {

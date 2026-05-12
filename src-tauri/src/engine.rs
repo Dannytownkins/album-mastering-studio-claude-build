@@ -29,10 +29,30 @@ pub struct AlbumRenderRequest {
 pub async fn analyze_tracks(tracks: Vec<AnalyzeRequest>) -> CommandResult<Vec<AnalysisResult>> {
     let total = tracks.len();
     let mut out = Vec::with_capacity(total);
+    let mut failures: Vec<(TrackId, String)> = Vec::new();
     for (index, req) in tracks.into_iter().enumerate() {
-        let mut result = analyze_one(req.id, Path::new(&req.path))?;
-        nudge_role_by_position(&mut result, index, total);
-        out.push(result);
+        match analyze_one(req.id.clone(), Path::new(&req.path)) {
+            Ok(mut result) => {
+                nudge_role_by_position(&mut result, index, total);
+                out.push(result);
+            }
+            Err(e) => {
+                failures.push((req.id, e.to_string()));
+            }
+        }
+    }
+    // Partial-success policy: if every track failed, surface the first error
+    // (otherwise the frontend has no signal at all). If at least one succeeded,
+    // return the successes and log the failures — session restore and bulk
+    // imports can keep working when one source file has moved.
+    if out.is_empty() && !failures.is_empty() {
+        let (_, msg) = &failures[0];
+        return Err(CommandError::Other(format!(
+            "analyze failed for all tracks: {msg}"
+        )));
+    }
+    for (id, msg) in failures {
+        eprintln!("analyze_tracks: skipping {} — {}", id.as_str(), msg);
     }
     Ok(out)
 }
