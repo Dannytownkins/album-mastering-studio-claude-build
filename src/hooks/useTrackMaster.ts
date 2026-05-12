@@ -637,6 +637,27 @@ export function useTrackMaster() {
     playWithKind,
   ]);
 
+  // Spacebar = toggle play/pause. Skip when focus is in a form control so
+  // typing in a value-input field still works (Phase 12.1 Dan feedback flagged
+  // this as mandatory). preventDefault stops the page from also scrolling.
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if (e.code !== "Space" && e.key !== " ") return;
+      const target = e.target as HTMLElement | null;
+      const tag = target?.tagName;
+      const isFormField =
+        tag === "INPUT" ||
+        tag === "TEXTAREA" ||
+        tag === "SELECT" ||
+        (target?.isContentEditable ?? false);
+      if (isFormField) return;
+      e.preventDefault();
+      void togglePlay();
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [togglePlay]);
+
   const setPlaybackKind = useCallback(
     async (kind: PlaybackKindUI) => {
       if (!selectedTrackId) return;

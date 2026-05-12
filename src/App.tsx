@@ -873,6 +873,7 @@ function Macros({
         step={0.01}
         format={(v) => v.toFixed(2)}
         onChange={onIntensity}
+        defaultValue={0.5}
       />
       <Slider
         label="Low"
@@ -882,6 +883,7 @@ function Macros({
         step={0.1}
         format={(v) => `${v > 0 ? "+" : ""}${v.toFixed(1)} dB`}
         onChange={(v) => onEq("low", v)}
+        defaultValue={0}
       />
       <Slider
         label="Mid"
@@ -891,6 +893,7 @@ function Macros({
         step={0.1}
         format={(v) => `${v > 0 ? "+" : ""}${v.toFixed(1)} dB`}
         onChange={(v) => onEq("mid", v)}
+        defaultValue={0}
       />
       <Slider
         label="High"
@@ -900,6 +903,7 @@ function Macros({
         step={0.1}
         format={(v) => `${v > 0 ? "+" : ""}${v.toFixed(1)} dB`}
         onChange={(v) => onEq("high", v)}
+        defaultValue={0}
       />
     </section>
   );
@@ -913,6 +917,7 @@ function Slider({
   step,
   format,
   onChange,
+  defaultValue,
 }: {
   label: string;
   value: number;
@@ -921,7 +926,17 @@ function Slider({
   step: number;
   format: (v: number) => string;
   onChange: (v: number) => void;
+  /// Optional value to snap to on double-click. Phase 12.1 Dan feedback —
+  /// dbl-click should return the slider to its neutral / default position
+  /// (intensity to 0.5, EQ bands to 0 dB, etc.). When omitted, double-click
+  /// is a no-op so callers that don't have a natural default opt out cleanly.
+  defaultValue?: number;
 }) {
+  const handleReset = () => {
+    if (defaultValue !== undefined && defaultValue !== value) {
+      onChange(defaultValue);
+    }
+  };
   return (
     <div className="slider-row">
       <label className="slider-label">{label}</label>
@@ -932,9 +947,26 @@ function Slider({
         step={step}
         value={value}
         onChange={(e) => onChange(parseFloat(e.target.value))}
+        onDoubleClick={handleReset}
         className="slider-input"
+        title={
+          defaultValue !== undefined
+            ? `Double-click to reset to ${format(defaultValue)}`
+            : undefined
+        }
       />
-      <span className="slider-value">{format(value)}</span>
+      <span
+        className="slider-value"
+        onDoubleClick={handleReset}
+        style={defaultValue !== undefined ? { cursor: "pointer" } : undefined}
+        title={
+          defaultValue !== undefined
+            ? `Double-click to reset to ${format(defaultValue)}`
+            : undefined
+        }
+      >
+        {format(value)}
+      </span>
     </div>
   );
 }
