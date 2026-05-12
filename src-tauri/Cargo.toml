@@ -30,6 +30,7 @@ symphonia = { version = "0.5", features = [
     "ogg",
     "vorbis",
 ] }
+rodio = { version = "0.20", features = ["symphonia-all"] }
 
 [dev-dependencies]
 tokio = { version = "1", features = ["macros", "rt"] }

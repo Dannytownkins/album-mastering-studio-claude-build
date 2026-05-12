@@ -177,3 +177,47 @@ What failed or remains partial:
 Next recommended slice:
 
 Phase 3.2 — real source playback. Add `cpal` to Cargo.toml; build a Rust audio thread that owns the cpal output stream; `prepare_source_playback` creates/replaces the stream for the requested track; new typed commands `play`, `pause`, `seek`, `stop` drive transport. Tauri events stream playback position back to the frontend so the transport time display updates and the waveform can show a playhead.
+
+## 2026-05-11 — Phase 3.2: real source playback via rodio + dedicated audio thread
+
+Goal:
+
+Wire the transport play/pause buttons to actual audio output. User clicks play, the imported track plays. Click pause, it pauses. Position updates flow back into the frontend transport display.
+
+What changed:
+
+Backend:
+
+- Added `rodio = "0.20"` with `symphonia-all` features to `src-tauri/Cargo.toml`.
+- `src-tauri/src/types.rs`: added `PlaybackTick { track_id, position_sec, is_playing, is_loaded }` for IPC event payloads.
+- `src-tauri/src/audio.rs`: introduced `AudioPlayer` — a `Send + Sync` handle to a dedicated audio thread. The thread owns the `rodio::OutputStream`, `OutputStreamHandle`, and `Sink` (all of which are `!Send` on most platforms, so they must stay confined to a single thread). Commands flow over `mpsc::Sender<AudioCommand>` (Play, Pause, Resume, Stop, Shutdown); the current snapshot is shared via `Arc<RwLock<PlaybackSnapshot>>`. The thread loops on `recv_timeout(50ms)` so that even between commands the snapshot stays fresh with the sink's reported position.
+- New typed commands: `play_track(track_id, track_path)`, `pause_playback()`, `resume_playback()`, `stop_playback()`. `play_track` is best-effort blocking on the reply channel (5s timeout) so the frontend gets a real success/failure signal.
+- `src-tauri/src/lib.rs`: `.manage(Arc::new(AudioPlayer::new()))`; setup hook spawns a 50ms tick thread that reads the snapshot and emits a `playback:tick` event with the current `PlaybackTick`. The thread silently skips emit when no track is loaded so the frontend doesn't churn on no-op events.
+
+Frontend:
+
+- `src/bindings.ts`: added `PlaybackTick` type.
+- `src/lib/api.ts`: new methods `playTrack`, `pausePlayback`, `resumePlayback`, `stopPlayback`. Added `onPlaybackTick(handler)` helper that wraps `@tauri-apps/api/event`'s `listen()` and returns an unlisten function.
+- `src/hooks/useTrackMaster.ts`: subscribed to `playback:tick` via `useEffect` — updates transport `isPlaying`/`currentTimeSec` from the event and tracks `loadedTrackId` separately. `togglePlay` now branches on (selected vs loaded track) and on (playing vs paused) to issue the right command: `playTrack` if the selected track isn't loaded, `pausePlayback` if playing, `resumePlayback` if paused. `selectTrack` issues a best-effort `stopPlayback` if switching away from the loaded track.
+
+Verification:
+
+- `npm run build`: clean. Bundle 214 KB (67 KB gzipped) — small bump from adding `@tauri-apps/api/event` listener.
+- `cargo build`: clean. The first compile was Send-unsafe with `rodio::OutputStream` held directly in `AudioPlayer`; fixed by moving rodio types into a dedicated thread and exposing only `Send` channel + atomic snapshot.
+- `cargo test` (from `src-tauri/`): 11/11 contract tests still pass. Total 8.50s including real MP3 decode.
+- `npm run tauri dev`: deferred (interactive — Dan to verify actual playback by clicking play on the imported MP3).
+
+Real-audio fixture used: `private-audio-fixtures/lay-the-money-on-the-desk.mp3` — the existing decode test still passes against it; runtime playback verification is manual.
+
+What failed or remains partial:
+
+- First architecture attempt (rodio types directly in `AudioPlayer`) failed Send+Sync; refactored to mpsc + audio thread before commit.
+- Seek not yet implemented. Phase 3.3 adds seek-on-click, region selection, region loop.
+- Original/Mastered A/B is still UI state only — both branches currently point to the source file. Phase 4 wires the mastered audio path.
+- No bridge between the real waveform peaks and a playback cursor overlay yet — the waveform shows static peaks; playhead position lives in the transport bar.
+- No automated test for actual audio output (would require a virtual audio device on CI). The audio thread architecture is verified at compile time and through manual playback testing.
+- `prepare_source_playback`/`prepare_master_playback`/`prepare_ab_preview` are still stubs that return `PlaybackHandle`s; the real play path is the new `play_track` command. The prepare_* commands are kept on the contract surface for future use (Phase 5 may re-introduce them with real meaning around AB preview prep).
+
+Next recommended slice:
+
+Phase 3.3 — seek + waveform playhead overlay. Add `seek_playback(position_sec)` command; update the audio thread to handle seek via `Sink` rebuild (rodio doesn't have direct seek; the standard pattern is to skip-to-position by decoding a new source pinned to the offset). Frontend: click on the waveform jumps to that position; render a vertical line over the waveform at `transport.currentTimeSec / duration_seconds`. After that, region selection (drag on waveform) + region loop.

@@ -1,6 +1,6 @@
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { open } from "@tauri-apps/plugin-dialog";
-import { api } from "../lib/api";
+import { api, onPlaybackTick } from "../lib/api";
 import type {
   AdvancedSettings,
   AnalysisResult,
@@ -75,6 +75,24 @@ export function useTrackMaster() {
   });
   const [advancedOpen, setAdvancedOpen] = useState(false);
   const [lastExportReceipt, setLastExportReceipt] = useState<ExportReceipt | null>(null);
+  const [loadedTrackId, setLoadedTrackId] = useState<TrackId | null>(null);
+
+  useEffect(() => {
+    let unlisten: (() => void) | undefined;
+    onPlaybackTick((tick) => {
+      setLoadedTrackId(tick.is_loaded ? tick.track_id : null);
+      setTransport((t) => ({
+        ...t,
+        currentTimeSec: tick.position_sec,
+        isPlaying: tick.is_playing,
+      }));
+    }).then((fn) => {
+      unlisten = fn;
+    });
+    return () => {
+      unlisten?.();
+    };
+  }, []);
 
   const selectedTrack = useMemo(
     () => tracks.find((t) => t.id === selectedTrackId),
@@ -187,10 +205,18 @@ export function useTrackMaster() {
     }
   }, [importFiles]);
 
-  const selectTrack = useCallback((id: TrackId) => {
-    setSelectedTrackId(id);
-    setTransport((t) => ({ ...t, isPlaying: false, currentTimeSec: 0 }));
-  }, []);
+  const selectTrack = useCallback(
+    (id: TrackId) => {
+      setSelectedTrackId(id);
+      setTransport((t) => ({ ...t, isPlaying: false, currentTimeSec: 0 }));
+      if (loadedTrackId && loadedTrackId !== id) {
+        api.stopPlayback().catch(() => {
+          /* swallow — best-effort */
+        });
+      }
+    },
+    [loadedTrackId],
+  );
 
   const removeTrack = useCallback(
     (id: TrackId) => {
@@ -303,9 +329,21 @@ export function useTrackMaster() {
     }
   }, [selectedTrackId, selectedAnalysis, selectedSettings, selectedTrack]);
 
-  const togglePlay = useCallback(() => {
-    setTransport((t) => ({ ...t, isPlaying: !t.isPlaying }));
-  }, []);
+  const togglePlay = useCallback(async () => {
+    if (!selectedTrack) return;
+    setError(null);
+    try {
+      if (loadedTrackId !== selectedTrack.id) {
+        await api.playTrack(selectedTrack.id, selectedTrack.path);
+      } else if (transport.isPlaying) {
+        await api.pausePlayback();
+      } else {
+        await api.resumePlayback();
+      }
+    } catch (err) {
+      setError(String(err));
+    }
+  }, [selectedTrack, loadedTrackId, transport.isPlaying]);
 
   const setPlaybackKind = useCallback((kind: PlaybackKindUI) => {
     setTransport((t) => ({ ...t, playbackKind: kind }));

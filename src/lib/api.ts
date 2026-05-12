@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import type {
   AbPreview,
   AnalysisResult,
@@ -6,6 +7,7 @@ import type {
   ImportedTrack,
   MasteringSettings,
   PlaybackHandle,
+  PlaybackTick,
   PresetKind,
   ProjectState,
   QualityCheck,
@@ -109,4 +111,21 @@ export const api = {
     invoke<UserPreset>("save_user_preset", { name, kind, settings }),
 
   listUserPresets: () => invoke<UserPreset[]>("list_user_presets"),
+
+  playTrack: (trackId: TrackId, trackPath: string) =>
+    invoke<null>("play_track", {
+      track_id: trackId,
+      track_path: trackPath,
+    }),
+
+  pausePlayback: () => invoke<null>("pause_playback"),
+  resumePlayback: () => invoke<null>("resume_playback"),
+  stopPlayback: () => invoke<null>("stop_playback"),
 };
+
+export function onPlaybackTick(
+  handler: (tick: PlaybackTick) => void,
+): Promise<UnlistenFn> {
+  return listen<PlaybackTick>("playback:tick", (event) => handler(event.payload));
+}
+

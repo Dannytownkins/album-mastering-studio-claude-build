@@ -1,5 +1,8 @@
 use crate::types::*;
-use std::path::Path;
+use std::path::{Path, PathBuf};
+use std::sync::mpsc::{self, RecvTimeoutError, Sender};
+use std::sync::{Arc, Mutex, RwLock};
+use std::time::Duration;
 
 use symphonia::core::audio::{AudioBufferRef, SampleBuffer};
 use symphonia::core::codecs::{DecoderOptions, CODEC_TYPE_NULL};
@@ -75,6 +78,48 @@ pub async fn prepare_waveform(
         total_samples: decoded.total_samples,
         sample_rate: decoded.sample_rate,
     })
+}
+
+#[tauri::command]
+pub async fn play_track(
+    track_id: TrackId,
+    track_path: String,
+    player: tauri::State<'_, Arc<AudioPlayer>>,
+) -> CommandResult<()> {
+    if track_path.is_empty() {
+        return Err(CommandError::InvalidPath("empty path".to_string()));
+    }
+    let path = Path::new(&track_path);
+    if crate::files::has_parent_dir_component(path) {
+        return Err(CommandError::InvalidPath(format!(
+            "path traversal not allowed: {track_path}"
+        )));
+    }
+    player.play_track(track_id, path)
+}
+
+#[tauri::command]
+pub async fn pause_playback(
+    player: tauri::State<'_, Arc<AudioPlayer>>,
+) -> CommandResult<()> {
+    player.pause();
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn resume_playback(
+    player: tauri::State<'_, Arc<AudioPlayer>>,
+) -> CommandResult<()> {
+    player.resume();
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn stop_playback(
+    player: tauri::State<'_, Arc<AudioPlayer>>,
+) -> CommandResult<()> {
+    player.stop();
+    Ok(())
 }
 
 fn handle(track_id: TrackId, kind: PlaybackKind) -> PlaybackHandle {
@@ -198,4 +243,194 @@ pub fn decode_to_peaks(path: &Path, target_pixels: u32) -> CommandResult<Decoded
         total_samples: total_decoded_frames,
         sample_rate,
     })
+}
+
+// ============================================================================
+// AudioPlayer — a Send + Sync handle to a dedicated audio thread that owns
+// the rodio OutputStream + Sink (which are !Send). Commands flow over an
+// mpsc channel; the current playback snapshot is shared via Arc<RwLock<_>>.
+// ============================================================================
+
+enum AudioCommand {
+    Play {
+        track_id: TrackId,
+        path: PathBuf,
+        reply: Sender<Result<(), String>>,
+    },
+    Pause,
+    Resume,
+    Stop,
+    Shutdown,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct PlaybackSnapshot {
+    pub track_id: Option<TrackId>,
+    pub position_sec: f64,
+    pub is_playing: bool,
+    pub is_loaded: bool,
+}
+
+pub struct AudioPlayer {
+    tx: Mutex<Option<Sender<AudioCommand>>>,
+    snapshot: Arc<RwLock<PlaybackSnapshot>>,
+}
+
+impl AudioPlayer {
+    pub fn new() -> Self {
+        let snapshot = Arc::new(RwLock::new(PlaybackSnapshot::default()));
+        let (tx, rx) = mpsc::channel::<AudioCommand>();
+        let snap_for_thread = snapshot.clone();
+        std::thread::Builder::new()
+            .name("audio-player".to_string())
+            .spawn(move || audio_thread(rx, snap_for_thread))
+            .expect("spawn audio thread");
+        Self {
+            tx: Mutex::new(Some(tx)),
+            snapshot,
+        }
+    }
+
+    pub fn play_track(&self, track_id: TrackId, path: &Path) -> CommandResult<()> {
+        let (reply_tx, reply_rx) = mpsc::channel();
+        self.send(AudioCommand::Play {
+            track_id,
+            path: path.to_path_buf(),
+            reply: reply_tx,
+        })
+        .map_err(CommandError::Other)?;
+        match reply_rx.recv_timeout(Duration::from_secs(5)) {
+            Ok(Ok(())) => Ok(()),
+            Ok(Err(e)) => Err(CommandError::Other(e)),
+            Err(_) => Err(CommandError::Other(
+                "audio thread reply timeout".to_string(),
+            )),
+        }
+    }
+
+    pub fn pause(&self) {
+        let _ = self.send(AudioCommand::Pause);
+    }
+
+    pub fn resume(&self) {
+        let _ = self.send(AudioCommand::Resume);
+    }
+
+    pub fn stop(&self) {
+        let _ = self.send(AudioCommand::Stop);
+    }
+
+    pub fn snapshot(&self) -> PlaybackSnapshot {
+        self.snapshot.read().expect("snapshot read").clone()
+    }
+
+    fn send(&self, cmd: AudioCommand) -> Result<(), String> {
+        let guard = self.tx.lock().map_err(|_| "audio tx mutex poisoned".to_string())?;
+        let tx = guard
+            .as_ref()
+            .ok_or_else(|| "audio thread offline".to_string())?;
+        tx.send(cmd)
+            .map_err(|_| "audio thread disconnected".to_string())
+    }
+}
+
+impl Default for AudioPlayer {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl Drop for AudioPlayer {
+    fn drop(&mut self) {
+        if let Ok(mut guard) = self.tx.lock() {
+            if let Some(tx) = guard.take() {
+                let _ = tx.send(AudioCommand::Shutdown);
+            }
+        }
+    }
+}
+
+struct AudioThreadState {
+    _stream: rodio::OutputStream,
+    handle: rodio::OutputStreamHandle,
+    sink: rodio::Sink,
+    current_track: Option<TrackId>,
+}
+
+fn audio_thread(rx: mpsc::Receiver<AudioCommand>, snapshot: Arc<RwLock<PlaybackSnapshot>>) {
+    let mut state: Option<AudioThreadState> = None;
+    loop {
+        match rx.recv_timeout(Duration::from_millis(50)) {
+            Ok(AudioCommand::Play {
+                track_id,
+                path,
+                reply,
+            }) => {
+                let outcome = handle_play(&mut state, track_id, &path);
+                let _ = reply.send(outcome);
+            }
+            Ok(AudioCommand::Pause) => {
+                if let Some(s) = state.as_ref() {
+                    s.sink.pause();
+                }
+            }
+            Ok(AudioCommand::Resume) => {
+                if let Some(s) = state.as_ref() {
+                    s.sink.play();
+                }
+            }
+            Ok(AudioCommand::Stop) => {
+                if let Some(s) = state.as_mut() {
+                    s.sink.stop();
+                    s.current_track = None;
+                }
+            }
+            Ok(AudioCommand::Shutdown) => break,
+            Err(RecvTimeoutError::Timeout) => {}
+            Err(RecvTimeoutError::Disconnected) => break,
+        }
+
+        let next_snap = match state.as_ref() {
+            Some(s) if s.current_track.is_some() => PlaybackSnapshot {
+                track_id: s.current_track.clone(),
+                position_sec: s.sink.get_pos().as_secs_f64(),
+                is_playing: !s.sink.is_paused() && !s.sink.empty(),
+                is_loaded: true,
+            },
+            _ => PlaybackSnapshot::default(),
+        };
+        if let Ok(mut w) = snapshot.write() {
+            *w = next_snap;
+        }
+    }
+}
+
+fn handle_play(
+    state: &mut Option<AudioThreadState>,
+    track_id: TrackId,
+    path: &Path,
+) -> Result<(), String> {
+    let file = std::fs::File::open(path).map_err(|e| e.to_string())?;
+    let reader = std::io::BufReader::new(file);
+    let source = rodio::Decoder::new(reader).map_err(|e| e.to_string())?;
+
+    if state.is_none() {
+        let (stream, handle) = rodio::OutputStream::try_default()
+            .map_err(|e| format!("audio device unavailable: {e}"))?;
+        let sink = rodio::Sink::try_new(&handle).map_err(|e| e.to_string())?;
+        *state = Some(AudioThreadState {
+            _stream: stream,
+            handle,
+            sink,
+            current_track: None,
+        });
+    }
+    let s = state.as_mut().expect("state just inserted");
+    s.sink.stop();
+    let new_sink = rodio::Sink::try_new(&s.handle).map_err(|e| e.to_string())?;
+    new_sink.append(source);
+    new_sink.play();
+    s.sink = new_sink;
+    s.current_track = Some(track_id);
+    Ok(())
 }

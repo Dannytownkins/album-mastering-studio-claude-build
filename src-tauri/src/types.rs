@@ -241,3 +241,11 @@ impl Serialize for CommandError {
 pub type CommandResult<T> = Result<T, CommandError>;
 
 pub const ISO_PLACEHOLDER: &str = "2026-05-11T12:00:00Z";
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct PlaybackTick {
+    pub track_id: Option<TrackId>,
+    pub position_sec: f64,
+    pub is_playing: bool,
+    pub is_loaded: bool,
+}

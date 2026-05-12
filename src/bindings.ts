@@ -152,3 +152,10 @@ export interface UserPreset {
 
 // Rust's CommandError is serialized to a string via Display, so on the JS side it arrives as a string.
 export type CommandError = string;
+
+export interface PlaybackTick {
+  track_id: TrackId | null;
+  position_sec: number;
+  is_playing: boolean;
+  is_loaded: boolean;
+}
