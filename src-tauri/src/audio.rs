@@ -136,6 +136,31 @@ pub async fn seek_playback(
     player.seek(position_sec)
 }
 
+#[tauri::command]
+pub async fn set_loop_region(
+    region: Option<LoopRegion>,
+    player: tauri::State<'_, Arc<AudioPlayer>>,
+) -> CommandResult<()> {
+    if let Some(r) = region {
+        if !r.start_sec.is_finite() || !r.end_sec.is_finite() {
+            return Err(CommandError::Other("loop region must be finite".to_string()));
+        }
+        if r.start_sec < 0.0 {
+            return Err(CommandError::Other(format!(
+                "loop start must be >= 0, got {}",
+                r.start_sec
+            )));
+        }
+        if r.end_sec <= r.start_sec {
+            return Err(CommandError::Other(format!(
+                "loop end ({}) must be > start ({})",
+                r.end_sec, r.start_sec
+            )));
+        }
+    }
+    player.set_loop(region)
+}
+
 fn handle(track_id: TrackId, kind: PlaybackKind) -> PlaybackHandle {
     PlaybackHandle {
         id: uuid::Uuid::new_v4().to_string(),
@@ -361,6 +386,7 @@ enum AudioCommand {
         position_sec: f64,
         reply: Sender<Result<(), String>>,
     },
+    SetLoop(Option<LoopRegion>),
     Shutdown,
 }
 
@@ -443,6 +469,11 @@ impl AudioPlayer {
         }
     }
 
+    pub fn set_loop(&self, region: Option<LoopRegion>) -> CommandResult<()> {
+        self.send(AudioCommand::SetLoop(region))
+            .map_err(CommandError::Other)
+    }
+
     pub fn snapshot(&self) -> PlaybackSnapshot {
         self.snapshot.read().expect("snapshot read").clone()
     }
@@ -478,6 +509,7 @@ struct AudioThreadState {
     handle: rodio::OutputStreamHandle,
     sink: rodio::Sink,
     current_track: Option<TrackId>,
+    loop_region: Option<LoopRegion>,
 }
 
 fn audio_thread(rx: mpsc::Receiver<AudioCommand>, snapshot: Arc<RwLock<PlaybackSnapshot>>) {
@@ -519,9 +551,28 @@ fn audio_thread(rx: mpsc::Receiver<AudioCommand>, snapshot: Arc<RwLock<PlaybackS
                 };
                 let _ = reply.send(outcome);
             }
+            Ok(AudioCommand::SetLoop(region)) => {
+                if let Some(s) = state.as_mut() {
+                    s.loop_region = region.filter(|r| r.end_sec > r.start_sec);
+                }
+            }
             Ok(AudioCommand::Shutdown) => break,
             Err(RecvTimeoutError::Timeout) => {}
             Err(RecvTimeoutError::Disconnected) => break,
+        }
+
+        // Loop enforcement: if a region is set and the playhead has crossed the
+        // end point, jump back to start. ~50 ms loop poll latency is acceptable
+        // for region listening; tightening lands in Phase 11.
+        if let Some(s) = state.as_ref() {
+            if let Some(region) = s.loop_region {
+                let pos = s.sink.get_pos().as_secs_f64();
+                if pos >= region.end_sec {
+                    let _ = s
+                        .sink
+                        .try_seek(Duration::from_secs_f64(region.start_sec.max(0.0)));
+                }
+            }
         }
 
         let next_snap = match state.as_ref() {
@@ -558,6 +609,7 @@ fn handle_play(
             handle,
             sink,
             current_track: None,
+            loop_region: None,
         });
     }
     let s = state.as_mut().expect("state just inserted");

@@ -159,3 +159,8 @@ export interface PlaybackTick {
   is_playing: boolean;
   is_loaded: boolean;
 }
+
+export interface LoopRegion {
+  start_sec: number;
+  end_sec: number;
+}

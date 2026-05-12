@@ -6,6 +6,7 @@ import type {
   AnalysisResult,
   ExportReport,
   ImportedTrack,
+  LoopRegion,
   MasteringSettings,
   Preset,
   QualityCheck,
@@ -78,6 +79,7 @@ export function useTrackMaster() {
   const [loadedTrackId, setLoadedTrackId] = useState<TrackId | null>(null);
   const [masterPathByTrack, setMasterPathByTrack] = useState<Record<TrackId, string>>({});
   const [loadedKindByTrack, setLoadedKindByTrack] = useState<Record<TrackId, PlaybackKindUI>>({});
+  const [regionByTrack, setRegionByTrack] = useState<Record<TrackId, LoopRegion | null>>({});
 
   useEffect(() => {
     let unlisten: (() => void) | undefined;
@@ -105,6 +107,9 @@ export function useTrackMaster() {
   const selectedSettings =
     (selectedTrackId ? settingsMap[selectedTrackId] : undefined) ?? DEFAULT_SETTINGS;
   const previewStale = selectedTrackId ? staleSet.has(selectedTrackId) : false;
+  const selectedRegion: LoopRegion | null = selectedTrackId
+    ? regionByTrack[selectedTrackId] ?? null
+    : null;
 
   const markStale = useCallback((id: TrackId) => {
     setStaleSet((prev) => {
@@ -212,12 +217,15 @@ export function useTrackMaster() {
   const selectTrack = useCallback(
     (id: TrackId) => {
       setSelectedTrackId(id);
-      setTransport((t) => ({ ...t, isPlaying: false, currentTimeSec: 0 }));
+      setTransport((t) => ({ ...t, isPlaying: false, currentTimeSec: 0, loop: false }));
       if (loadedTrackId && loadedTrackId !== id) {
         api.stopPlayback().catch(() => {
           /* swallow — best-effort */
         });
       }
+      api.setLoopRegion(null).catch(() => {
+        /* swallow — best-effort */
+      });
     },
     [loadedTrackId],
   );
@@ -472,9 +480,50 @@ export function useTrackMaster() {
     [selectedTrack, loadedTrackId],
   );
 
-  const toggleLoop = useCallback(() => {
-    setTransport((t) => ({ ...t, loop: !t.loop }));
-  }, []);
+  const toggleLoop = useCallback(async () => {
+    const nextLoop = !transport.loop;
+    setTransport((t) => ({ ...t, loop: nextLoop }));
+    try {
+      if (nextLoop && selectedRegion) {
+        await api.setLoopRegion(selectedRegion);
+      } else {
+        await api.setLoopRegion(null);
+      }
+    } catch (err) {
+      setError(String(err));
+    }
+  }, [transport.loop, selectedRegion]);
+
+  const setRegion = useCallback(
+    async (region: LoopRegion) => {
+      if (!selectedTrackId) return;
+      setRegionByTrack((prev) => ({ ...prev, [selectedTrackId]: region }));
+      if (transport.loop) {
+        try {
+          await api.setLoopRegion(region);
+        } catch (err) {
+          setError(String(err));
+        }
+      }
+    },
+    [selectedTrackId, transport.loop],
+  );
+
+  const clearRegion = useCallback(async () => {
+    if (!selectedTrackId) return;
+    setRegionByTrack((prev) => {
+      const next = { ...prev };
+      delete next[selectedTrackId];
+      return next;
+    });
+    if (transport.loop) {
+      try {
+        await api.setLoopRegion(null);
+      } catch (err) {
+        setError(String(err));
+      }
+    }
+  }, [selectedTrackId, transport.loop]);
 
   const setVolumeMatch = useCallback((on: boolean) => {
     setTransport((t) => ({ ...t, volumeMatch: on }));
@@ -520,6 +569,9 @@ export function useTrackMaster() {
     toggleLoop,
     setVolumeMatch,
     toggleAdvanced,
+    selectedRegion,
+    setRegion,
+    clearRegion,
     clearError,
     clearExportReceipt,
   };

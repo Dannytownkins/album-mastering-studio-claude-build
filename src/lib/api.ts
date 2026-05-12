@@ -5,6 +5,7 @@ import type {
   AnalysisResult,
   ExportReport,
   ImportedTrack,
+  LoopRegion,
   MasteringSettings,
   PlaybackHandle,
   PlaybackTick,
@@ -138,6 +139,8 @@ export const api = {
   stopPlayback: () => invoke<null>("stop_playback"),
   seekPlayback: (positionSec: number) =>
     invoke<null>("seek_playback", { position_sec: positionSec }),
+  setLoopRegion: (region: LoopRegion | null) =>
+    invoke<null>("set_loop_region", { region }),
 };
 
 export function onPlaybackTick(

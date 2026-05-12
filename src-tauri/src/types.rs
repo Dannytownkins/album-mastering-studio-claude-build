@@ -249,3 +249,9 @@ pub struct PlaybackTick {
     pub is_playing: bool,
     pub is_loaded: bool,
 }
+
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq)]
+pub struct LoopRegion {
+    pub start_sec: f64,
+    pub end_sec: f64,
+}

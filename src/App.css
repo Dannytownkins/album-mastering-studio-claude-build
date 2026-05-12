@@ -340,6 +340,20 @@ button.primary:disabled {
   pointer-events: none;
 }
 
+.wf-region {
+  fill: var(--accent);
+  fill-opacity: 0.18;
+  pointer-events: none;
+}
+
+.wf-hint {
+  margin: 0.3rem 0 0;
+  font-size: 0.7rem;
+  color: var(--text-2);
+  text-align: center;
+  letter-spacing: 0.02em;
+}
+
 .wf-empty {
   height: 100%;
   display: flex;

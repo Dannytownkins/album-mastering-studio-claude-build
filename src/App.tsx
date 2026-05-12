@@ -1,8 +1,9 @@
-import type { MouseEvent as ReactMouseEvent } from "react";
+import { useState, type PointerEvent as ReactPointerEvent } from "react";
 import { useTrackMaster } from "./hooks/useTrackMaster";
 import type {
   AnalysisResult,
   ImportedTrack,
+  LoopRegion,
   MasteringSettings,
   Preset,
   WaveformPeaks,
@@ -152,7 +153,10 @@ function TrackMaster({ tm }: { tm: ReturnType<typeof useTrackMaster> }) {
         isLoading={tm.isLoadingWaveform}
         currentTimeSec={tm.transport.currentTimeSec}
         durationSec={track.duration_seconds ?? 180}
+        region={tm.selectedRegion}
         onSeek={tm.seek}
+        onSetRegion={tm.setRegion}
+        onClearRegion={tm.clearRegion}
       />
       <Transport
         isPlaying={tm.transport.isPlaying}
@@ -238,14 +242,22 @@ function WaveformView({
   isLoading,
   currentTimeSec,
   durationSec,
+  region,
   onSeek,
+  onSetRegion,
+  onClearRegion,
 }: {
   peaks: WaveformPeaks | undefined;
   isLoading: boolean;
   currentTimeSec: number;
   durationSec: number;
+  region: LoopRegion | null;
   onSeek: (positionSec: number) => void;
+  onSetRegion: (region: LoopRegion) => void;
+  onClearRegion: () => void;
 }) {
+  const [dragRegion, setDragRegion] = useState<LoopRegion | null>(null);
+
   if (isLoading || !peaks) {
     return (
       <section className="wf-card">
@@ -261,13 +273,63 @@ function WaveformView({
       ? Math.max(0, Math.min(W, (currentTimeSec / durationSec) * W))
       : 0;
 
-  const handleClick = (e: ReactMouseEvent<SVGSVGElement>) => {
+  const timeAtPointer = (e: ReactPointerEvent<SVGSVGElement>): number => {
     const rect = e.currentTarget.getBoundingClientRect();
-    if (rect.width <= 0 || durationSec <= 0) return;
-    const ratio = (e.clientX - rect.left) / rect.width;
-    const seekTo = Math.max(0, Math.min(durationSec, ratio * durationSec));
-    onSeek(seekTo);
+    if (rect.width <= 0 || durationSec <= 0) return 0;
+    const ratio = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+    return ratio * durationSec;
   };
+
+  const handlePointerDown = (e: ReactPointerEvent<SVGSVGElement>) => {
+    if (durationSec <= 0) return;
+    const t = timeAtPointer(e);
+    if (e.shiftKey) {
+      e.preventDefault();
+      try {
+        e.currentTarget.setPointerCapture(e.pointerId);
+      } catch {
+        /* setPointerCapture can throw on some platforms; we still track via state */
+      }
+      setDragRegion({ start_sec: t, end_sec: t });
+    } else {
+      onSeek(t);
+    }
+  };
+
+  const handlePointerMove = (e: ReactPointerEvent<SVGSVGElement>) => {
+    if (!dragRegion) return;
+    const t = timeAtPointer(e);
+    setDragRegion({ start_sec: dragRegion.start_sec, end_sec: t });
+  };
+
+  const handlePointerUp = (_e: ReactPointerEvent<SVGSVGElement>) => {
+    if (!dragRegion) return;
+    const start = Math.min(dragRegion.start_sec, dragRegion.end_sec);
+    const end = Math.max(dragRegion.start_sec, dragRegion.end_sec);
+    const meaningfulDrag =
+      durationSec > 0 && end - start > Math.max(0.1, durationSec * 0.005);
+    if (meaningfulDrag) {
+      onSetRegion({ start_sec: start, end_sec: end });
+    } else if (region) {
+      onClearRegion();
+    }
+    setDragRegion(null);
+  };
+
+  const displayRegion: LoopRegion | null = dragRegion ?? region;
+  const regionRect = displayRegion && durationSec > 0
+    ? (() => {
+        const startX = Math.max(
+          0,
+          Math.min(W, (Math.min(displayRegion.start_sec, displayRegion.end_sec) / durationSec) * W),
+        );
+        const endX = Math.max(
+          0,
+          Math.min(W, (Math.max(displayRegion.start_sec, displayRegion.end_sec) / durationSec) * W),
+        );
+        return { startX, endX };
+      })()
+    : null;
 
   return (
     <section className="wf-card">
@@ -275,7 +337,10 @@ function WaveformView({
         className="wf"
         viewBox={`0 0 ${W} ${H}`}
         preserveAspectRatio="none"
-        onClick={handleClick}
+        onPointerDown={handlePointerDown}
+        onPointerMove={handlePointerMove}
+        onPointerUp={handlePointerUp}
+        onPointerCancel={handlePointerUp}
         role="slider"
         aria-valuemin={0}
         aria-valuemax={durationSec}
@@ -288,6 +353,15 @@ function WaveformView({
           const y = (H - barH) / 2;
           return <rect key={i} x={x} y={y} width={barW} height={barH} rx={0.5} />;
         })}
+        {regionRect && (
+          <rect
+            className="wf-region"
+            x={regionRect.startX}
+            y={0}
+            width={Math.max(1, regionRect.endX - regionRect.startX)}
+            height={H}
+          />
+        )}
         <line
           className="wf-playhead"
           x1={playheadX}
@@ -296,6 +370,9 @@ function WaveformView({
           y2={H}
         />
       </svg>
+      <p className="wf-hint">
+        Click to seek. Shift+drag to define a loop region. Shift+click clears it.
+      </p>
     </section>
   );
 }
