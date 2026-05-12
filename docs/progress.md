@@ -312,3 +312,48 @@ What failed or remains partial:
 Next recommended slice:
 
 Phase 4.2 — Mastered A/B playback. When the user toggles the playback kind to "Mastered", play the rendered preview WAV instead of the source. Pipeline: on the first Mastered-toggle for a track with stale preview, auto-render the preview, then swap the audio thread to play it. Position should preserve across A/B toggles (per PRODUCT.md "Playhead preservation"). Backend: new `play_kind` field on the audio state, or a second loaded source. Frontend: A/B toggle calls a new command instead of just flipping local state.
+
+## 2026-05-11 — Phase 4.2: Mastered A/B playback with playhead preservation
+
+Goal:
+
+The Original/Mastered toggle now actually swaps the audio source mid-playback at the current playhead position. The user hears the mastered render, not the source. If the master preview is stale or missing, render it on the fly before swapping.
+
+What changed:
+
+Backend:
+
+- `AudioCommand::Play` gained `start_position_sec: f64`. `AudioPlayer::play_track(track_id, path, start_position_sec)` and the `play_track` Tauri command both accept it (`Option<f64>` on the wire, defaulting to 0.0). `handle_play` performs the load, then calls `Sink::try_seek` if `start_position_sec > 0`, then `play()`. Best-effort: if `try_seek` fails for a given format, playback simply starts from 0 — no hard error.
+
+Frontend:
+
+- `api.ts`: `playTrack(trackId, trackPath, startPositionSec?)` passes `start_position_sec` (or `null`) into the invoke args.
+- `useTrackMaster.ts` state additions:
+  - `masterPathByTrack: Record<TrackId, string>` — last successful preview render output path per track.
+  - `loadedKindByTrack: Record<TrackId, PlaybackKindUI>` — which kind (source/master) the audio thread currently has loaded for each track.
+- New `renderPreviewForSelected()` helper extracted from the original `updatePreview` — returns the new master path and stores it in `masterPathByTrack`.
+- `updatePreview` now also reloads the audio source if the user is mid-Mastered playback, so a settings tweak + Update preview swaps to the freshly rendered master at the current playhead without manual reload.
+- `resolvePathForKind(kind)` returns the right path for the requested A/B side — source path if `source`, or the stored master path if fresh, else auto-renders a new preview and returns the new path.
+- `playWithKind(kind, positionSec)` calls `resolvePathForKind`, then `api.playTrack` with the resolved path + position, then records `loadedKindByTrack`.
+- `togglePlay` now considers both `loadedTrackId` and `loadedKindByTrack[selectedTrackId]`. If the player isn't loaded with the correct (track, kind) pair, it (re-)loads via `playWithKind(playbackKind, 0)`. Otherwise pause/resume as before.
+- `setPlaybackKind` is now async: it updates the UI state, and if the selected track is currently loaded in the player, it triggers a mid-playback source swap to the new kind at `transport.currentTimeSec`. If switching to Mastered with a stale/missing render, it auto-renders the preview first (with `isRendering` flag showing the spinner).
+- `removeTrack` cleans up `masterPathByTrack` and `loadedKindByTrack` for the removed track, and calls `stopPlayback` if the player was loaded with that track.
+
+Verification:
+
+- `npm run build`: clean. Bundle 216 KB (68 KB gzipped).
+- `cargo test` (from `src-tauri/`): 15/15 still pass in 6.70s.
+- `npm run tauri dev`: deferred (manual A/B verification — click Original/Mastered while playing the MP3, expect mid-playback swap at the same playhead).
+
+Real-audio fixture used: same MP3, exercised end-to-end through the mastering chain by the existing real-fixture test.
+
+What failed or remains partial:
+
+- If `try_seek` fails for the rendered WAV (shouldn't — it's a fresh 24-bit PCM WAV), playback restarts from 0 on A/B swap. Acceptable fallback.
+- No visual indicator that an auto-render is in flight when toggling to Mastered — the existing `isRendering` flag is used but the spinner currently only shows next to the Update preview button. Could surface a small inline indicator near the A/B toggle in Phase 4.3.
+- Position drift across A/B is bounded by the 50ms tick rate plus seek latency. Should be inaudible but isn't measured.
+- `loadedKindByTrack` is not derived from the backend snapshot — if the audio thread loses sync (e.g. a future bug clears it), the UI's belief about which kind is loaded can drift. Acceptable until then; defensive sync can come later.
+
+Next recommended slice:
+
+Phase 3.4 (carried) — region selection + region loop. Drag on the waveform to define a `[start, end]` region; loop button activates region playback. Backend: `AudioCommand::SetLoop(Option<(f64, f64)>)` + audio thread monitors `Sink::get_pos()` and seeks back to `start` when crossing `end`. Visual: shaded range on the waveform. Then Phase 11 (DSP audit) for real LUFS / true-peak / compressor / limiter — the offline chain is reasonable but `analyze_tracks` still returns mock metering, so `run_export_checks` is operating on fake numbers.

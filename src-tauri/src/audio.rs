@@ -84,6 +84,7 @@ pub async fn prepare_waveform(
 pub async fn play_track(
     track_id: TrackId,
     track_path: String,
+    start_position_sec: Option<f64>,
     player: tauri::State<'_, Arc<AudioPlayer>>,
 ) -> CommandResult<()> {
     if track_path.is_empty() {
@@ -95,7 +96,7 @@ pub async fn play_track(
             "path traversal not allowed: {track_path}"
         )));
     }
-    player.play_track(track_id, path)
+    player.play_track(track_id, path, start_position_sec.unwrap_or(0.0))
 }
 
 #[tauri::command]
@@ -350,6 +351,7 @@ enum AudioCommand {
     Play {
         track_id: TrackId,
         path: PathBuf,
+        start_position_sec: f64,
         reply: Sender<Result<(), String>>,
     },
     Pause,
@@ -390,11 +392,17 @@ impl AudioPlayer {
         }
     }
 
-    pub fn play_track(&self, track_id: TrackId, path: &Path) -> CommandResult<()> {
+    pub fn play_track(
+        &self,
+        track_id: TrackId,
+        path: &Path,
+        start_position_sec: f64,
+    ) -> CommandResult<()> {
         let (reply_tx, reply_rx) = mpsc::channel();
         self.send(AudioCommand::Play {
             track_id,
             path: path.to_path_buf(),
+            start_position_sec: start_position_sec.max(0.0),
             reply: reply_tx,
         })
         .map_err(CommandError::Other)?;
@@ -479,9 +487,10 @@ fn audio_thread(rx: mpsc::Receiver<AudioCommand>, snapshot: Arc<RwLock<PlaybackS
             Ok(AudioCommand::Play {
                 track_id,
                 path,
+                start_position_sec,
                 reply,
             }) => {
-                let outcome = handle_play(&mut state, track_id, &path);
+                let outcome = handle_play(&mut state, track_id, &path, start_position_sec);
                 let _ = reply.send(outcome);
             }
             Ok(AudioCommand::Pause) => {
@@ -534,6 +543,7 @@ fn handle_play(
     state: &mut Option<AudioThreadState>,
     track_id: TrackId,
     path: &Path,
+    start_position_sec: f64,
 ) -> Result<(), String> {
     let file = std::fs::File::open(path).map_err(|e| e.to_string())?;
     let reader = std::io::BufReader::new(file);
@@ -554,6 +564,10 @@ fn handle_play(
     s.sink.stop();
     let new_sink = rodio::Sink::try_new(&s.handle).map_err(|e| e.to_string())?;
     new_sink.append(source);
+    if start_position_sec > 0.0 {
+        // Best-effort seek; for some formats this can fail and we fall back to start.
+        let _ = new_sink.try_seek(Duration::from_secs_f64(start_position_sec));
+    }
     new_sink.play();
     s.sink = new_sink;
     s.current_track = Some(track_id);

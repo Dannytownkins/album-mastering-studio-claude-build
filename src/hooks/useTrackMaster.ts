@@ -76,6 +76,8 @@ export function useTrackMaster() {
   const [advancedOpen, setAdvancedOpen] = useState(false);
   const [lastExportReceipt, setLastExportReceipt] = useState<ExportReceipt | null>(null);
   const [loadedTrackId, setLoadedTrackId] = useState<TrackId | null>(null);
+  const [masterPathByTrack, setMasterPathByTrack] = useState<Record<TrackId, string>>({});
+  const [loadedKindByTrack, setLoadedKindByTrack] = useState<Record<TrackId, PlaybackKindUI>>({});
 
   useEffect(() => {
     let unlisten: (() => void) | undefined;
@@ -241,6 +243,21 @@ export function useTrackMaster() {
         next.delete(id);
         return next;
       });
+      setMasterPathByTrack((prev) => {
+        const next = { ...prev };
+        delete next[id];
+        return next;
+      });
+      setLoadedKindByTrack((prev) => {
+        const next = { ...prev };
+        delete next[id];
+        return next;
+      });
+      if (loadedTrackId === id) {
+        api.stopPlayback().catch(() => {
+          /* swallow — best-effort */
+        });
+      }
       if (selectedTrackId === id) {
         const remaining = tracks.filter((t) => t.id !== id);
         setSelectedTrackId(remaining.length > 0 ? remaining[0].id : null);
@@ -287,24 +304,52 @@ export function useTrackMaster() {
     [selectedTrackId, updateSettings],
   );
 
+  const renderPreviewForSelected = useCallback(async (): Promise<string | null> => {
+    if (!selectedTrackId || !selectedTrack) return null;
+    const job = await api.renderTrackPreview(
+      selectedTrackId,
+      selectedTrack.path,
+      selectedSettings,
+    );
+    const path = job.output_paths[0] ?? null;
+    if (path) {
+      setMasterPathByTrack((prev) => ({ ...prev, [selectedTrackId]: path }));
+    }
+    markFresh(selectedTrackId);
+    return path;
+  }, [selectedTrackId, selectedTrack, selectedSettings, markFresh]);
+
   const updatePreview = useCallback(async () => {
     if (!selectedTrackId) return;
     setIsRendering(true);
     setError(null);
     try {
-      if (!selectedTrack) return;
-      await api.renderTrackPreview(
-        selectedTrackId,
-        selectedTrack.path,
-        selectedSettings,
-      );
-      markFresh(selectedTrackId);
+      const newPath = await renderPreviewForSelected();
+      // If the user is currently listening to the Mastered version, swap to the
+      // fresh render in-place so the new settings are audible without a manual reload.
+      if (
+        newPath &&
+        loadedTrackId === selectedTrackId &&
+        loadedKindByTrack[selectedTrackId] === "master"
+      ) {
+        try {
+          await api.playTrack(selectedTrackId, newPath, transport.currentTimeSec);
+        } catch (err) {
+          setError(String(err));
+        }
+      }
     } catch (err) {
       setError(String(err));
     } finally {
       setIsRendering(false);
     }
-  }, [selectedTrackId, selectedTrack, selectedSettings, markFresh]);
+  }, [
+    selectedTrackId,
+    renderPreviewForSelected,
+    loadedTrackId,
+    loadedKindByTrack,
+    transport.currentTimeSec,
+  ]);
 
   const exportMaster = useCallback(async () => {
     if (!selectedTrackId || !selectedAnalysis) return;
@@ -339,12 +384,41 @@ export function useTrackMaster() {
     }
   }, [selectedTrackId, selectedAnalysis, selectedSettings, selectedTrack]);
 
+  const resolvePathForKind = useCallback(
+    async (kind: PlaybackKindUI): Promise<string | null> => {
+      if (!selectedTrack || !selectedTrackId) return null;
+      if (kind === "source") return selectedTrack.path;
+      const existing = masterPathByTrack[selectedTrackId];
+      if (existing && !staleSet.has(selectedTrackId)) return existing;
+      setIsRendering(true);
+      try {
+        return await renderPreviewForSelected();
+      } finally {
+        setIsRendering(false);
+      }
+    },
+    [selectedTrack, selectedTrackId, masterPathByTrack, staleSet, renderPreviewForSelected],
+  );
+
+  const playWithKind = useCallback(
+    async (kind: PlaybackKindUI, positionSec: number) => {
+      if (!selectedTrack || !selectedTrackId) return;
+      const path = await resolvePathForKind(kind);
+      if (!path) return;
+      await api.playTrack(selectedTrackId, path, positionSec);
+      setLoadedKindByTrack((prev) => ({ ...prev, [selectedTrackId]: kind }));
+    },
+    [selectedTrack, selectedTrackId, resolvePathForKind],
+  );
+
   const togglePlay = useCallback(async () => {
-    if (!selectedTrack) return;
+    if (!selectedTrack || !selectedTrackId) return;
     setError(null);
     try {
-      if (loadedTrackId !== selectedTrack.id) {
-        await api.playTrack(selectedTrack.id, selectedTrack.path);
+      const loadedCorrectTrack = loadedTrackId === selectedTrackId;
+      const loadedCorrectKind = loadedKindByTrack[selectedTrackId] === transport.playbackKind;
+      if (!loadedCorrectTrack || !loadedCorrectKind) {
+        await playWithKind(transport.playbackKind, 0);
       } else if (transport.isPlaying) {
         await api.pausePlayback();
       } else {
@@ -353,11 +427,32 @@ export function useTrackMaster() {
     } catch (err) {
       setError(String(err));
     }
-  }, [selectedTrack, loadedTrackId, transport.isPlaying]);
+  }, [
+    selectedTrack,
+    selectedTrackId,
+    loadedTrackId,
+    loadedKindByTrack,
+    transport.playbackKind,
+    transport.isPlaying,
+    playWithKind,
+  ]);
 
-  const setPlaybackKind = useCallback((kind: PlaybackKindUI) => {
-    setTransport((t) => ({ ...t, playbackKind: kind }));
-  }, []);
+  const setPlaybackKind = useCallback(
+    async (kind: PlaybackKindUI) => {
+      if (!selectedTrackId) return;
+      setTransport((t) => ({ ...t, playbackKind: kind }));
+      // Mid-playback swap: if this track is currently loaded, switch source at the current position.
+      if (loadedTrackId === selectedTrackId) {
+        setError(null);
+        try {
+          await playWithKind(kind, transport.currentTimeSec);
+        } catch (err) {
+          setError(String(err));
+        }
+      }
+    },
+    [selectedTrackId, loadedTrackId, transport.currentTimeSec, playWithKind],
+  );
 
   const seek = useCallback(
     async (positionSec: number) => {

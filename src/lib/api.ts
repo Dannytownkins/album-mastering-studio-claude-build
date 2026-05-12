@@ -122,10 +122,15 @@ export const api = {
 
   listUserPresets: () => invoke<UserPreset[]>("list_user_presets"),
 
-  playTrack: (trackId: TrackId, trackPath: string) =>
+  playTrack: (
+    trackId: TrackId,
+    trackPath: string,
+    startPositionSec?: number,
+  ) =>
     invoke<null>("play_track", {
       track_id: trackId,
       track_path: trackPath,
+      start_position_sec: startPositionSec ?? null,
     }),
 
   pausePlayback: () => invoke<null>("pause_playback"),
