@@ -464,6 +464,39 @@ button.primary:disabled {
   white-space: nowrap;
 }
 
+.story-tags {
+  display: flex;
+  gap: 0.4rem;
+  margin-top: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.tag {
+  font-size: 0.72rem;
+  padding: 0.2rem 0.55rem;
+  border-radius: 999px;
+  border: 1px solid var(--border-strong);
+  background: var(--bg-2);
+  color: var(--text-1);
+  letter-spacing: 0.02em;
+}
+
+.tag.conf-strong {
+  border-color: var(--accent);
+  color: var(--text-0);
+  background: rgba(107, 158, 255, 0.07);
+}
+
+.tag.conf-moderate {
+  border-color: rgba(255, 184, 107, 0.5);
+  color: var(--text-0);
+}
+
+.tag.conf-unsure {
+  border-color: var(--border);
+  color: var(--text-2);
+}
+
 /* Waveform */
 .wf-card {
   background: var(--bg-1);

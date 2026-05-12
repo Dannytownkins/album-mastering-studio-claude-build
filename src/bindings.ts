@@ -51,6 +51,23 @@ export interface MasteringSettings {
   advanced: AdvancedSettings;
 }
 
+export type TrackRole =
+  | "opener"
+  | "closer"
+  | "single"
+  | "ballad"
+  | "interlude"
+  | "album_track";
+
+export type TrackCharacter =
+  | "bright"
+  | "dark"
+  | "dense"
+  | "sparse"
+  | "balanced";
+
+export type InferenceConfidence = "strong" | "moderate" | "unsure";
+
 export interface AnalysisResult {
   track_id: TrackId;
   lufs_integrated: number;
@@ -62,6 +79,10 @@ export interface AnalysisResult {
   stereo_width: number;
   recommended_universal: MasteringSettings;
   measured_at_iso: string;
+  inferred_role?: TrackRole | null;
+  role_confidence?: InferenceConfidence | null;
+  inferred_character?: TrackCharacter | null;
+  character_confidence?: InferenceConfidence | null;
 }
 
 export interface WaveformPeaks {

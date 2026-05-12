@@ -3,6 +3,26 @@ use std::path::{Path, PathBuf};
 use album_mastering_studio_lib::*;
 
 #[tokio::test]
+async fn analyze_tracks_populates_role_and_character_inference() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let path = tmp.path().join("sine.wav");
+    write_sine_wav(&path, 44_100, 3.0, 440.0, 2);
+
+    let results = engine::analyze_tracks(vec![engine::AnalyzeRequest {
+        id: TrackId("infer-test".to_string()),
+        path: path.to_string_lossy().to_string(),
+    }])
+    .await
+    .expect("analyze");
+
+    let r = &results[0];
+    assert!(r.inferred_role.is_some(), "expected an inferred role");
+    assert!(r.role_confidence.is_some(), "expected a role confidence");
+    assert!(r.inferred_character.is_some(), "expected an inferred character");
+    assert!(r.character_confidence.is_some(), "expected a character confidence");
+}
+
+#[tokio::test]
 async fn analyze_tracks_measures_synthetic_wav() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let path = tmp.path().join("sine.wav");

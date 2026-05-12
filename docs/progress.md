@@ -824,3 +824,68 @@ What failed or remains partial:
 Next recommended slice:
 
 Phase 11.2.b (4× oversampled true-peak detection inside the limiter) for the streaming-grade quality bar, OR Phase 9 (track roles / story step) for the final Album Master non-negotiable. 11.2.b is purely DSP; 9 is heuristics + UI. Both are roughly the same size.
+
+## 2026-05-11 — Phase 9.1: heuristic track role + character inference
+
+Goal:
+
+After analysis, each track gets a humble guess at its role on the album (opener / closer / single / ballad / interlude / album_track) and its sonic character (bright / dark / dense / sparse / balanced), with a confidence label. In album mode the badges appear under the metering row of the selected track. PRODUCT.md's "use humble language ('likely', 'appears', not 'detected')" copy is honored.
+
+What changed:
+
+Backend (`types.rs`, `engine.rs`):
+
+- New enums: `TrackRole`, `TrackCharacter`, `InferenceConfidence`. All `snake_case` for serde, both Copy + PartialEq + Eq.
+- `AnalysisResult` gains four optional fields: `inferred_role`, `role_confidence`, `inferred_character`, `character_confidence`. All `#[serde(default)]` so old persisted analyses deserialize cleanly with `None`.
+- `engine::analyze_one` now computes:
+  - `infer_role(lufs, transient_density, duration_sec)`:
+    - duration < 90 s + density < 0.4 → Interlude (moderate)
+    - LUFS > -10 + density > 0.6 → Single (strong)
+    - LUFS < -16 + density < 0.4 → Ballad (moderate)
+    - else → AlbumTrack (unsure)
+  - `infer_character(spectral_balance, transient_density)`:
+    - high band > 0.45 → Bright (strong)
+    - high band < 0.15 → Dark (moderate)
+    - transient > 0.65 → Dense (moderate)
+    - transient < 0.25 → Sparse (moderate)
+    - else → Balanced (unsure)
+- Heuristics are transparent — they don't pretend to be ML. Phase 9.2 can add position-aware rules (track 1 → Opener nudge, last track → Closer nudge) and let the user edit.
+
+Frontend (`bindings.ts`, `App.tsx`, `App.css`):
+
+- TS bindings mirror the new enums + optional analysis fields.
+- `TrackHeader` accepts a `showStoryTags` prop; album mode passes `true`. When set, a `StoryTags` row renders below the metering numbers.
+- `StoryTags` formats each tag with a humble verb: "Likely" (strong), "Appears" (moderate), "Maybe" (unsure), followed by the role / character label. Hover title spells out the inferred-vs-detected distinction explicitly.
+- `.tag.conf-strong` is accent-bordered; `.conf-moderate` is warm-orange; `.conf-unsure` is muted. So at a glance the confidence is visible even before reading the label.
+
+Tests:
+
+- New `analyze_tracks_populates_role_and_character_inference`: synthetic sine through analyze, asserts all four inference fields are populated.
+
+Verification:
+
+- `npm run build`: clean. Bundle 224 KB (70 KB gzipped).
+- `cargo test` (from `src-tauri/`): **23/23** pass in 29.27s.
+- `npm run tauri dev`: deferred (manual — switch to Album Master, see the inferred role + character pills under the metering numbers, with confidence-coded borders).
+
+PRODUCT.md alignment:
+
+All Album Master non-negotiable gates from PRODUCT.md are now structurally present:
+- ✓ Track ordering (Phase 8.1 drag-reorder)
+- ✓ Analyze (Phase 4.3 real BS.1770 metering)
+- ✓ Global intent + per-track adaptation (Phase 8.3)
+- ✓ Track Roles / Story step — inferred + visible per track (this slice). User editing of roles is Phase 9.2 but per PRODUCT.md "User can accept all defaults and export without editing" so the gate is satisfied with read-only display.
+- ✓ Individual masters + continuous album WAV (Phase 8.2)
+- ✓ Preserved boundaries (sample-exact concatenation in Phase 8.2)
+- ✓ Generated transitions off by default (no generation surface; nothing to disable)
+
+What failed or remains partial:
+
+- Inference is heuristic + per-track-only (no album-position context). A first track that registers as a Single by metering won't be re-labeled Opener. Phase 9.2: post-process the inferred role list to nudge track 1 toward Opener and last track toward Closer when confidence is `unsure` or `moderate`.
+- No user-editable role yet. PRODUCT.md allows this but says editing "should be visibly reviewable." Phase 9.2 adds a small picker next to the tag to override.
+- Inference results aren't persisted independently — they live inside `analysisMap` which is rebuilt on every session load (re-analyze). Acceptable for now; could cache when sessions get heavier.
+- The transient_density and spectral_balance feeding the inference are still rough (Phase 4.3's first-cut filters). Phase 11b (DSP audit) can swap them for sharper measurements and the inference will get better automatically.
+
+Next recommended slice:
+
+Phase 11.2.b — 4× oversampled true-peak inside the limiter (closes the inter-sample-peak loophole for streaming delivery). Or Phase 9.2 — let users edit the inferred role + position-aware nudges (Opener for track 1, Closer for last). Or Phase 14.x — installer build / icon polish if Dan wants to put the app on a different machine. Or Phase 6.x — codec preview (AAC/Opus simulation in `run_export_checks` so the receipt warns about codec-specific clipping risk).

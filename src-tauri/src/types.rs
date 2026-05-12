@@ -52,6 +52,45 @@ pub struct AnalysisResult {
     pub stereo_width: f32,
     pub recommended_universal: MasteringSettings,
     pub measured_at_iso: String,
+    // Phase 9: heuristic role + character inference. Optional so older callers
+    // / serialized analyses still parse cleanly.
+    #[serde(default)]
+    pub inferred_role: Option<TrackRole>,
+    #[serde(default)]
+    pub role_confidence: Option<InferenceConfidence>,
+    #[serde(default)]
+    pub inferred_character: Option<TrackCharacter>,
+    #[serde(default)]
+    pub character_confidence: Option<InferenceConfidence>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum TrackRole {
+    Opener,
+    Closer,
+    Single,
+    Ballad,
+    Interlude,
+    AlbumTrack,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum TrackCharacter {
+    Bright,
+    Dark,
+    Dense,
+    Sparse,
+    Balanced,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum InferenceConfidence {
+    Strong,
+    Moderate,
+    Unsure,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone, PartialEq)]

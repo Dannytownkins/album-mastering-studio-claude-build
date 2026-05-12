@@ -112,6 +112,16 @@ pub fn analyze_one(track_id: TrackId, path: &Path) -> CommandResult<AnalysisResu
         },
     };
 
+    let duration_sec = if pcm.sample_rate > 0 && pcm.channels > 0 {
+        (pcm.samples.len() as f64) / (pcm.channels.max(1) as f64 * pcm.sample_rate as f64)
+    } else {
+        0.0
+    };
+    let (role, role_conf) =
+        infer_role(lufs_integrated, transient_density, duration_sec);
+    let (character, character_conf) =
+        infer_character(&spectral_balance, transient_density);
+
     Ok(AnalysisResult {
         track_id,
         lufs_integrated,
@@ -123,7 +133,51 @@ pub fn analyze_one(track_id: TrackId, path: &Path) -> CommandResult<AnalysisResu
         stereo_width,
         recommended_universal,
         measured_at_iso: ISO_PLACEHOLDER.to_string(),
+        inferred_role: Some(role),
+        role_confidence: Some(role_conf),
+        inferred_character: Some(character),
+        character_confidence: Some(character_conf),
     })
+}
+
+fn infer_role(
+    lufs: f32,
+    transient_density: f32,
+    duration_sec: f64,
+) -> (TrackRole, InferenceConfidence) {
+    // Interlude: short and quiet/sparse.
+    if duration_sec > 0.0 && duration_sec < 90.0 && transient_density < 0.4 {
+        return (TrackRole::Interlude, InferenceConfidence::Moderate);
+    }
+    // Single / banger: loud and dense.
+    if lufs.is_finite() && lufs > -10.0 && transient_density > 0.6 {
+        return (TrackRole::Single, InferenceConfidence::Strong);
+    }
+    // Ballad: quiet and sparse.
+    if lufs.is_finite() && lufs < -16.0 && transient_density < 0.4 {
+        return (TrackRole::Ballad, InferenceConfidence::Moderate);
+    }
+    // Default fallback.
+    (TrackRole::AlbumTrack, InferenceConfidence::Unsure)
+}
+
+fn infer_character(
+    spectral: &SpectralBalance,
+    transient_density: f32,
+) -> (TrackCharacter, InferenceConfidence) {
+    if spectral.high > 0.45 {
+        return (TrackCharacter::Bright, InferenceConfidence::Strong);
+    }
+    if spectral.high < 0.15 {
+        return (TrackCharacter::Dark, InferenceConfidence::Moderate);
+    }
+    if transient_density > 0.65 {
+        return (TrackCharacter::Dense, InferenceConfidence::Moderate);
+    }
+    if transient_density < 0.25 {
+        return (TrackCharacter::Sparse, InferenceConfidence::Moderate);
+    }
+    (TrackCharacter::Balanced, InferenceConfidence::Unsure)
 }
 
 fn sanitize_lufs(v: f32) -> f32 {

@@ -261,6 +261,7 @@ function TrackMaster({ tm }: { tm: ReturnType<typeof useTrackMaster> }) {
         track={track}
         analysis={tm.selectedAnalysis}
         isAnalyzing={tm.isAnalyzing}
+        showStoryTags={tm.mode === "album"}
       />
       <WaveformView
         peaks={tm.selectedWaveform}
@@ -358,10 +359,12 @@ function TrackHeader({
   track,
   analysis,
   isAnalyzing,
+  showStoryTags,
 }: {
   track: ImportedTrack;
   analysis: AnalysisResult | undefined;
   isAnalyzing: boolean;
+  showStoryTags: boolean;
 }) {
   return (
     <section className="track-header">
@@ -382,12 +385,111 @@ function TrackHeader({
             </>
           )}
         </div>
+        {showStoryTags && analysis && (
+          <StoryTags analysis={analysis} />
+        )}
       </div>
       <div className="track-badge">
         {isAnalyzing ? "Analyzing…" : analysis ? "Analyzed" : "Pending"}
       </div>
     </section>
   );
+}
+
+function StoryTags({ analysis }: { analysis: AnalysisResult }) {
+  const role = analysis.inferred_role;
+  const roleConf = analysis.role_confidence;
+  const character = analysis.inferred_character;
+  const charConf = analysis.character_confidence;
+  if (!role && !character) return null;
+  return (
+    <div className="story-tags">
+      {role && (
+        <span
+          className={"tag tag-role conf-" + (roleConf ?? "unsure")}
+          title={`Inferred role · ${confidenceLabel(roleConf)}`}
+        >
+          {humbleVerb(roleConf)} {roleLabel(role)}
+        </span>
+      )}
+      {character && (
+        <span
+          className={"tag tag-character conf-" + (charConf ?? "unsure")}
+          title={`Inferred character · ${confidenceLabel(charConf)}`}
+        >
+          {humbleVerb(charConf)} {characterLabel(character)}
+        </span>
+      )}
+    </div>
+  );
+}
+
+function humbleVerb(conf: AnalysisResult["role_confidence"]): string {
+  switch (conf) {
+    case "strong":
+      return "Likely";
+    case "moderate":
+      return "Appears";
+    case "unsure":
+    case undefined:
+    case null:
+    default:
+      return "Maybe";
+  }
+}
+
+function roleLabel(role: NonNullable<AnalysisResult["inferred_role"]>): string {
+  switch (role) {
+    case "opener":
+      return "opener";
+    case "closer":
+      return "closer";
+    case "single":
+      return "a single";
+    case "ballad":
+      return "a ballad";
+    case "interlude":
+      return "an interlude";
+    case "album_track":
+      return "an album track";
+    default:
+      return "an album track";
+  }
+}
+
+function characterLabel(
+  c: NonNullable<AnalysisResult["inferred_character"]>,
+): string {
+  switch (c) {
+    case "bright":
+      return "bright";
+    case "dark":
+      return "dark";
+    case "dense":
+      return "dense";
+    case "sparse":
+      return "sparse";
+    case "balanced":
+      return "balanced";
+    default:
+      return "balanced";
+  }
+}
+
+function confidenceLabel(
+  conf: AnalysisResult["role_confidence"],
+): string {
+  switch (conf) {
+    case "strong":
+      return "strong";
+    case "moderate":
+      return "moderate";
+    case "unsure":
+    case undefined:
+    case null:
+    default:
+      return "unsure";
+  }
 }
 
 function WaveformView({
