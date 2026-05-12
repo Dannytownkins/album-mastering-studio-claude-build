@@ -1329,3 +1329,57 @@ Phase 7.4 — undo/redo for non-destructive Track Master state. Minimal viable:
 - Track order / album overrides covered in a follow-up if scope allows.
 
 After 7.4 lands, Track Master will have ALL release-candidate non-negotiables structurally present. Final blockers will be Dan's listening confirmation (Phase 12.1 in flight) and explicit human approval to call it release-candidate.
+
+## 2026-05-12 — Phase 7.4 + Phase 12.1 snapshot numbers + number-input fields
+
+Goal:
+
+Continue executing Phase 12.1's listening response while Dan was at lunch. Three concrete deliverables: (a) close the last structurally-missing Track Master non-negotiable (undo/redo), (b) capture the actual metering numbers from the Phase 12.1 snapshot test on Dan's real fixture, (c) ship the number-input UX item Dan asked for.
+
+What changed:
+
+1. **`ea6b100` — Phase 7.4: undo/redo for Track Master non-destructive state.** Last unbuilt Track Master non-negotiable per IMPLEMENTATION_PLAN.md.
+   - History stack as refs (`historyPast`, `historyFuture`) plus a `historyVersion` state bump so `canUndo`/`canRedo` re-evaluate on changes.
+   - `commitToHistory` snapshots `{settingsMap, albumIntent, overrideAlbum}` BEFORE each mutation. Coalesce window of 300 ms collapses consecutive commits (slider drags = one undo step, not N).
+   - History capped at 100 entries.
+   - Wired into `updateSettings`, `applyUserPreset`, and `toggleOverrideAlbum`.
+   - Ctrl/Cmd+Z = undo; Ctrl/Cmd+Shift+Z OR Ctrl/Cmd+Y = redo. Skipped when focus is in a text-editable INPUT/TEXTAREA/contentEditable. Range inputs are exempt so undo works while the slider has focus.
+   - Visible Undo / Redo buttons (next to Macros), disabled when their respective stack is empty.
+   - **After undo/redo, fires `api.updateChain` for the currently-playing master track so the live audio reflects the restored state immediately** — without this, undo would change the UI state but the audible output would lag until the user toggled Original/Master.
+   - Track add/remove/reorder snapshotting deferred to a follow-up (not a release-candidate gate).
+
+2. **Phase 12.1 metering snapshot — concrete numbers captured.** Re-ran `cargo test --test contracts phase_12_1_real_fixture_metering_snapshot -- --nocapture` against Dan's real WAV ("It's a coat (Remastered)", 48 kHz stereo, 244.56 s):
+   - **Source:** LUFS -14.61, LUFS-ST-max -12.03, TP -3.97 dBTP, DR 5.15 LU, spectral low/mid/high 0.476/0.491/0.034, transient density 1.000, stereo width 0.126. Role inferred AlbumTrack (Unsure), character Dark (Moderate).
+   - **Master (default Universal @ intensity 0.5):** LUFS -13.05 (Δ +1.55 LU), TP -2.42 dBTP, DR 5.15 LU (Δ +0.00).
+   - **Export checks:** silent — `export_ok` Info only.
+   - Observations: track is already loud (-14.6 LUFS source) and very dark (high band only 3.4% of total spectral energy). Master pushes ~+1.5 dB and that's the entire perceived change at default settings — explains some of Dan's "I can barely hear it" feedback. Master TP -2.42 is well below both the critical -0.1 and the new streaming-headroom -1.0 thresholds, so the receipt was correctly silent. DR delta 0.00 means the limiter didn't crush dynamics. Stereo width 0.126 is unusually narrow (mostly-mono) — may be deliberate or a mixing characteristic.
+
+3. **`0dcdbec` — Phase 12.1 UX: number-input fields next to sliders.** Each Slider now has an editable `<input type="number">` to the right. Type a precise value, commit on Enter or blur (clamped to min/max). Escape cancels. Double-click also resets to default. Local draft state during edit so typing "1." or "-" mid-edit doesn't get clobbered by re-format. Spinner buttons hidden for a cleaner look.
+
+Verification:
+
+- `cargo test`: **33/33 pass** in 243.43 s on a fresh build. Includes the snapshot test on the real fixture (which is what produced the metering numbers above) and the previously-failing `presets_produce_distinct_chain_coefficients` (fixed in `2d17ef8`).
+- `cargo test --lib mastering_source`: backend live-update tests (2/2) pass in 0.21 s — these are the missing-test gap Dan rightly flagged.
+- `npm run build`: clean, 250.85 KB / 76.72 KB gzipped after the number-input slice (+2.8 KB over the pre-Phase-7.4 baseline).
+- `npm run tauri dev`: not run by Claude. Dan to confirm undo/redo by ear (and the live-update v2 fix from `a7bd6b0`).
+
+Real-audio fixture used:
+
+- Same private WAV as the prior entry. The new snapshot numbers above are the data extracted from it.
+
+What failed or remains partial:
+
+- **Live-update fix (`a7bd6b0`) confirmation is still pending Dan's verification.** The new in-app "live: N/M" counter in the StaleBar will show whether `api.updateChain` is firing without DevTools. If M still doesn't increment on slider drag, frontend is the bug. If M ticks but no audible change, the bug is downstream.
+- **Preset character dramatization confirmation is still pending Dan's ears.** First-cut values may be too aggressive or still too subtle.
+- **Toggle 1–2 s delay is still unaddressed.** `decode_full(path)` re-runs on every `play_master` call, which on a ~244 s WAV in debug build takes around a second. Mitigation candidate: cache decoded PCM keyed by `(path, mtime)` in the audio thread state. Next slice.
+- **Phase 9.2 editable role UI** (Album Master refinement) and **frontend vitest infrastructure** (needed for proper undo/redo behavior tests) remain deferred.
+
+Next recommended slice:
+
+**Decode cache to kill the toggle delay.** Keep the most-recently-decoded PCM in the audio thread state, keyed by `(path, mtime)`. On `play_master`, if the cache hit, skip `decode_full` and reuse. That converts the 1–2 s toggle stall into a sub-100 ms swap. Pure backend, fully testable, no listening required.
+
+After that: **render/export progress events** (the StaleBar already has a placeholder for `Rendering preview WAV…`; the backend should emit progress events so the bar can show real progress). Then **vitest infra + a frontend undo/redo behavior test** to close the verification gap.
+
+Track Master release-candidate is now structurally complete except for:
+- ✅ All non-negotiables from IMPLEMENTATION_PLAN.md ship-listed: drag/drop, analyze, universal settings, waveform, zoom, region select, loop, A/B, volume match, presets, intensity, EQ, stale-preview, real-time audition (the v2 fix needs Dan's confirmation), one export button, advisory checks, non-overwriting output, autosave, **undo/redo (Phase 7.4, this slice)**.
+- ❌ Phase 12.1 real-listening confirmation that the audible direction is right.
