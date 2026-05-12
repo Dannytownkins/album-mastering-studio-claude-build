@@ -48,14 +48,16 @@ export const api = {
     }),
 
   renderAlbumMaster: (
-    trackIds: TrackId[],
+    tracks: Array<{ id: TrackId; path: string }>,
     albumIntent: MasteringSettings,
     perTrackOverrides?: Record<string, MasteringSettings>,
   ) =>
     invoke<RenderJob>("render_album_master", {
-      track_ids: trackIds,
-      album_intent: albumIntent,
-      per_track_overrides: perTrackOverrides ?? null,
+      request: {
+        tracks,
+        album_intent: albumIntent,
+        per_track_overrides: perTrackOverrides ?? null,
+      },
     }),
 
   prepareSourcePlayback: (trackId: TrackId, trackPath: string) =>

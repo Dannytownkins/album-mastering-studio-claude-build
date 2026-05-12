@@ -12,6 +12,19 @@ pub struct AnalyzeRequest {
     pub path: String,
 }
 
+#[derive(Debug, Deserialize)]
+pub struct AlbumTrackInput {
+    pub id: TrackId,
+    pub path: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct AlbumRenderRequest {
+    pub tracks: Vec<AlbumTrackInput>,
+    pub album_intent: MasteringSettings,
+    pub per_track_overrides: Option<std::collections::HashMap<String, MasteringSettings>>,
+}
+
 #[tauri::command]
 pub async fn analyze_tracks(tracks: Vec<AnalyzeRequest>) -> CommandResult<Vec<AnalysisResult>> {
     let mut out = Vec::with_capacity(tracks.len());
@@ -263,25 +276,182 @@ pub async fn render_track_master(
 
 #[tauri::command]
 pub async fn render_album_master(
-    track_ids: Vec<TrackId>,
-    album_intent: MasteringSettings,
-    per_track_overrides: Option<std::collections::HashMap<String, MasteringSettings>>,
+    request: AlbumRenderRequest,
+    app: tauri::AppHandle,
 ) -> CommandResult<RenderJob> {
-    let _ = album_intent;
-    let _ = per_track_overrides;
-    Ok(mock_job(RenderKind::Album, track_ids))
+    if request.tracks.is_empty() {
+        return Err(CommandError::Other("album has no tracks".to_string()));
+    }
+    let out_dir = render_output_dir(&app, RenderKind::Album)?;
+    album_render(&request, &out_dir)
 }
 
-fn mock_job(kind: RenderKind, target_tracks: Vec<TrackId>) -> RenderJob {
-    RenderJob {
+pub fn album_render(req: &AlbumRenderRequest, out_dir: &Path) -> CommandResult<RenderJob> {
+    let bit_depth = req.album_intent.advanced.bit_depth.unwrap_or(24);
+    let album_path = unique_album_path(out_dir)?;
+
+    let mut album_writer: Option<hound::WavWriter<std::io::BufWriter<std::fs::File>>> = None;
+    let mut common_sr: u32 = 0;
+    let mut common_channels: u16 = 0;
+    let mut individual_paths: Vec<String> = Vec::with_capacity(req.tracks.len());
+    let mut track_ids: Vec<TrackId> = Vec::with_capacity(req.tracks.len());
+
+    for (i, input) in req.tracks.iter().enumerate() {
+        let path = Path::new(&input.path);
+        if crate::files::has_parent_dir_component(path) {
+            return Err(CommandError::InvalidPath(format!(
+                "path traversal not allowed: {}",
+                input.path
+            )));
+        }
+        if !path.exists() {
+            return Err(CommandError::Io(format!(
+                "source not found: {}",
+                input.path
+            )));
+        }
+        let pcm = crate::audio::decode_full(path)?;
+        if pcm.samples.is_empty() {
+            return Err(CommandError::Decode(format!(
+                "no samples decoded from {}",
+                input.path
+            )));
+        }
+
+        if i == 0 {
+            common_sr = pcm.sample_rate;
+            common_channels = pcm.channels.max(1);
+            let spec = wav_spec(common_channels, common_sr, bit_depth)?;
+            album_writer = Some(
+                hound::WavWriter::create(&album_path, spec)
+                    .map_err(|e| CommandError::Io(e.to_string()))?,
+            );
+        } else if pcm.sample_rate != common_sr {
+            return Err(CommandError::Other(format!(
+                "album sample-rate mismatch on {}: {} Hz vs album {} Hz (Phase 11 will add resampling)",
+                input.path, pcm.sample_rate, common_sr
+            )));
+        } else if pcm.channels != common_channels {
+            return Err(CommandError::Other(format!(
+                "album channel mismatch on {}: {} ch vs album {} ch",
+                input.path, pcm.channels, common_channels
+            )));
+        }
+
+        let settings = req
+            .per_track_overrides
+            .as_ref()
+            .and_then(|m| m.get(input.id.as_str()))
+            .unwrap_or(&req.album_intent);
+        let mut samples = pcm.samples;
+        let channels_usize = pcm.channels.max(1) as usize;
+        let mut chain = crate::dsp::MasteringChain::new(pcm.sample_rate, channels_usize, settings);
+        chain.process_interleaved(&mut samples, channels_usize);
+
+        let individual = unique_output_path(out_dir, path, &input.id, RenderKind::Master)?;
+        write_wav(&individual, &samples, pcm.sample_rate, pcm.channels, bit_depth)?;
+        individual_paths.push(individual.to_string_lossy().to_string());
+        track_ids.push(input.id.clone());
+
+        let writer = album_writer.as_mut().expect("album writer initialized");
+        write_samples_into_writer(writer, &samples, bit_depth)?;
+    }
+
+    album_writer
+        .ok_or_else(|| CommandError::Other("no album writer created".to_string()))?
+        .finalize()
+        .map_err(|e| CommandError::Io(e.to_string()))?;
+
+    let mut output_paths = Vec::with_capacity(individual_paths.len() + 1);
+    output_paths.push(album_path.to_string_lossy().to_string());
+    output_paths.extend(individual_paths);
+
+    Ok(RenderJob {
         id: uuid::Uuid::new_v4().to_string(),
-        kind,
-        target_tracks,
+        kind: RenderKind::Album,
+        target_tracks: track_ids,
         status: JobStatus::Done,
         progress: 1.0,
         started_at_iso: ISO_PLACEHOLDER.to_string(),
-        output_paths: vec!["renders/mock-output.wav".to_string()],
+        output_paths,
+    })
+}
+
+fn unique_album_path(out_dir: &Path) -> CommandResult<PathBuf> {
+    let ts = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let candidate = out_dir.join(format!("album_continuous_{ts}.wav"));
+    if !candidate.exists() {
+        return Ok(candidate);
     }
+    for n in 1..1000 {
+        let alt = out_dir.join(format!("album_continuous_{ts}_{n}.wav"));
+        if !alt.exists() {
+            return Ok(alt);
+        }
+    }
+    Err(CommandError::Io(
+        "could not generate unique album path".to_string(),
+    ))
+}
+
+fn wav_spec(channels: u16, sample_rate: u32, bit_depth: u16) -> CommandResult<hound::WavSpec> {
+    let (bits, fmt) = match bit_depth {
+        16 => (16u16, hound::SampleFormat::Int),
+        24 => (24u16, hound::SampleFormat::Int),
+        32 => (32u16, hound::SampleFormat::Float),
+        other => {
+            return Err(CommandError::Other(format!(
+                "unsupported bit depth: {other}"
+            )))
+        }
+    };
+    Ok(hound::WavSpec {
+        channels,
+        sample_rate,
+        bits_per_sample: bits,
+        sample_format: fmt,
+    })
+}
+
+fn write_samples_into_writer(
+    writer: &mut hound::WavWriter<std::io::BufWriter<std::fs::File>>,
+    samples: &[f32],
+    bit_depth: u16,
+) -> CommandResult<()> {
+    match bit_depth {
+        16 => {
+            for &s in samples {
+                let v = (s.clamp(-1.0, 1.0) * 32767.0).round() as i16;
+                writer
+                    .write_sample(v)
+                    .map_err(|e| CommandError::Io(e.to_string()))?;
+            }
+        }
+        24 => {
+            for &s in samples {
+                let v = (s.clamp(-1.0, 1.0) * 8_388_607.0).round() as i32;
+                writer
+                    .write_sample(v)
+                    .map_err(|e| CommandError::Io(e.to_string()))?;
+            }
+        }
+        32 => {
+            for &s in samples {
+                writer
+                    .write_sample(s.clamp(-1.0, 1.0))
+                    .map_err(|e| CommandError::Io(e.to_string()))?;
+            }
+        }
+        other => {
+            return Err(CommandError::Other(format!(
+                "unsupported bit depth: {other}"
+            )))
+        }
+    }
+    Ok(())
 }
 
 pub fn render_output_dir(app: &tauri::AppHandle, kind: RenderKind) -> CommandResult<PathBuf> {

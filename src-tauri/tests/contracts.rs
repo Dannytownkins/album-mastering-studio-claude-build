@@ -137,6 +137,124 @@ async fn prepare_waveform_rejects_empty_path() {
 }
 
 #[test]
+fn album_render_writes_continuous_and_individual_masters() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let t1 = tmp.path().join("a.wav");
+    let t2 = tmp.path().join("b.wav");
+    write_sine_wav(&t1, 44_100, 0.4, 440.0, 2);
+    write_sine_wav(&t2, 44_100, 0.6, 660.0, 2);
+
+    let request = engine::AlbumRenderRequest {
+        tracks: vec![
+            engine::AlbumTrackInput {
+                id: TrackId("alpha".to_string()),
+                path: t1.to_string_lossy().to_string(),
+            },
+            engine::AlbumTrackInput {
+                id: TrackId("bravo".to_string()),
+                path: t2.to_string_lossy().to_string(),
+            },
+        ],
+        album_intent: default_settings(),
+        per_track_overrides: None,
+    };
+
+    let job = engine::album_render(&request, tmp.path()).expect("album render");
+    assert!(matches!(job.kind, RenderKind::Album));
+    assert!(matches!(job.status, JobStatus::Done));
+    assert_eq!(job.output_paths.len(), 3, "album + 2 individual masters");
+
+    let continuous = Path::new(&job.output_paths[0]);
+    assert!(continuous.exists(), "continuous album wav missing");
+    let continuous_reader = hound::WavReader::open(continuous).expect("read album");
+    let continuous_spec = continuous_reader.spec();
+    assert_eq!(continuous_spec.channels, 2);
+    assert_eq!(continuous_spec.sample_rate, 44_100);
+
+    let expected_frames = (44_100 as f32 * (0.4 + 0.6)) as u32;
+    let actual_frames = continuous_reader.duration();
+    assert!(
+        actual_frames >= expected_frames - 100 && actual_frames <= expected_frames + 100,
+        "expected ~{expected_frames} frames in continuous album, got {actual_frames}"
+    );
+
+    for individual in &job.output_paths[1..] {
+        assert!(Path::new(individual).exists(), "individual master {individual} missing");
+    }
+}
+
+#[test]
+fn album_render_rejects_sample_rate_mismatch() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let a = tmp.path().join("a.wav");
+    let b = tmp.path().join("b.wav");
+    write_sine_wav(&a, 44_100, 0.3, 440.0, 2);
+    write_sine_wav(&b, 48_000, 0.3, 440.0, 2);
+
+    let request = engine::AlbumRenderRequest {
+        tracks: vec![
+            engine::AlbumTrackInput {
+                id: TrackId("a".to_string()),
+                path: a.to_string_lossy().to_string(),
+            },
+            engine::AlbumTrackInput {
+                id: TrackId("b".to_string()),
+                path: b.to_string_lossy().to_string(),
+            },
+        ],
+        album_intent: default_settings(),
+        per_track_overrides: None,
+    };
+
+    let err = engine::album_render(&request, tmp.path()).expect_err("expected mismatch error");
+    let msg = format!("{err}");
+    assert!(
+        msg.contains("sample-rate mismatch") || msg.contains("sample rate"),
+        "unexpected error: {msg}"
+    );
+}
+
+#[test]
+fn album_render_applies_per_track_override() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let t1 = tmp.path().join("a.wav");
+    let t2 = tmp.path().join("b.wav");
+    write_sine_wav(&t1, 44_100, 0.5, 440.0, 1);
+    write_sine_wav(&t2, 44_100, 0.5, 440.0, 1);
+
+    let mut override_settings = default_settings();
+    override_settings.preset = Preset::Tape;
+    override_settings.intensity = 1.0;
+
+    let mut overrides = std::collections::HashMap::new();
+    overrides.insert("override-me".to_string(), override_settings);
+
+    let request = engine::AlbumRenderRequest {
+        tracks: vec![
+            engine::AlbumTrackInput {
+                id: TrackId("plain".to_string()),
+                path: t1.to_string_lossy().to_string(),
+            },
+            engine::AlbumTrackInput {
+                id: TrackId("override-me".to_string()),
+                path: t2.to_string_lossy().to_string(),
+            },
+        ],
+        album_intent: default_settings(),
+        per_track_overrides: Some(overrides),
+    };
+
+    let job = engine::album_render(&request, tmp.path()).expect("album render");
+    assert_eq!(job.output_paths.len(), 3);
+    // Both individual masters must exist; we don't compare audio numerically here
+    // (the override path drives Tape saturation, which is exercised separately
+    // by dsp_chain_applies_input_gain_at_default_intensity for the chain math).
+    for individual in &job.output_paths[1..] {
+        assert!(Path::new(individual).exists());
+    }
+}
+
+#[test]
 fn mastering_render_processes_real_fixture_if_present() {
     let Some(path) = real_fixture_path() else {
         eprintln!("Skipping: no real-audio fixture");

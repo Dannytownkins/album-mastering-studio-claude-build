@@ -321,6 +321,39 @@ button.primary:disabled {
   cursor: not-allowed;
 }
 
+/* Album header */
+.album-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.85rem 1rem;
+  background: var(--bg-1);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
+.album-summary {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.album-stat {
+  font-size: 0.85rem;
+  color: var(--text-1);
+  font-variant-numeric: tabular-nums;
+}
+
+.album-stat strong {
+  color: var(--text-0);
+  font-weight: 600;
+}
+
+.album-stat .dim {
+  color: var(--text-2);
+}
+
 /* Track header */
 .track-header {
   display: flex;
@@ -838,14 +871,20 @@ button.primary:disabled {
   font-weight: 600;
 }
 
+.receipt-paths {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  margin-bottom: 1rem;
+}
+
 .receipt-path {
   font-family: ui-monospace, "SF Mono", Consolas, monospace;
-  font-size: 0.8rem;
+  font-size: 0.78rem;
   color: var(--text-1);
   background: var(--bg-2);
   padding: 0.5rem 0.75rem;
   border-radius: var(--radius-sm);
-  margin: 0 0 1rem;
   word-break: break-all;
   display: block;
   width: 100%;
@@ -858,6 +897,12 @@ button.primary:disabled {
 .receipt-path:hover {
   color: var(--text-0);
   border-color: var(--accent);
+}
+
+.receipt-path.primary-path {
+  border-color: var(--accent);
+  color: var(--text-0);
+  background: rgba(107, 158, 255, 0.06);
 }
 
 .receipt-checks {

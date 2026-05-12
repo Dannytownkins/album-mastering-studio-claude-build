@@ -41,6 +41,7 @@ export interface ExportReceipt {
   outputPath: string;
   checks: QualityCheck[];
   job: RenderJob;
+  kind: "track" | "album";
 }
 
 const AUDIO_EXTENSIONS = [
@@ -366,7 +367,13 @@ export function useTrackMaster() {
         checks: [],
       };
       const checks = await api.runExportChecks(report);
-      setLastExportReceipt({ trackId: selectedTrackId, outputPath, checks, job });
+      setLastExportReceipt({
+        trackId: selectedTrackId,
+        outputPath,
+        checks,
+        job,
+        kind: "track",
+      });
     } catch (err) {
       setError(String(err));
     } finally {
@@ -510,6 +517,33 @@ export function useTrackMaster() {
   const clearError = useCallback(() => setError(null), []);
   const clearExportReceipt = useCallback(() => setLastExportReceipt(null), []);
 
+  const [isExportingAlbum, setIsExportingAlbum] = useState(false);
+
+  const exportAlbum = useCallback(async () => {
+    if (tracks.length === 0) return;
+    setIsExportingAlbum(true);
+    setError(null);
+    try {
+      const job = await api.renderAlbumMaster(
+        tracks.map((t) => ({ id: t.id, path: t.path })),
+        albumIntent,
+        undefined,
+      );
+      const continuousPath = job.output_paths[0] ?? "";
+      setLastExportReceipt({
+        trackId: tracks[0]?.id ?? "album",
+        outputPath: continuousPath,
+        checks: [],
+        job,
+        kind: "album",
+      });
+    } catch (err) {
+      setError(String(err));
+    } finally {
+      setIsExportingAlbum(false);
+    }
+  }, [tracks, albumIntent]);
+
   const reorderTracks = useCallback((fromIndex: number, toIndex: number) => {
     setTracks((prev) => {
       if (
@@ -578,5 +612,7 @@ export function useTrackMaster() {
     reorderTracks,
     albumIntent,
     updateAlbumIntent,
+    isExportingAlbum,
+    exportAlbum,
   };
 }

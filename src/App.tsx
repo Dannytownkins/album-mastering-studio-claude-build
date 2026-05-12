@@ -46,6 +46,13 @@ function App() {
         onReorder={tm.reorderTracks}
       />
       <main className="workspace">
+        {tm.mode === "album" && tm.tracks.length > 0 && (
+          <AlbumHeader
+            tracks={tm.tracks}
+            isExporting={tm.isExportingAlbum}
+            onExport={tm.exportAlbum}
+          />
+        )}
         {tm.selectedTrack ? (
           <TrackMaster tm={tm} />
         ) : (
@@ -922,6 +929,45 @@ function Toast({
   );
 }
 
+function AlbumHeader({
+  tracks,
+  isExporting,
+  onExport,
+}: {
+  tracks: ImportedTrack[];
+  isExporting: boolean;
+  onExport: () => void;
+}) {
+  const totalSeconds = tracks.reduce(
+    (acc, t) => acc + (t.duration_seconds ?? 0),
+    0,
+  );
+  return (
+    <section className="album-header">
+      <div className="album-summary">
+        <span className="section-label">Album</span>
+        <div className="album-stat">
+          <strong>{tracks.length}</strong> tracks
+          {totalSeconds > 0 && (
+            <>
+              <span className="dim"> · </span>
+              <strong>{formatTime(totalSeconds)}</strong>
+            </>
+          )}
+        </div>
+      </div>
+      <button
+        type="button"
+        className="primary"
+        onClick={onExport}
+        disabled={isExporting}
+      >
+        {isExporting ? "Rendering album…" : "Export Album"}
+      </button>
+    </section>
+  );
+}
+
 function ExportReceiptCard({
   receipt,
   onClose,
@@ -929,36 +975,46 @@ function ExportReceiptCard({
   receipt: ExportReceipt;
   onClose: () => void;
 }) {
-  const reveal = async () => {
-    if (!receipt.outputPath) return;
+  const reveal = async (path: string) => {
+    if (!path) return;
     try {
-      await api.openOutput(receipt.outputPath);
+      await api.openOutput(path);
     } catch (err) {
       console.error("openOutput failed", err);
     }
   };
+  const isAlbum = receipt.kind === "album";
+  const paths = receipt.job.output_paths;
   return (
     <div className="receipt-backdrop" onClick={onClose}>
       <div className="receipt" onClick={(e) => e.stopPropagation()}>
         <header>
-          <h2>Export complete</h2>
+          <h2>{isAlbum ? "Album export complete" : "Export complete"}</h2>
           <button type="button" className="toast-close" onClick={onClose} aria-label="Close">
             ×
           </button>
         </header>
-        <button
-          type="button"
-          className="receipt-path"
-          onClick={reveal}
-          title="Reveal in file manager"
-        >
-          {receipt.outputPath}
-        </button>
-        <div className="receipt-checks">
-          {receipt.checks.map((c, i) => (
-            <CheckRow key={i} check={c} />
+        <div className="receipt-paths">
+          {paths.map((path, i) => (
+            <button
+              key={path + i}
+              type="button"
+              className={"receipt-path" + (isAlbum && i === 0 ? " primary-path" : "")}
+              onClick={() => reveal(path)}
+              title="Reveal in file manager"
+            >
+              {isAlbum && i === 0 ? "▸ Continuous album · " : ""}
+              {path}
+            </button>
           ))}
         </div>
+        {receipt.checks.length > 0 && (
+          <div className="receipt-checks">
+            {receipt.checks.map((c, i) => (
+              <CheckRow key={i} check={c} />
+            ))}
+          </div>
+        )}
       </div>
     </div>
   );

@@ -585,3 +585,56 @@ What failed or remains partial:
 Next recommended slice:
 
 Phase 8.2 — Album rendering. Backend: `render_album_master(track_inputs, album_intent, per_track_overrides)` decodes each track in order, applies (intent + override) chain to each, writes individual masters plus a continuous album WAV (sample-rate-aligned concatenation, equal-power crossfade primitive ready but off by default). Frontend: an Export Album button that's visible in album mode and yields one receipt with all output paths. Then 8.3 (per-track adaptation UI: a small "Same as album" / "Override" switch above each control). Phase 9 (track roles / story step) layers on top of 8.2.
+
+## 2026-05-11 — Phase 8.2: real album rendering (continuous WAV + per-track masters)
+
+Goal:
+
+The Export Album button in Album mode actually produces a continuous album WAV plus individual mastered files. Album intent applies to every track unless a per-track override is provided.
+
+What changed:
+
+Backend (`engine.rs`):
+
+- New types: `AlbumTrackInput { id, path }` and `AlbumRenderRequest { tracks, album_intent, per_track_overrides }`.
+- Rewrote `render_album_master` from a mock to a real pipeline.
+- `album_render(req, out_dir) -> RenderJob` streams the album: for each input, decode via `audio::decode_full`, validate sample-rate / channel-count against the first track (errors out on mismatch — Phase 11 will add resampling), apply the chain with `(per_track_overrides[id] ?? album_intent)` settings, write the individual master via `write_wav`, and append the processed samples to a single `hound::WavWriter` that's been opened lazily on the first track. Output paths: `[continuous_album, individual_1, individual_2, ...]`.
+- `unique_album_path` and `wav_spec` / `write_samples_into_writer` helpers extracted to avoid duplication.
+- Memory: one track's worth of decoded PCM held in RAM at a time (rather than concatenating the full album).
+
+Frontend:
+
+- `api.ts`: `renderAlbumMaster` now wraps `{ tracks, album_intent, per_track_overrides }` under a `request` key matching the backend command shape.
+- `useTrackMaster.ts`: added `isExportingAlbum` flag and `exportAlbum()` action — calls the new command with all tracks in order + `albumIntent`, posts an `ExportReceipt` with `kind: "album"`.
+- `ExportReceipt` gained a `kind: "track" | "album"` field so the receipt modal can adapt.
+- `App.tsx`:
+  - `AlbumHeader` component renders above the per-track view when in album mode and has at least one track. Shows track count + total duration + a primary `Export Album` button.
+  - `ExportReceiptCard` now lists every `job.output_paths` entry as a clickable reveal-in-file-manager button (replacing the single-path version). For albums, the continuous WAV at index 0 is highlighted with a `▸ Continuous album` prefix and accent border.
+- `App.css`: `.album-header`, `.album-summary`, `.album-stat`, `.receipt-paths`, `.receipt-path.primary-path`.
+
+Tests:
+
+- `album_render_writes_continuous_and_individual_masters`: 2 synthetic stereo sines (0.4 s + 0.6 s) → expects 3 output paths (continuous + 2 individuals), continuous duration ≈ 1.0 s @ 44.1 kHz stereo within ±100 frames.
+- `album_render_rejects_sample_rate_mismatch`: 44.1 kHz + 48 kHz sines → error message mentions "sample rate".
+- `album_render_applies_per_track_override`: 2 sines, second has a Tape/intensity=1.0 override → both individuals exist (verifies the override is plumbed; numerical chain behavior is verified separately).
+
+Verification:
+
+- `npm run build`: clean. Bundle 220 KB (69 KB gzipped).
+- `cargo test` (from `src-tauri/`): **19/19** pass in 19.17s. Three new album-render tests added.
+- `npm run tauri dev`: deferred (manual — switch to Album Master, click Export Album, expect a continuous WAV + per-track masters under `%APPDATA%\...\renders\albums\`).
+
+Real-audio fixture used: synthetic sines for the album tests (varied lengths and sample rates so the assertions are tight). The real MP3 still exercises the per-track render path.
+
+What failed or remains partial:
+
+- All tracks must share sample rate + channel count. Mismatched tracks error out; resampling is Phase 11.
+- No fades / crossfades at track boundaries — boundaries are sample-exact concatenation per PRODUCT.md's "preserve original boundaries by default." Phase 10 will add timed-gap / equal-power crossfade / fade-in/out primitives.
+- No per-track override UI yet. The backend accepts `per_track_overrides` but the frontend always passes `undefined` (album intent applies to every track). Phase 8.3 adds a "Same as album" / "Override" switch per setting.
+- No cue / split / manifest output yet. PRODUCT.md mentions these for albums — Phase 8.4.
+- The album render doesn't run `run_export_checks` against the rendered album yet; the receipt for album exports shows just the file paths with no quality-check rows.
+- No progress feedback during the album render. For long albums (10+ minutes of audio), the button just says "Rendering album…" until done. Phase 11 can stream progress events back via `playback:tick`-style events.
+
+Next recommended slice:
+
+Phase 8.3 — per-track adaptation in album mode. Each setting (preset, intensity, EQ band, advanced field) gets a `same-as-album | override` switch. Frontend stores overrides per track as `Partial<MasteringSettings>` deltas. `exportAlbum` builds the `per_track_overrides` map by collapsing each track's deltas. Visual: muted "follows album intent" badge when no override; bright "Overridden" badge when one or more fields differ. Then Phase 9 (track roles / story step). Or Phase 11 (real compressor + limiter + crossfades) if Dan wants to ear-test the album output first and finds the loudness or boundaries unsatisfying.
