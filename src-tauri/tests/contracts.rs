@@ -808,6 +808,59 @@ fn presets_produce_distinct_chain_coefficients() {
     );
 }
 
+/// Phase 12.1 Dan feedback — already-mastered audio clips because the preset
+/// gain push lands on top of an already-loud source. Pinning that user
+/// input_gain_db reduces the effective input gain so the user can back off
+/// without changing preset/intensity. Symmetric output_gain_db trims the
+/// final output. Both are clamped to ±24 dB.
+#[test]
+fn input_and_output_gain_modify_chain_coefficients() {
+    use album_mastering_studio_lib::dsp::ChainCoeffs;
+    let sample_rate = 44_100;
+
+    let mut neutral = default_settings();
+    neutral.preset = Preset::Universal;
+    neutral.intensity = 0.5;
+
+    let mut cut_input = neutral.clone();
+    cut_input.input_gain_db = -6.0;
+
+    let mut boost_output = neutral.clone();
+    boost_output.output_gain_db = 6.0;
+
+    let mut cut_output = neutral.clone();
+    cut_output.output_gain_db = -6.0;
+
+    let c_neutral = ChainCoeffs::from_settings(sample_rate, &neutral);
+    let c_cut_in = ChainCoeffs::from_settings(sample_rate, &cut_input);
+    let c_boost_out = ChainCoeffs::from_settings(sample_rate, &boost_output);
+    let c_cut_out = ChainCoeffs::from_settings(sample_rate, &cut_output);
+
+    // -6 dB input gain should halve the linear input gain (approximately).
+    assert!(
+        c_cut_in.input_gain_lin < c_neutral.input_gain_lin * 0.55,
+        "expected -6 dB input gain to cut input_gain_lin roughly in half (neutral={}, cut={})",
+        c_neutral.input_gain_lin,
+        c_cut_in.input_gain_lin
+    );
+    // Output gain is independent of input gain and modifies user_output_gain_lin.
+    assert!(
+        (c_neutral.user_output_gain_lin - 1.0).abs() < 1.0e-3,
+        "neutral output gain should be unity (got {})",
+        c_neutral.user_output_gain_lin
+    );
+    assert!(
+        c_boost_out.user_output_gain_lin > 1.9,
+        "+6 dB output gain should ~double the linear scalar (got {})",
+        c_boost_out.user_output_gain_lin
+    );
+    assert!(
+        c_cut_out.user_output_gain_lin < 0.55,
+        "-6 dB output gain should cut the linear scalar roughly in half (got {})",
+        c_cut_out.user_output_gain_lin
+    );
+}
+
 /// Intensity scales preset character. At intensity 0.0 the preset should be
 /// audibly softer than at intensity 1.0 for any preset that has a non-neutral
 /// baseline. Pinning this so a future refactor can't accidentally make
@@ -1172,6 +1225,8 @@ fn default_settings() -> MasteringSettings {
         eq_mid_db: 0.0,
         eq_high_db: 0.0,
         volume_match: false,
+        input_gain_db: 0.0,
+        output_gain_db: 0.0,
         advanced: AdvancedSettings::default(),
     }
 }

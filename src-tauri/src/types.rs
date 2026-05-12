@@ -115,6 +115,19 @@ pub struct MasteringSettings {
     pub eq_mid_db: f32,
     pub eq_high_db: f32,
     pub volume_match: bool,
+    /// Pre-chain gain. Negative values back off the source before the preset
+    /// EQ/saturation/limiter sees it — useful for already-mastered material
+    /// that would otherwise clip when the preset adds its baseline gain push.
+    /// Default 0 dB. Phase 12.1 Dan feedback.
+    #[serde(default)]
+    pub input_gain_db: f32,
+    /// Post-limiter trim. Applied after the chain's limiter and volume-match
+    /// stages. Default 0 dB. Boosting above 0 here can re-introduce peaks
+    /// above the ceiling, which is intentionally allowed so a user can match
+    /// reference loudness — but the export receipt's true-peak check will
+    /// catch the result.
+    #[serde(default)]
+    pub output_gain_db: f32,
     pub advanced: AdvancedSettings,
 }
 

@@ -27,6 +27,8 @@ const DEFAULT_SETTINGS: MasteringSettings = {
   eq_mid_db: 0,
   eq_high_db: 0,
   volume_match: false,
+  input_gain_db: 0,
+  output_gain_db: 0,
   advanced: {
     lufs_offset_db: null,
     ceiling_dbtp: null,
@@ -710,6 +712,22 @@ export function useTrackMaster() {
     [selectedTrackId, updateSettings],
   );
 
+  const setInputGain = useCallback(
+    (db: number) => {
+      if (!selectedTrackId) return;
+      updateSettings(selectedTrackId, (prev) => ({ ...prev, input_gain_db: db }));
+    },
+    [selectedTrackId, updateSettings],
+  );
+
+  const setOutputGain = useCallback(
+    (db: number) => {
+      if (!selectedTrackId) return;
+      updateSettings(selectedTrackId, (prev) => ({ ...prev, output_gain_db: db }));
+    },
+    [selectedTrackId, updateSettings],
+  );
+
   const updatePreview = useCallback(async () => {
     if (!selectedTrackId || !selectedTrack) return;
     setIsRendering(true);
@@ -1150,6 +1168,8 @@ export function useTrackMaster() {
     setIntensity,
     setEqBand,
     setAdvanced,
+    setInputGain,
+    setOutputGain,
     updatePreview,
     exportMaster,
     togglePlay,

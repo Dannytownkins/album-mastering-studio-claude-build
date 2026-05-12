@@ -1030,6 +1030,8 @@ mod tests {
             eq_mid_db: 0.0,
             eq_high_db: 0.0,
             volume_match: false,
+            input_gain_db: 0.0,
+            output_gain_db: 0.0,
             advanced: AdvancedSettings::default(),
         }
     }

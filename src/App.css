@@ -464,6 +464,21 @@ button.primary:disabled {
   white-space: nowrap;
 }
 
+.io-gain {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1rem;
+  background: var(--bg-1);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 0.7rem 1rem;
+  margin-bottom: 0.6rem;
+}
+
+.io-gain .slider-row {
+  grid-template-columns: 100px 1fr 80px;
+}
+
 .undo-redo-bar {
   display: flex;
   gap: 0.4rem;

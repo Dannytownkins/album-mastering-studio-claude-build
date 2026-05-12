@@ -48,6 +48,12 @@ export interface MasteringSettings {
   eq_mid_db: number;
   eq_high_db: number;
   volume_match: boolean;
+  /// Pre-chain gain in dB. Negative reduces the source level before the
+  /// preset / EQ / limiter sees it. Default 0.
+  input_gain_db: number;
+  /// Post-limiter output trim in dB. Default 0. Boosting may reintroduce
+  /// peaks above the ceiling.
+  output_gain_db: number;
   advanced: AdvancedSettings;
 }
 

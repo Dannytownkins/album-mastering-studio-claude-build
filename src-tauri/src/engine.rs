@@ -167,6 +167,8 @@ pub fn analyze_one(track_id: TrackId, path: &Path) -> CommandResult<AnalysisResu
         eq_mid_db: 0.0,
         eq_high_db: 0.0,
         volume_match: false,
+        input_gain_db: 0.0,
+        output_gain_db: 0.0,
         advanced: AdvancedSettings {
             lufs_offset_db: Some(-14.0 - lufs_integrated),
             ceiling_dbtp: Some(-1.0),

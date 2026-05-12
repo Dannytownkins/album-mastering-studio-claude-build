@@ -135,6 +135,11 @@ pub struct ChainCoeffs {
     pub input_gain_lin: f32,
     pub saturation_amount: f32,
     pub ceiling_lin: f32,
+    /// Phase 12.1 — user-controllable output trim, applied AFTER the limiter
+    /// and the volume-match scalar. 1.0 = no change. Boosting above 1.0 can
+    /// reintroduce peaks above the ceiling (intentional — user choice; the
+    /// export check will flag it).
+    pub user_output_gain_lin: f32,
     /// Post-chain output gain used to align mastered playback loudness with
     /// the unprocessed source. 1.0 = no adjustment (Volume Match off).
     /// When on, set to the inverse of the input gain stage so the master
@@ -202,7 +207,12 @@ impl ChainCoeffs {
         let mid = BiquadCoeffs::peaking(sr, 1500.0, 0.8, effective_mid_db);
         let high = BiquadCoeffs::high_shelf(sr, 6000.0, effective_high_db, 0.7);
 
-        let input_gain_db = preset_gain_db * preset_scale;
+        // Input gain = scaled preset gain push + user input gain. User input
+        // gain is the standard mastering "back off the source" knob — useful
+        // when an already-mastered track would otherwise clip after the
+        // preset's baseline gain push lands on top of it.
+        let user_input_gain_db = settings.input_gain_db.clamp(-24.0, 24.0);
+        let input_gain_db = preset_gain_db * preset_scale + user_input_gain_db;
         let input_gain_lin = 10.0_f32.powf(input_gain_db / 20.0);
 
         let saturation_amount = preset_sat * preset_scale;
@@ -213,6 +223,11 @@ impl ChainCoeffs {
             .unwrap_or(-1.0)
             .clamp(-6.0, 0.0);
         let ceiling_lin = 10.0_f32.powf(ceiling_db / 20.0);
+
+        // Post-limiter user-trim. Clamped to the same ±24 dB range as input
+        // gain for symmetric extremes; default 0 dB.
+        let user_output_gain_db = settings.output_gain_db.clamp(-24.0, 24.0);
+        let user_output_gain_lin = 10.0_f32.powf(user_output_gain_db / 20.0);
 
         let volume_match_gain_lin = if settings.volume_match {
             // Undo the input-gain boost so mastered playback meets the source
@@ -234,6 +249,7 @@ impl ChainCoeffs {
             input_gain_lin,
             saturation_amount,
             ceiling_lin,
+            user_output_gain_lin,
             volume_match_gain_lin,
         }
     }
@@ -488,6 +504,15 @@ impl MasteringChain {
         if (self.coeffs.volume_match_gain_lin - 1.0).abs() > 1.0e-4 {
             for s in frame.iter_mut() {
                 *s *= self.coeffs.volume_match_gain_lin;
+            }
+        }
+        // User output gain — final trim. Applied last so it scales the
+        // already-processed, already-limited signal. Boosting here CAN push
+        // peaks above the ceiling (the user is asking for that level); the
+        // export receipt's true-peak check catches it.
+        if (self.coeffs.user_output_gain_lin - 1.0).abs() > 1.0e-4 {
+            for s in frame.iter_mut() {
+                *s *= self.coeffs.user_output_gain_lin;
             }
         }
     }

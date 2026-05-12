@@ -299,6 +299,12 @@ function TrackMaster({ tm }: { tm: ReturnType<typeof useTrackMaster> }) {
         onLoopToggle={tm.toggleLoop}
         onVolumeMatchChange={tm.setVolumeMatch}
       />
+      <IOGainBar
+        inputGainDb={tm.selectedSettings.input_gain_db}
+        outputGainDb={tm.selectedSettings.output_gain_db}
+        onInputGain={tm.setInputGain}
+        onOutputGain={tm.setOutputGain}
+      />
       <PresetTiles
         selected={tm.selectedSettings.preset}
         onChange={tm.setPreset}
@@ -492,7 +498,7 @@ function AnalysisSummary({ analysis }: { analysis: AnalysisResult }) {
 
   return (
     <details className="analysis-summary">
-      <summary>What this means</summary>
+      <summary>Details</summary>
       <ul>
         {lines.map((line, i) => (
           <li key={i}>{line}</li>
@@ -941,6 +947,43 @@ function isPresetActive(a: Preset, b: Preset): boolean {
   return a.kind === b.kind;
 }
 
+function IOGainBar({
+  inputGainDb,
+  outputGainDb,
+  onInputGain,
+  onOutputGain,
+}: {
+  inputGainDb: number;
+  outputGainDb: number;
+  onInputGain: (db: number) => void;
+  onOutputGain: (db: number) => void;
+}) {
+  return (
+    <section className="io-gain">
+      <Slider
+        label="Input gain"
+        value={inputGainDb}
+        min={-24}
+        max={24}
+        step={0.1}
+        format={(v) => `${v > 0 ? "+" : ""}${v.toFixed(1)} dB`}
+        onChange={onInputGain}
+        defaultValue={0}
+      />
+      <Slider
+        label="Output gain"
+        value={outputGainDb}
+        min={-24}
+        max={24}
+        step={0.1}
+        format={(v) => `${v > 0 ? "+" : ""}${v.toFixed(1)} dB`}
+        onChange={onOutputGain}
+        defaultValue={0}
+      />
+    </section>
+  );
+}
+
 function Macros({
   settings,
   onIntensity,
@@ -1252,7 +1295,7 @@ function AdvancedPanel({
       </div>
       <div className="advanced-grid">
         <NumberField
-          label="LUFS target"
+          label="LUFS target (coming soon)"
           value={a.lufs_offset_db}
           step={0.5}
           min={-24}
@@ -1270,7 +1313,7 @@ function AdvancedPanel({
           onChange={(v) => update("ceiling_dbtp", v)}
         />
         <NumberField
-          label="Width"
+          label="Width (coming soon)"
           value={a.width}
           step={0.05}
           min={0}
@@ -1279,7 +1322,7 @@ function AdvancedPanel({
           onChange={(v) => update("width", v)}
         />
         <NumberField
-          label="Warmth"
+          label="Warmth (coming soon)"
           value={a.warmth}
           step={0.05}
           min={0}
@@ -1288,7 +1331,7 @@ function AdvancedPanel({
           onChange={(v) => update("warmth", v)}
         />
         <NumberField
-          label="Presence/Air"
+          label="Presence/Air (coming soon)"
           value={a.presence_air}
           step={0.05}
           min={0}
@@ -1297,7 +1340,7 @@ function AdvancedPanel({
           onChange={(v) => update("presence_air", v)}
         />
         <NumberField
-          label="Compression"
+          label="Compression (coming soon)"
           value={a.compression_density}
           step={0.05}
           min={0}
