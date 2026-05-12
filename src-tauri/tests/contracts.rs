@@ -911,12 +911,37 @@ fn write_sine_wav(path: &Path, sample_rate: u32, duration_sec: f32, freq: f32, c
 }
 
 fn real_fixture_path() -> Option<PathBuf> {
-    let candidates = [
-        "../private-audio-fixtures/lay-the-money-on-the-desk.mp3",
-        "private-audio-fixtures/lay-the-money-on-the-desk.mp3",
-    ];
-    candidates
-        .iter()
-        .map(PathBuf::from)
-        .find(|p| p.exists())
+    // Scan `private-audio-fixtures/` for any supported audio file rather than
+    // hard-coding one specific filename. Tests can now run on whatever local
+    // fixture Dan drops in — original name preserved, no renaming required.
+    // Both paths are checked so the harness works from either the workspace
+    // root or from `src-tauri/` (cargo runs tests with cwd = src-tauri).
+    const FIXTURE_DIRS: [&str; 2] =
+        ["../private-audio-fixtures", "private-audio-fixtures"];
+    const EXTENSIONS: [&str; 8] =
+        ["wav", "mp3", "flac", "m4a", "aac", "ogg", "opus", "aiff"];
+
+    for dir in &FIXTURE_DIRS {
+        let dir_path = PathBuf::from(dir);
+        if !dir_path.is_dir() {
+            continue;
+        }
+        // Sort entries so the choice is deterministic across runs when more
+        // than one fixture is present.
+        let mut entries: Vec<_> = match std::fs::read_dir(&dir_path) {
+            Ok(rd) => rd.filter_map(|e| e.ok()).collect(),
+            Err(_) => continue,
+        };
+        entries.sort_by_key(|e| e.file_name());
+        for entry in entries {
+            let p = entry.path();
+            let Some(ext) = p.extension().and_then(|e| e.to_str()) else {
+                continue;
+            };
+            if EXTENSIONS.contains(&ext.to_ascii_lowercase().as_str()) {
+                return Some(p);
+            }
+        }
+    }
+    None
 }
