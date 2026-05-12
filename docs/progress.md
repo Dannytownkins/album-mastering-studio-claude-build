@@ -1277,3 +1277,55 @@ Next recommended slice:
 4. **If 1.b is still subtle: bump preset values.** First push Clarity (+3.5 high), Tape (+2.5 low / -2.5 high, sat 0.55), Oomph (+3.5 low). Re-test.
 
 Track Master release-candidate is now blocked on: (a) Dan's confirmation that the live-update bug is fixed and presets are distinct enough, (b) Phase 7.4 undo/redo (still the only Track Master non-negotiable that hasn't been built structurally), (c) ongoing Phase 12.1 listening iteration. The remaining UI polish items (number inputs, progress bars, visual hierarchy) are now refinements, not release-candidate gates.
+
+## 2026-05-12 — Phase 12.1 listening response v2: live-update fix + automated test + visible counter
+
+Goal:
+
+Dan's first listening pass on the prior batch (5 commits 18332e9..bc30aff) reported: spacebar and double-click slider reset work, but live updates STILL don't take effect. The audio.rs eprintln diagnostics never appeared in his terminal (likely a Tauri-dev stderr-routing quirk), and DevTools isn't an option while he's working. This pass takes a different approach: prove the backend works via automated tests, harden the frontend defensively, and add a visible in-app counter so Dan can verify live updates fire without opening DevTools.
+
+What changed:
+
+1. **`eaeddc4` — automated test for MasteringSource live coeff update.** Two pure-logic tests in `src-tauri/src/audio.rs` (mod tests, since MasteringSource is module-private):
+   - `mastering_source_applies_live_coeff_updates_via_channel`: feeds a 1 kHz sine through a MasteringSource, sends new ChainCoeffs through the mpsc channel mid-stream, verifies the post-update RMS exceeds the pre-update RMS by >10% (matches the expected gain bump from Universal intensity 0.0 → 1.0).
+   - `mastering_source_output_differs_after_live_update`: runs reference vs live-update sources on identical input. First halves match (sanity); second halves diverge after the channel send.
+   - Both pass in 0.21 s. **Proves the entire backend live-update path is healthy** — channel send, MasteringSource try_recv, crossfade arming, chain swap all work correctly. Should have existed since Phase 5; missing it let the bug slip through to Dan's listening session. Lesson recorded.
+
+2. **`a7bd6b0` — frontend P0 v2: defensive nextSettings + visible counter.** Three things:
+   - **Defensive nextSettings computation.** `updateSettings` and `applyUserPreset` now read `albumIntent` and `settingsMap[id]` from the current-render closure values instead of from inside a `setState((prev) => …)` updater. React 18's batched-updates model is unreliable for synchronous side-effect reads inside setState callbacks; pulling the current value into a local variable before mutating removes that hazard entirely.
+   - **Belt-and-suspenders shouldPush check.** Accepts EITHER the synchronous `loadedKindByTrack` map OR the tick-driven `loadedTrackId` as evidence the track is playing as master. Covers the case where one signal is briefly stale post-render. Specifically: `shouldPush = loadedKindByTrack[id] === "master" || (loadedTrackId === id && kindForId !== "source")`.
+   - **In-app live-update counter.** A small "live: N/M" badge in the StaleBar — M = api.updateChain attempts, N = resolved successes. Renders as a tabular-numerics chip. **Dan can now verify live updates fire WITHOUT DevTools** — drag a slider, watch the counter tick.
+   - Removed the prior console.log diagnostic noise from updateSettings, and the audio.rs eprintln diagnostics that weren't reaching Dan's terminal anyway.
+
+Diagnostic path now (if live updates still feel wrong):
+
+| In-app "live: N/M" behavior on slider drag | Diagnosis |
+|---|---|
+| M increments (and N follows shortly) | Frontend is firing api.updateChain correctly. Bug is downstream — audio output buffer or chain audible difference. |
+| M increments but N stays behind | Tauri IPC is throwing / rejecting. The error from the .catch is stored in `error` state (visible in UI). |
+| Neither increments | `shouldPush` is still evaluating false on Dan's machine — either loadedKindByTrack[id] isn't "master" yet, or loadedTrackId mismatch. Need to dig deeper into the playback state machine. |
+
+Verification:
+
+- `cargo test --lib mastering_source`: **2/2 pass** in 0.21 s. Backend live-update path verified.
+- `cargo check` (full backend): clean.
+- `npm run build`: clean, 248.03 KB / 75.93 KB gzipped.
+- `npm run tauri dev`: Dan to confirm via the in-app counter.
+
+What failed or remains partial:
+
+- **Still no autonomous frontend integration test** for "slider event → api.updateChain fires." The frontend has no vitest/jsdom setup; adding one is a real slice on its own. For now the in-app counter is the substitute verification.
+- **Phase 7.4 undo/redo** is the only remaining Track Master non-negotiable from IMPLEMENTATION_PLAN.md. Starting next.
+- **The "1–2 second toggle delay"** Dan mentioned earlier (decode_full on every play_master) is still unaddressed. Tracked as a follow-up — a PCM cache keyed by (path, mtime) would kill that delay regardless of the live-update behavior.
+- **UI polish items remain deferred:** number-input fields next to sliders, export progress bar, visual hierarchy pass.
+
+Next recommended slice:
+
+Phase 7.4 — undo/redo for non-destructive Track Master state. Minimal viable:
+- History stack as a ref (past/future).
+- Snapshot before each settings mutation.
+- Ctrl+Z / Ctrl+Shift+Z keyboard shortcuts.
+- Fire api.updateChain after undo/redo if the affected track is playing as master.
+- Track order / album overrides covered in a follow-up if scope allows.
+
+After 7.4 lands, Track Master will have ALL release-candidate non-negotiables structurally present. Final blockers will be Dan's listening confirmation (Phase 12.1 in flight) and explicit human approval to call it release-candidate.
