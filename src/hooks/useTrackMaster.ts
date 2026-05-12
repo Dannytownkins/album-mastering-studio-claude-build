@@ -9,6 +9,8 @@ import type {
   LoopRegion,
   MasteringSettings,
   Preset,
+  ProjectMode,
+  ProjectState,
   QualityCheck,
   RenderJob,
   TrackId,
@@ -77,8 +79,9 @@ export function useTrackMaster() {
   });
   const [advancedOpen, setAdvancedOpen] = useState(false);
   const [lastExportReceipt, setLastExportReceipt] = useState<ExportReceipt | null>(null);
-  const [mode, setMode] = useState<"track" | "album">("track");
+  const [mode, setMode] = useState<ProjectMode>("track");
   const [albumIntent, setAlbumIntent] = useState<MasteringSettings>(DEFAULT_SETTINGS);
+  const [sessionLoaded, setSessionLoaded] = useState(false);
   const [loadedTrackId, setLoadedTrackId] = useState<TrackId | null>(null);
   const [loadedKindByTrack, setLoadedKindByTrack] = useState<Record<TrackId, PlaybackKindUI>>({});
   const [regionByTrack, setRegionByTrack] = useState<Record<TrackId, LoopRegion | null>>({});
@@ -99,6 +102,80 @@ export function useTrackMaster() {
       unlisten?.();
     };
   }, []);
+
+  // Phase 7.2: load the autosaved session on mount, then enable autosave.
+  useEffect(() => {
+    let cancelled = false;
+    api
+      .loadRecentSession()
+      .then(async (session) => {
+        if (cancelled || !session || session.schema_version !== 1) {
+          setSessionLoaded(true);
+          return;
+        }
+        const restoredTracks = session.tracks ?? [];
+        if (restoredTracks.length > 0) {
+          setTracks(restoredTracks);
+          setSelectedTrackId(restoredTracks[0].id);
+        }
+        if (session.track_settings) setSettingsMap(session.track_settings);
+        if (session.mode) setMode(session.mode);
+        if (session.album_intent) setAlbumIntent(session.album_intent);
+
+        // Best-effort re-analyze + re-waveform for restored tracks.
+        if (restoredTracks.length > 0) {
+          try {
+            const results = await api.analyzeTracks(
+              restoredTracks.map((t) => ({ id: t.id, path: t.path })),
+            );
+            if (!cancelled) {
+              const map: Record<TrackId, AnalysisResult> = {};
+              for (const r of results) map[r.track_id] = r;
+              setAnalysisMap(map);
+            }
+          } catch (err) {
+            console.warn("Session restore: analyze failed", err);
+          }
+          for (const t of restoredTracks) {
+            if (cancelled) break;
+            try {
+              const wf = await api.prepareWaveform(t.id, t.path, 1200);
+              setWaveformMap((prev) => ({ ...prev, [t.id]: wf }));
+            } catch (err) {
+              console.warn(`Session restore: waveform for ${t.display_name} failed`, err);
+            }
+          }
+        }
+        setSessionLoaded(true);
+      })
+      .catch((err) => {
+        console.warn("Session load failed", err);
+        setSessionLoaded(true);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  // Phase 7.2: debounced autosave on relevant state changes.
+  useEffect(() => {
+    if (!sessionLoaded) return;
+    const handle = setTimeout(() => {
+      const state: ProjectState = {
+        schema_version: 1,
+        mode,
+        tracks,
+        track_order: tracks.map((t) => t.id),
+        track_settings: settingsMap,
+        album_intent: albumIntent,
+        last_saved_iso: new Date().toISOString(),
+      };
+      api.autosaveSession(state).catch((err) => {
+        console.warn("Autosave failed", err);
+      });
+    }, 1500);
+    return () => clearTimeout(handle);
+  }, [sessionLoaded, mode, tracks, settingsMap, albumIntent]);
 
   const selectedTrack = useMemo(
     () => tracks.find((t) => t.id === selectedTrackId),

@@ -638,3 +638,51 @@ What failed or remains partial:
 Next recommended slice:
 
 Phase 8.3 — per-track adaptation in album mode. Each setting (preset, intensity, EQ band, advanced field) gets a `same-as-album | override` switch. Frontend stores overrides per track as `Partial<MasteringSettings>` deltas. `exportAlbum` builds the `per_track_overrides` map by collapsing each track's deltas. Visual: muted "follows album intent" badge when no override; bright "Overridden" badge when one or more fields differ. Then Phase 9 (track roles / story step). Or Phase 11 (real compressor + limiter + crossfades) if Dan wants to ear-test the album output first and finds the loudness or boundaries unsatisfying.
+
+## 2026-05-11 — Phase 7.2: session autosave + restore
+
+Goal:
+
+Close the app, reopen it, and find the same tracks, settings, mode, and album intent waiting. No more re-importing on every restart.
+
+What changed:
+
+Backend (`project.rs`):
+
+- Replaced the stub bodies with real persistence.
+- `autosave_session(state, app)` resolves `app_data_dir/session.json`, then writes via `write_session_atomic`: serialize to `session.json.tmp` next to the target, then `fs::rename` to atomically replace the live file. Avoids torn writes if the app crashes mid-save.
+- `load_recent_session(app)` reads the file if it exists; returns `Ok(None)` if the file is missing, malformed, or has an unknown `schema_version`. The frontend treats `None` as "first launch — start clean," which means corrupted sessions degrade gracefully instead of bricking the app.
+- `save_project(path, state)` reuses the same atomic write but accepts a user-chosen path (validated against parent-dir traversal; parent directories are created on demand). The frontend doesn't expose this yet — it's available for Phase 7.4 "Save Project As…".
+
+Frontend (`useTrackMaster.ts`):
+
+- `sessionLoaded: boolean` gate prevents the autosave effect from firing during the initial restore.
+- On mount: `api.loadRecentSession()` — if the response is a valid `schema_version === 1` `ProjectState`:
+  - `tracks`, `selectedTrackId` (first track), `settingsMap`, `mode`, `albumIntent` are restored.
+  - Best-effort re-analysis: `api.analyzeTracks` runs in the background on the restored tracks; `analysisMap` repopulates. Failures are logged, not thrown.
+  - Best-effort waveform regeneration: each track's peaks are re-decoded sequentially via `api.prepareWaveform`. If a file has moved or been deleted, the warning is logged and the track stays in the list without a waveform.
+  - `sessionLoaded` flips to `true` once the restore is done (success or failure).
+- Debounced autosave effect: when any of `[sessionLoaded, mode, tracks, settingsMap, albumIntent]` changes, a 1500 ms timer fires `api.autosaveSession({ schema_version: 1, mode, tracks, track_order, track_settings, album_intent, last_saved_iso })`. The timer resets on each change so the disk write happens only after the user pauses.
+
+Tests:
+
+- `session_write_and_read_roundtrips`: builds a `ProjectState` with one track + album intent + Album mode, writes to a tempdir path, reads back, asserts fields survived.
+- `session_write_is_atomic_against_existing_file`: seeds the path with garbage bytes, writes valid state, asserts the read returns the clean state (the rename clobbered the garbage cleanly).
+
+Verification:
+
+- `npm run build`: clean. Bundle 221 KB (69 KB gzipped).
+- `cargo test` (from `src-tauri/`): **21/21** pass in 19.31s. Two new session tests.
+- `npm run tauri dev`: deferred (manual — import a track, change settings, close the app, reopen, expect everything to be there).
+
+What failed or remains partial:
+
+- Re-analysis on session load decodes each file again — could be slow for many-track albums (10 tracks × 4 min ≈ a few seconds total on the dev machine). Acceptable; a cached `analysisMap` in `session.json` would make restore instant but bloats the file. Defer.
+- No file-missing UX yet. If a restored track's source path no longer exists, decoding fails silently in a `console.warn`. PRODUCT.md hints at a "track missing" badge in the sidebar — Phase 7.3.
+- No autosave for transport state (playing/paused, current time, A/B kind), `regionByTrack` loop regions, `loadedKindByTrack`, `staleSet`. These are ephemeral by design: a restart drops the playhead and the user can reseek. Volatile state shouldn't live in `session.json`.
+- Per-track override flags for album mode (Phase 8.3) aren't yet in `ProjectState`. They'll need to be added when Phase 8.3 lands — schema bump to `version: 2`, with the loader treating v1 sessions as "no overrides."
+- No "Save Project As…" UI yet. The `save_project` backend is ready; the frontend can wire it up in Phase 7.3 alongside a recent-projects menu.
+
+Next recommended slice:
+
+Phase 8.3 (per-track override UI in album mode) or Phase 11 (real compressor / lookahead limiter / crossfade on chain swap). 8.3 makes Album Master complete per PRODUCT.md; 11 makes the existing chain sound professionally-tuned. Both are roughly the same size. If Dan plans to listen to the album-render output critically, 11 first; if he wants to dial each track in differently before exporting, 8.3 first.

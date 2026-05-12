@@ -485,6 +485,67 @@ async fn save_user_preset_rejects_empty_name() {
     assert!(matches!(err, CommandError::Other(_)));
 }
 
+#[test]
+fn session_write_and_read_roundtrips() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let path = tmp.path().join("session.json");
+
+    let mut track_settings = std::collections::HashMap::new();
+    track_settings.insert("alpha".to_string(), default_settings());
+
+    let state = ProjectState {
+        schema_version: 1,
+        mode: ProjectMode::Album,
+        tracks: vec![ImportedTrack {
+            id: TrackId("alpha".to_string()),
+            path: "C:/music/alpha.wav".to_string(),
+            display_name: "alpha".to_string(),
+            source_format: "wav".to_string(),
+            duration_seconds: Some(180.0),
+            sample_rate: Some(44_100),
+            channels: Some(2),
+        }],
+        track_order: vec![TrackId("alpha".to_string())],
+        track_settings,
+        album_intent: Some(default_settings()),
+        last_saved_iso: Some("2026-05-11T12:00:00Z".to_string()),
+    };
+
+    project::write_session_atomic(&path, &state).expect("write session");
+    assert!(path.exists(), "session.json missing after write");
+
+    let restored = project::read_session(&path).expect("read session");
+    assert_eq!(restored.schema_version, 1);
+    assert_eq!(restored.tracks.len(), 1);
+    assert_eq!(restored.tracks[0].id, TrackId("alpha".to_string()));
+    assert_eq!(restored.tracks[0].duration_seconds, Some(180.0));
+    assert_eq!(restored.track_order.len(), 1);
+    assert!(restored.album_intent.is_some());
+    assert!(matches!(restored.mode, ProjectMode::Album));
+}
+
+#[test]
+fn session_write_is_atomic_against_existing_file() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let path = tmp.path().join("session.json");
+    std::fs::write(&path, b"old garbage that should be replaced").expect("seed");
+
+    let state = ProjectState {
+        schema_version: 1,
+        mode: ProjectMode::Track,
+        tracks: Vec::new(),
+        track_order: Vec::new(),
+        track_settings: std::collections::HashMap::new(),
+        album_intent: None,
+        last_saved_iso: None,
+    };
+
+    project::write_session_atomic(&path, &state).expect("write");
+    let restored = project::read_session(&path).expect("read");
+    assert_eq!(restored.tracks.len(), 0);
+    assert!(matches!(restored.mode, ProjectMode::Track));
+}
+
 fn default_settings() -> MasteringSettings {
     MasteringSettings {
         preset: Preset::Universal,
