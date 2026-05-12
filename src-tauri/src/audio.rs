@@ -995,3 +995,211 @@ impl rodio::Source for MasteringSource {
         Ok(())
     }
 }
+
+// ============================================================================
+// Tests — MasteringSource live-update path (Phase 12.1: Dan caught this gap
+// during manual smoke and rightly pointed out it should have been automated
+// before now). MasteringSource is private to this module, so the test lives
+// here instead of in tests/contracts.rs.
+// ============================================================================
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::dsp::{ChainCoeffs, MasteringChain};
+
+    fn settings_with_intensity(intensity: f32) -> MasteringSettings {
+        MasteringSettings {
+            preset: Preset::Universal,
+            intensity,
+            eq_low_db: 0.0,
+            eq_mid_db: 0.0,
+            eq_high_db: 0.0,
+            volume_match: false,
+            advanced: AdvancedSettings::default(),
+        }
+    }
+
+    fn sine_signal(frames: usize, sample_rate: u32, channels: u16) -> Vec<f32> {
+        let mut samples = Vec::with_capacity(frames * channels as usize);
+        for n in 0..frames {
+            let v = 0.3
+                * (n as f32 / sample_rate as f32
+                    * 2.0
+                    * std::f32::consts::PI
+                    * 1000.0)
+                    .sin();
+            for _ in 0..channels {
+                samples.push(v);
+            }
+        }
+        samples
+    }
+
+    fn rms(samples: &[f32]) -> f32 {
+        if samples.is_empty() {
+            return 0.0;
+        }
+        let sum_sq: f32 = samples.iter().map(|s| s * s).sum();
+        (sum_sq / samples.len() as f32).sqrt()
+    }
+
+    /// Feed a 1 kHz sine through a MasteringSource, send a new ChainCoeffs
+    /// through its mpsc channel mid-stream, and verify the output's RMS in
+    /// the post-update region reflects the new chain (higher input gain).
+    /// This is the test that *should* have caught the bug Dan reported during
+    /// Phase 12.1 listening — it isolates the live-update path from the audio
+    /// device, from frontend state, and from Tauri IPC.
+    #[test]
+    fn mastering_source_applies_live_coeff_updates_via_channel() {
+        let sample_rate = 44_100;
+        let channels: u16 = 2;
+        let total_frames = 16_384; // ~371 ms, well past warmup + crossfade
+        let samples = sine_signal(total_frames, sample_rate, channels);
+
+        // Initial chain: intensity 0.0 -> Universal gain push ≈ 0.6 dB.
+        let initial_settings = settings_with_intensity(0.0);
+        let initial_chain =
+            MasteringChain::new(sample_rate, channels as usize, &initial_settings);
+        let (coeffs_tx, coeffs_rx) = mpsc::channel::<ChainCoeffs>();
+        let mut source = MasteringSource::new(
+            samples,
+            channels,
+            sample_rate,
+            initial_chain,
+            coeffs_rx,
+        );
+
+        // Drain the first half at the initial chain.
+        let half = total_frames * channels as usize / 2;
+        let mut output_initial: Vec<f32> = Vec::with_capacity(half);
+        for _ in 0..half {
+            if let Some(s) = source.next() {
+                output_initial.push(s);
+            } else {
+                break;
+            }
+        }
+
+        // Send updated chain (intensity 1.0 -> Universal gain ≈ 2.4 dB).
+        let new_settings = settings_with_intensity(1.0);
+        let new_coeffs = ChainCoeffs::from_settings(sample_rate, &new_settings);
+        coeffs_tx.send(new_coeffs).expect("send new coeffs");
+
+        // Drain the second half. The coeff check fires every 128 frames; the
+        // crossfade then takes 512 frames. The new chain is fully active by
+        // ~640 frames after the send (≈ 1280 samples at stereo).
+        let mut output_updated: Vec<f32> = Vec::with_capacity(half);
+        for _ in 0..half {
+            if let Some(s) = source.next() {
+                output_updated.push(s);
+            } else {
+                break;
+            }
+        }
+
+        // Compare the steady-state region of each half. Skip generously past
+        // the crossfade and filter-warmup transients (4096 samples = ~46 ms).
+        let warmup_skip = 4096;
+        let steady_initial = &output_initial[warmup_skip..];
+        let steady_updated = &output_updated[warmup_skip..];
+        let rms_initial = rms(steady_initial);
+        let rms_updated = rms(steady_updated);
+
+        assert!(
+            rms_initial > 0.0,
+            "initial RMS should be non-zero (got {rms_initial})"
+        );
+        assert!(
+            rms_updated > 0.0,
+            "updated RMS should be non-zero (got {rms_updated})"
+        );
+        // Universal at intensity 0.0 -> preset_scale 0.4 -> gain_db 0.6 -> gain 1.071x.
+        // Universal at intensity 1.0 -> preset_scale 1.6 -> gain_db 2.4 -> gain 1.318x.
+        // Expected RMS ratio ≈ 1.23. Allow loose threshold but require a
+        // clearly-audible jump.
+        let ratio = rms_updated / rms_initial;
+        assert!(
+            ratio > 1.10,
+            "expected live coeff update to raise output RMS by >10% \
+             (rms_initial={rms_initial:.4}, rms_updated={rms_updated:.4}, ratio={ratio:.3}). \
+             If this fails, the MasteringSource is not picking up new coeffs from the channel."
+        );
+    }
+
+    /// A second, simpler test: confirm that *something* changed in the output
+    /// after the channel send, by comparing the post-update buffer to a
+    /// re-run of the same initial chain on the same input. If they're
+    /// byte-identical (or near it) the live-update path is dead.
+    #[test]
+    fn mastering_source_output_differs_after_live_update() {
+        let sample_rate = 44_100;
+        let channels: u16 = 2;
+        let total_frames = 8_192;
+        let samples_a = sine_signal(total_frames, sample_rate, channels);
+        let samples_b = sine_signal(total_frames, sample_rate, channels);
+
+        let initial_settings = settings_with_intensity(0.0);
+
+        // Reference run: never send new coeffs.
+        let ref_chain =
+            MasteringChain::new(sample_rate, channels as usize, &initial_settings);
+        let (_ref_tx, ref_rx) = mpsc::channel::<ChainCoeffs>();
+        let mut ref_source =
+            MasteringSource::new(samples_a, channels, sample_rate, ref_chain, ref_rx);
+        let ref_output: Vec<f32> = (0..total_frames * channels as usize)
+            .filter_map(|_| ref_source.next())
+            .collect();
+
+        // Live-update run: send new coeffs halfway.
+        let live_chain =
+            MasteringChain::new(sample_rate, channels as usize, &initial_settings);
+        let (live_tx, live_rx) = mpsc::channel::<ChainCoeffs>();
+        let mut live_source =
+            MasteringSource::new(samples_b, channels, sample_rate, live_chain, live_rx);
+        let half = total_frames * channels as usize / 2;
+        let mut live_output: Vec<f32> = Vec::with_capacity(total_frames * channels as usize);
+        for _ in 0..half {
+            if let Some(s) = live_source.next() {
+                live_output.push(s);
+            }
+        }
+        let new_settings = settings_with_intensity(1.0);
+        let new_coeffs = ChainCoeffs::from_settings(sample_rate, &new_settings);
+        live_tx.send(new_coeffs).expect("send new coeffs");
+        for _ in half..(total_frames * channels as usize) {
+            if let Some(s) = live_source.next() {
+                live_output.push(s);
+            }
+        }
+
+        // First half should be ~identical between reference and live runs
+        // (both running the initial chain). Sanity check that fixture.
+        let first_half_diff: f32 = ref_output[..half]
+            .iter()
+            .zip(live_output[..half].iter())
+            .map(|(a, b)| (a - b).abs())
+            .sum();
+        assert!(
+            first_half_diff < 1e-3,
+            "first half should match between ref and live (diff={first_half_diff}); fixture broken"
+        );
+
+        // Second half must differ materially — the live run got new coeffs.
+        let warmup_skip = 4096;
+        let second_half_ref = &ref_output[half + warmup_skip..];
+        let second_half_live = &live_output[half + warmup_skip..];
+        let mean_abs_diff: f32 = second_half_ref
+            .iter()
+            .zip(second_half_live.iter())
+            .map(|(a, b)| (a - b).abs())
+            .sum::<f32>()
+            / second_half_ref.len() as f32;
+        assert!(
+            mean_abs_diff > 0.005,
+            "second-half output should diverge after live update \
+             (mean_abs_diff={mean_abs_diff:.5}). If this is near 0, MasteringSource \
+             is silently dropping coeff updates."
+        );
+    }
+}
