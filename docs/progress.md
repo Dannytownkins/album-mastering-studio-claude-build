@@ -504,3 +504,38 @@ What failed or remains partial:
 Next recommended slice:
 
 Phase 4.4 (small) — wire `tauri-plugin-shell` so `exports::open_output` actually opens Explorer / Finder pointed at the export folder, and make the receipt modal path clickable. Then Phase 11 (DSP audit — real compressor with attack/release, lookahead true-peak limiter, fade-out on Sink swaps, crossfade on preset changes). Or Phase 8 if Dan wants Album Master scaffolding next.
+
+## 2026-05-11 — Phase 4.4: open_output reveals the export in the OS file manager
+
+Goal:
+
+Clicking the path in the export receipt modal opens Explorer (Windows) / Finder (macOS) / xdg-open (Linux) pointed at the exported file. No plugin dependency — uses `std::process::Command`.
+
+What changed:
+
+Backend (`src-tauri/src/exports.rs`):
+
+- `open_output` now validates the path (non-empty, no parent-dir traversal, file exists) then platform-dispatches:
+  - Windows: `explorer /select, <path>` — opens the parent folder with the file selected.
+  - macOS: `open -R <path>` — Finder reveal.
+  - Other (Linux): `xdg-open <parent>` — file manager opens on the parent folder.
+- No new dependencies; just `std::process::Command`. Tauri plugin-shell would also work but adds a permission surface; for a "reveal in file manager" action the bare `Command::spawn` is enough and stays inside our own command's permission boundary.
+
+Frontend (`src/App.tsx`, `src/App.css`):
+
+- `ExportReceiptCard.receipt-path` is now a `<button>` that calls `api.openOutput(receipt.outputPath)` on click. Hover state highlights the border and brightens the text. Title attribute reads "Reveal in file manager" for clarity.
+
+Verification:
+
+- `npm run build`: clean. Bundle 218 KB (68 KB gzipped).
+- `cargo test` (from `src-tauri/`): 16/16 still pass in 29.25s.
+- `npm run tauri dev`: deferred (manual — export a track, click the path in the receipt, expect Explorer to pop up with the WAV highlighted).
+
+What failed or remains partial:
+
+- No automated test for `open_output` because spawning Explorer in CI is brittle. The path-validation logic could be unit-tested cheaply; deferred until needed.
+- The receipt modal still leaks if Dan dismisses by clicking the path — actually it doesn't, the click only fires `reveal()`, the backdrop click is the only dismiss path. Good.
+
+Next recommended slice:
+
+Phase 11 (DSP audit) — biggest quality unlock left. Real compressor (program-dependent attack/release, soft knee), lookahead true-peak limiter (replaces the soft-clip ceiling), 30 ms crossfade between old and new chain coefficients on preset/intensity changes to remove transient clicks, fade-out on `Sink::stop` swaps. Alternative: Phase 7 (custom presets, autosave, undo/redo) for product depth. Or Phase 8 (Album Master sidebar mode + reorder + global album intent) for the second product mode.

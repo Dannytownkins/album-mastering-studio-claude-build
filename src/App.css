@@ -794,6 +794,17 @@ button.primary:disabled {
   border-radius: var(--radius-sm);
   margin: 0 0 1rem;
   word-break: break-all;
+  display: block;
+  width: 100%;
+  text-align: left;
+  border: 1px solid var(--border);
+  cursor: pointer;
+  transition: border-color 0.1s, color 0.1s;
+}
+
+.receipt-path:hover {
+  color: var(--text-0);
+  border-color: var(--accent);
 }
 
 .receipt-checks {

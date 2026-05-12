@@ -69,5 +69,44 @@ pub async fn open_output(output_path: String) -> CommandResult<()> {
     if output_path.is_empty() {
         return Err(CommandError::InvalidPath("empty path".to_string()));
     }
-    Ok(())
+    let path = std::path::Path::new(&output_path);
+    if crate::files::has_parent_dir_component(path) {
+        return Err(CommandError::InvalidPath(format!(
+            "path traversal not allowed: {output_path}"
+        )));
+    }
+    if !path.exists() {
+        return Err(CommandError::Io(format!(
+            "path does not exist: {output_path}"
+        )));
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        // /select, opens Explorer at the parent folder with the file highlighted.
+        std::process::Command::new("explorer")
+            .arg("/select,")
+            .arg(&output_path)
+            .spawn()
+            .map_err(|e| CommandError::Io(format!("failed to open Explorer: {e}")))?;
+        return Ok(());
+    }
+    #[cfg(target_os = "macos")]
+    {
+        std::process::Command::new("open")
+            .arg("-R")
+            .arg(&output_path)
+            .spawn()
+            .map_err(|e| CommandError::Io(format!("failed to open Finder: {e}")))?;
+        return Ok(());
+    }
+    #[cfg(all(not(target_os = "windows"), not(target_os = "macos")))]
+    {
+        let parent = path.parent().unwrap_or(path);
+        std::process::Command::new("xdg-open")
+            .arg(parent)
+            .spawn()
+            .map_err(|e| CommandError::Io(format!("failed to open file manager: {e}")))?;
+        Ok(())
+    }
 }

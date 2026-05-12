@@ -1,4 +1,5 @@
 import { useState, type PointerEvent as ReactPointerEvent } from "react";
+import { api } from "./lib/api";
 import { useTrackMaster } from "./hooks/useTrackMaster";
 import type {
   AnalysisResult,
@@ -838,6 +839,14 @@ function ExportReceiptCard({
   receipt: ExportReceipt;
   onClose: () => void;
 }) {
+  const reveal = async () => {
+    if (!receipt.outputPath) return;
+    try {
+      await api.openOutput(receipt.outputPath);
+    } catch (err) {
+      console.error("openOutput failed", err);
+    }
+  };
   return (
     <div className="receipt-backdrop" onClick={onClose}>
       <div className="receipt" onClick={(e) => e.stopPropagation()}>
@@ -847,7 +856,14 @@ function ExportReceiptCard({
             ×
           </button>
         </header>
-        <p className="receipt-path">{receipt.outputPath}</p>
+        <button
+          type="button"
+          className="receipt-path"
+          onClick={reveal}
+          title="Reveal in file manager"
+        >
+          {receipt.outputPath}
+        </button>
         <div className="receipt-checks">
           {receipt.checks.map((c, i) => (
             <CheckRow key={i} check={c} />
