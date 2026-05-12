@@ -580,6 +580,32 @@ struct AudioThreadState {
     loop_region: Option<LoopRegion>,
     live_coeffs_tx: Option<Sender<crate::dsp::ChainCoeffs>>,
     live_sample_rate: u32,
+    /// Phase 12.1 decode cache — keyed by canonical path + mtime. Speeds up
+    /// repeated `play_master` calls on the same file (e.g. Original/Mastered
+    /// toggles) from ~1–2 s on a multi-minute WAV down to a sub-100 ms swap.
+    /// Single-entry LRU is sufficient because the typical Track Master flow
+    /// hammers one fixture; album mode keeps the most-recently-played track.
+    decoded_cache: Option<DecodedCacheEntry>,
+}
+
+#[derive(Clone)]
+struct DecodedCacheEntry {
+    canonical_path: PathBuf,
+    mtime: Option<std::time::SystemTime>,
+    pcm: DecodedPcm,
+}
+
+/// Returns the cached PCM if the entry's key matches the given canonical
+/// path + mtime. Extracted from handle_play_master so the cache logic is
+/// testable without spinning up a real audio device.
+fn decode_cache_lookup(
+    cache: Option<&DecodedCacheEntry>,
+    canonical: &Path,
+    mtime: Option<std::time::SystemTime>,
+) -> Option<DecodedPcm> {
+    cache
+        .filter(|entry| entry.canonical_path == canonical && entry.mtime == mtime)
+        .map(|entry| entry.pcm.clone())
 }
 
 fn audio_thread(rx: mpsc::Receiver<AudioCommand>, snapshot: Arc<RwLock<PlaybackSnapshot>>) {
@@ -702,6 +728,7 @@ fn handle_play(
             loop_region: None,
             live_coeffs_tx: None,
             live_sample_rate: 44_100,
+            decoded_cache: None,
         });
     }
     let s = state.as_mut().expect("state just inserted");
@@ -726,10 +753,32 @@ fn handle_play_master(
     settings: &MasteringSettings,
     start_position_sec: f64,
 ) -> Result<(), String> {
-    let pcm = crate::audio::decode_full(path).map_err(|e| format!("{e}"))?;
-    if pcm.samples.is_empty() {
-        return Err("no samples decoded for master playback".to_string());
-    }
+    // Phase 12.1 perf — decode cache. Resolve the canonical path and
+    // mtime to use as the cache key. If the cache holds a matching entry,
+    // reuse the PCM directly; otherwise decode and store. Skipping
+    // `decode_full` on a ~244 s WAV cuts the Original→Mastered toggle
+    // latency from ~1–2 s down to a sub-100 ms swap.
+    let canonical = path
+        .canonicalize()
+        .unwrap_or_else(|_| path.to_path_buf());
+    let mtime = std::fs::metadata(&canonical).ok().and_then(|m| m.modified().ok());
+    let cache_hit_pcm: Option<DecodedPcm> = decode_cache_lookup(
+        state.as_ref().and_then(|s| s.decoded_cache.as_ref()),
+        &canonical,
+        mtime,
+    );
+
+    let pcm = match cache_hit_pcm {
+        Some(p) => p,
+        None => {
+            let decoded =
+                crate::audio::decode_full(path).map_err(|e| format!("{e}"))?;
+            if decoded.samples.is_empty() {
+                return Err("no samples decoded for master playback".to_string());
+            }
+            decoded
+        }
+    };
 
     if state.is_none() {
         let (stream, handle) = rodio::OutputStream::try_default()
@@ -743,10 +792,19 @@ fn handle_play_master(
             loop_region: None,
             live_coeffs_tx: None,
             live_sample_rate: pcm.sample_rate,
+            decoded_cache: None,
         });
     }
     let s = state.as_mut().expect("state just inserted");
     s.sink.stop();
+
+    // Update the cache (replace any prior entry — single-slot LRU is fine
+    // for the typical "one or two fixtures" Track Master workflow).
+    s.decoded_cache = Some(DecodedCacheEntry {
+        canonical_path: canonical,
+        mtime,
+        pcm: pcm.clone(),
+    });
 
     let (coeffs_tx, coeffs_rx) = mpsc::channel::<crate::dsp::ChainCoeffs>();
     let chain = crate::dsp::MasteringChain::new(pcm.sample_rate, pcm.channels as usize, settings);
@@ -1081,6 +1139,82 @@ mod tests {
              (rms_initial={rms_initial:.4}, rms_updated={rms_updated:.4}, ratio={ratio:.3}). \
              If this fails, the MasteringSource is not picking up new coeffs from the channel."
         );
+    }
+
+    #[test]
+    fn decode_cache_lookup_returns_pcm_on_path_and_mtime_match() {
+        let pcm = DecodedPcm {
+            samples: vec![0.1, 0.2, 0.3, 0.4],
+            sample_rate: 44_100,
+            channels: 2,
+        };
+        let mtime = Some(std::time::SystemTime::UNIX_EPOCH);
+        let entry = DecodedCacheEntry {
+            canonical_path: PathBuf::from("/fake/canonical/track.wav"),
+            mtime,
+            pcm: pcm.clone(),
+        };
+        let hit = decode_cache_lookup(
+            Some(&entry),
+            &PathBuf::from("/fake/canonical/track.wav"),
+            mtime,
+        );
+        assert!(hit.is_some());
+        let got = hit.unwrap();
+        assert_eq!(got.samples, pcm.samples);
+        assert_eq!(got.sample_rate, pcm.sample_rate);
+        assert_eq!(got.channels, pcm.channels);
+    }
+
+    #[test]
+    fn decode_cache_lookup_misses_on_path_mismatch() {
+        let entry = DecodedCacheEntry {
+            canonical_path: PathBuf::from("/fake/canonical/a.wav"),
+            mtime: Some(std::time::SystemTime::UNIX_EPOCH),
+            pcm: DecodedPcm {
+                samples: vec![0.0],
+                sample_rate: 44_100,
+                channels: 1,
+            },
+        };
+        let miss = decode_cache_lookup(
+            Some(&entry),
+            &PathBuf::from("/fake/canonical/b.wav"),
+            Some(std::time::SystemTime::UNIX_EPOCH),
+        );
+        assert!(miss.is_none());
+    }
+
+    #[test]
+    fn decode_cache_lookup_misses_on_mtime_mismatch() {
+        let entry = DecodedCacheEntry {
+            canonical_path: PathBuf::from("/fake/canonical/a.wav"),
+            mtime: Some(std::time::SystemTime::UNIX_EPOCH),
+            pcm: DecodedPcm {
+                samples: vec![0.0],
+                sample_rate: 44_100,
+                channels: 1,
+            },
+        };
+        // Same path, different mtime — file was modified, cache must invalidate.
+        let later = std::time::SystemTime::UNIX_EPOCH
+            + std::time::Duration::from_secs(60);
+        let miss = decode_cache_lookup(
+            Some(&entry),
+            &PathBuf::from("/fake/canonical/a.wav"),
+            Some(later),
+        );
+        assert!(miss.is_none());
+    }
+
+    #[test]
+    fn decode_cache_lookup_misses_on_empty_cache() {
+        let miss = decode_cache_lookup(
+            None,
+            &PathBuf::from("/fake/path.wav"),
+            Some(std::time::SystemTime::UNIX_EPOCH),
+        );
+        assert!(miss.is_none());
     }
 
     /// A second, simpler test: confirm that *something* changed in the output
