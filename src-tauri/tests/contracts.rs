@@ -470,6 +470,42 @@ fn dsp_chain_applies_input_gain_at_default_intensity() {
 }
 
 #[test]
+fn limiter_catches_lagrange_intersample_peak() {
+    // Pattern designed so the Lagrange-4 midpoint exceeds the sample peak.
+    // Samples [a, b, c, d] = [0, X, X, 0] -> midpoint(b,c) = 0.5625*X + 0.5625*X
+    // = 1.125 * X. For X = 0.85 the midpoint reaches 0.956 (above the -1 dBFS
+    // ceiling of ~0.891) — yet every individual sample stays under the ceiling.
+    let mut settings = default_settings();
+    // Skip the chain's gain stage so we test the limiter alone. Set intensity
+    // to zero and use the Universal preset so input gain is the preset's small
+    // base (~1.5 dB at intensity 0). The signal already crosses the threshold
+    // at the midpoint, so the limiter MUST attenuate.
+    settings.intensity = 0.0;
+    let mut chain = album_mastering_studio_lib::dsp::MasteringChain::new(44_100, 1, &settings);
+
+    let pattern = [0.0_f32, 0.85, 0.85, 0.0];
+    let mut samples = Vec::with_capacity(pattern.len() * 1024);
+    for _ in 0..1024 {
+        samples.extend_from_slice(&pattern);
+    }
+    chain.process_interleaved(&mut samples, 1);
+
+    // Skip warmup region (limiter lookahead + a few extra frames).
+    let warmup = ((3.0e-3 * 44_100.0) as usize) + 32;
+    let steady = &samples[warmup..];
+    let ceiling_lin = 10.0_f32.powf(-1.0 / 20.0);
+    for win in steady.windows(4) {
+        let mid =
+            -0.0625 * win[0] + 0.5625 * win[1] + 0.5625 * win[2] - 0.0625 * win[3];
+        assert!(
+            mid.abs() <= ceiling_lin + 0.005,
+            "inter-sample peak {mid} (abs {abs}) exceeded ceiling {ceiling_lin}",
+            abs = mid.abs(),
+        );
+    }
+}
+
+#[test]
 fn limiter_keeps_loud_signal_under_ceiling() {
     let mut settings = default_settings();
     settings.advanced.ceiling_dbtp = Some(-1.0);

@@ -267,15 +267,35 @@ impl Limiter {
             self.filled_frames += 1;
         }
 
-        // Scan the buffer for the peak (linked stereo — single max across all
-        // channels). Cost: O(lookahead_frames * channels) per frame. For 3 ms
-        // lookahead at 44.1 kHz stereo that's ~264 comparisons/frame ≈ 23 M
-        // comparisons/sec — well within budget.
+        // Scan the buffer for the peak. Two passes:
+        //   1) Raw sample peaks (linked stereo, single max across channels).
+        //   2) Lagrange-4 midpoint between every adjacent frame pair — catches
+        //      inter-sample peaks that sample-peak limiting misses. The
+        //      `(-0.0625, 0.5625, 0.5625, -0.0625)` coefficients are the
+        //      4-point Lagrange interpolator evaluated at x=0.5; it's a 2×
+        //      true-peak estimate that's cheap and conservative enough for a
+        //      brick-wall limiter (Phase 11.2.b vs Phase 11.2.a sample peak).
         let mut peak: f32 = 0.0;
         for &s in &self.buffer {
             let a = s.abs();
             if a > peak {
                 peak = a;
+            }
+        }
+        let frames = self.filled_frames;
+        if frames >= 4 {
+            for f in 1..(frames - 2) {
+                for c in 0..ch {
+                    let prev = self.frame_sample(f - 1, c);
+                    let a = self.frame_sample(f, c);
+                    let b = self.frame_sample(f + 1, c);
+                    let nxt = self.frame_sample(f + 2, c);
+                    let mid = -0.0625 * prev + 0.5625 * a + 0.5625 * b - 0.0625 * nxt;
+                    let abs_mid = mid.abs();
+                    if abs_mid > peak {
+                        peak = abs_mid;
+                    }
+                }
             }
         }
 
@@ -309,6 +329,13 @@ impl Limiter {
         self.head_frame = 0;
         self.filled_frames = 0;
         self.gain = 1.0;
+    }
+
+    /// Read the channel sample at logical frame offset `f` (0 = oldest sample
+    /// still in the buffer, `filled_frames - 1` = most recently written).
+    fn frame_sample(&self, f: usize, c: usize) -> f32 {
+        let actual_frame = (self.head_frame + f) % self.lookahead_frames;
+        self.buffer[actual_frame * self.channels + c]
     }
 }
 

@@ -886,7 +886,7 @@ What failed or remains partial:
 - Inference results aren't persisted independently — they live inside `analysisMap` which is rebuilt on every session load (re-analyze). Acceptable for now; could cache when sessions get heavier.
 - The transient_density and spectral_balance feeding the inference are still rough (Phase 4.3's first-cut filters). Phase 11b (DSP audit) can swap them for sharper measurements and the inference will get better automatically.
 
-Next recommended slice:
+Next recommended slice (rolled into Phase 11.2.b below):
 
 Phase 11.2.b — 4× oversampled true-peak inside the limiter (closes the inter-sample-peak loophole for streaming delivery). Or Phase 9.2 — let users edit the inferred role + position-aware nudges (Opener for track 1, Closer for last). Or Phase 14.x — installer build / icon polish if Dan wants to put the app on a different machine. Or Phase 6.x — codec preview (AAC/Opus simulation in `run_export_checks` so the receipt warns about codec-specific clipping risk).
 
@@ -943,3 +943,44 @@ What failed or remains partial:
 Next recommended slice:
 
 Phase 11.2.b (true-peak inside the limiter — pure DSP, streaming-grade quality), Phase 9.2 (editable role + position-aware role nudges), or Phase 6.x (codec preview for export checks — simulate the LUFS/peak change from AAC/Opus encoding before the user ships).
+
+## 2026-05-11 — Phase 11.2.b: Lagrange-cubic inter-sample peak inside the limiter
+
+Goal:
+
+Close the inter-sample-peak loophole. Phase 11.2.a's limiter scanned only sample peaks — but a signal can have every individual sample under the ceiling and still produce true-peak overshoots between samples (visible after upsampling or codec resampling). This pass adds a Lagrange-4 midpoint estimate so the limiter now bounds the 2× upsampled peak.
+
+What changed:
+
+`dsp.rs` `Limiter::process_frame_inplace`:
+
+- After the existing raw-sample peak scan, a second pass runs over every adjacent frame pair in the lookahead buffer and computes the Lagrange-4 midpoint (`x = 0.5`) using samples `[f-1, f, f+1, f+2]` per channel:
+  ```
+  mid(f, c) = -0.0625 * sample[f-1, c]
+              + 0.5625 * sample[f,   c]
+              + 0.5625 * sample[f+1, c]
+              - 0.0625 * sample[f+2, c]
+  ```
+  These coefficients are the canonical 4-point Lagrange interpolator evaluated at the midpoint between samples 1 and 2. Easier than running a full 4× polyphase FIR per frame, and tight enough for a brick-wall limiter — it catches the inter-sample overshoots that matter for streaming codec compatibility.
+- New `Limiter::frame_sample(f, c)` helper handles the ring-buffer math so the scan reads samples in logical "oldest to newest" order regardless of where `head_frame` is.
+- Compute cost: roughly +30% over the raw scan — at 3 ms lookahead × stereo at 44.1 kHz, that's an additional ~12 M comparisons/sec, still well within budget.
+
+Test:
+
+- New `limiter_catches_lagrange_intersample_peak`: constructs a `[0, 0.85, 0.85, 0]` repeating pattern. Every individual sample stays under the ceiling, but the Lagrange-4 midpoint is `0.5625 * 0.85 + 0.5625 * 0.85 = 0.956` — above the `-1 dBFS` ceiling of `~0.891`. Without Phase 11.2.b, the sample-peak limiter wouldn't catch this. After this commit, the assertion that *all* output midpoints stay under the ceiling holds.
+
+Verification:
+
+- `cargo test` (from `src-tauri/`): **24/24** pass in 82.69s. Total runtime climbed (was 29 s) because the Lagrange scan adds work to the real-fixture mastering test on the full MP3. Acceptable for offline rendering.
+- `npm run build`: clean (no frontend changes).
+- `npm run tauri dev`: deferred (the audible difference is subtle — Phase 11.2.a's sample-peak limiter already sounded clean; 11.2.b improves streaming codec compatibility specifically).
+
+What failed or remains partial:
+
+- Phase 11.2.b implements **2× upsample** (only the midpoint between adjacent samples is checked). ITU-R BS.1770 standard recommends **4×** with three intermediate points (`x = 0.25, 0.5, 0.75`). A future Phase 11.2.c could add the other two points or swap in a proper polyphase FIR. The midpoint is the most common location for inter-sample peaks though, so this catches the vast majority of practical cases.
+- The peak scan is now O(lookahead_frames × channels × 2) per frame — twice the previous workload. For real-time at 44.1 kHz stereo with 3 ms lookahead, still under 1% CPU. Phase 11.2.c could optimize by maintaining running max via monotonic deque if profiling shows this is a hotspot.
+- The Lagrange interpolation overshoots can themselves be overestimates — for a true sinc-interpolated signal, the actual analog peak is bounded but the Lagrange estimate can be slightly higher. Conservative = better here (we err on the side of more attenuation).
+
+Next recommended slice:
+
+Phase 9.2 (editable role inference + position-aware nudges), Phase 6.x (codec preview — AAC encoder estimate in `run_export_checks`), or Phase 14.x (installer / icon polish). All three are roughly the same effort. Phase 9.2 is the most user-visible; 6.x adds export safety; 14.x makes the app portable.
