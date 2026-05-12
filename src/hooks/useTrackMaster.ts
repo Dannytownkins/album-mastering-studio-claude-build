@@ -82,6 +82,7 @@ export function useTrackMaster() {
   const [mode, setMode] = useState<ProjectMode>("track");
   const [albumIntent, setAlbumIntent] = useState<MasteringSettings>(DEFAULT_SETTINGS);
   const [sessionLoaded, setSessionLoaded] = useState(false);
+  const [overrideAlbum, setOverrideAlbum] = useState<Set<TrackId>>(new Set());
   const [loadedTrackId, setLoadedTrackId] = useState<TrackId | null>(null);
   const [loadedKindByTrack, setLoadedKindByTrack] = useState<Record<TrackId, PlaybackKindUI>>({});
   const [regionByTrack, setRegionByTrack] = useState<Record<TrackId, LoopRegion | null>>({});
@@ -121,6 +122,9 @@ export function useTrackMaster() {
         if (session.track_settings) setSettingsMap(session.track_settings);
         if (session.mode) setMode(session.mode);
         if (session.album_intent) setAlbumIntent(session.album_intent);
+        if (session.track_override_album) {
+          setOverrideAlbum(new Set(session.track_override_album));
+        }
 
         // Best-effort re-analyze + re-waveform for restored tracks.
         if (restoredTracks.length > 0) {
@@ -168,6 +172,7 @@ export function useTrackMaster() {
         track_order: tracks.map((t) => t.id),
         track_settings: settingsMap,
         album_intent: albumIntent,
+        track_override_album: Array.from(overrideAlbum),
         last_saved_iso: new Date().toISOString(),
       };
       api.autosaveSession(state).catch((err) => {
@@ -175,7 +180,7 @@ export function useTrackMaster() {
       });
     }, 1500);
     return () => clearTimeout(handle);
-  }, [sessionLoaded, mode, tracks, settingsMap, albumIntent]);
+  }, [sessionLoaded, mode, tracks, settingsMap, albumIntent, overrideAlbum]);
 
   const selectedTrack = useMemo(
     () => tracks.find((t) => t.id === selectedTrackId),
@@ -183,8 +188,13 @@ export function useTrackMaster() {
   );
   const selectedAnalysis = selectedTrackId ? analysisMap[selectedTrackId] : undefined;
   const selectedWaveform = selectedTrackId ? waveformMap[selectedTrackId] : undefined;
-  const selectedSettings =
-    (selectedTrackId ? settingsMap[selectedTrackId] : undefined) ?? DEFAULT_SETTINGS;
+  const selectedIsOverriding = selectedTrackId
+    ? overrideAlbum.has(selectedTrackId)
+    : false;
+  const followingAlbumIntent = mode === "album" && !selectedIsOverriding && !!selectedTrackId;
+  const selectedSettings: MasteringSettings = followingAlbumIntent
+    ? albumIntent
+    : (selectedTrackId ? settingsMap[selectedTrackId] : undefined) ?? DEFAULT_SETTINGS;
   const previewStale = selectedTrackId ? staleSet.has(selectedTrackId) : false;
   const selectedRegion: LoopRegion | null = selectedTrackId
     ? regionByTrack[selectedTrackId] ?? null
@@ -208,26 +218,60 @@ export function useTrackMaster() {
 
   const updateSettings = useCallback(
     (id: TrackId, mutate: (prev: MasteringSettings) => MasteringSettings) => {
+      const editingAlbumIntent = mode === "album" && !overrideAlbum.has(id);
       let nextSettings: MasteringSettings | undefined;
-      setSettingsMap((prev) => {
-        nextSettings = mutate(prev[id] ?? DEFAULT_SETTINGS);
-        return { ...prev, [id]: nextSettings };
-      });
-      markStale(id);
-      // Phase 5 live chain: if we're listening to the Mastered version of this
-      // track, push the fresh coeffs to the audio thread so changes are audible
-      // without re-rendering or re-loading.
-      if (
-        nextSettings &&
-        loadedTrackId === id &&
-        loadedKindByTrack[id] === "master"
-      ) {
-        api.updateChain(nextSettings).catch((err) => {
-          setError(String(err));
+      if (editingAlbumIntent) {
+        // Mutating the album intent affects every track that's following it.
+        setAlbumIntent((prev) => {
+          nextSettings = mutate(prev);
+          return nextSettings;
         });
+      } else {
+        setSettingsMap((prev) => {
+          nextSettings = mutate(prev[id] ?? DEFAULT_SETTINGS);
+          return { ...prev, [id]: nextSettings };
+        });
+        markStale(id);
+      }
+      // Phase 5 live chain: push fresh coeffs only when the change reaches the
+      // currently-playing master output. In album mode that depends on whether
+      // the loaded track is overriding or following.
+      if (!nextSettings) return;
+      if (
+        loadedTrackId !== null &&
+        loadedKindByTrack[loadedTrackId] === "master"
+      ) {
+        const loadedFollowsAlbum =
+          mode === "album" && !overrideAlbum.has(loadedTrackId);
+        const shouldPush = editingAlbumIntent
+          ? loadedFollowsAlbum
+          : loadedTrackId === id;
+        if (shouldPush) {
+          api.updateChain(nextSettings).catch((err) => {
+            setError(String(err));
+          });
+        }
       }
     },
-    [markStale, loadedTrackId, loadedKindByTrack],
+    [mode, overrideAlbum, markStale, loadedTrackId, loadedKindByTrack],
+  );
+
+  const toggleOverrideAlbum = useCallback(
+    (id: TrackId) => {
+      const wasOverriding = overrideAlbum.has(id);
+      setOverrideAlbum((prev) => {
+        const next = new Set(prev);
+        if (next.has(id)) next.delete(id);
+        else next.add(id);
+        return next;
+      });
+      if (!wasOverriding) {
+        // Entering override — seed per-track settings from the current album
+        // intent so the user has a sensible starting point to deviate from.
+        setSettingsMap((prev) => ({ ...prev, [id]: { ...albumIntent } }));
+      }
+    },
+    [overrideAlbum, albumIntent],
   );
 
   const importFiles = useCallback(
@@ -601,10 +645,21 @@ export function useTrackMaster() {
     setIsExportingAlbum(true);
     setError(null);
     try {
+      // Build per-track overrides from the override set. Only include entries
+      // that actually have settings (most do, since toggleOverrideAlbum seeds
+      // from albumIntent).
+      const perTrackOverrides: Record<string, MasteringSettings> = {};
+      for (const id of overrideAlbum) {
+        const s = settingsMap[id];
+        if (s) perTrackOverrides[id] = s;
+      }
+      const overridesArg =
+        Object.keys(perTrackOverrides).length > 0 ? perTrackOverrides : undefined;
+
       const job = await api.renderAlbumMaster(
         tracks.map((t) => ({ id: t.id, path: t.path })),
         albumIntent,
-        undefined,
+        overridesArg,
       );
       const continuousPath = job.output_paths[0] ?? "";
       setLastExportReceipt({
@@ -619,7 +674,7 @@ export function useTrackMaster() {
     } finally {
       setIsExportingAlbum(false);
     }
-  }, [tracks, albumIntent]);
+  }, [tracks, albumIntent, overrideAlbum, settingsMap]);
 
   const reorderTracks = useCallback((fromIndex: number, toIndex: number) => {
     setTracks((prev) => {
@@ -691,5 +746,9 @@ export function useTrackMaster() {
     updateAlbumIntent,
     isExportingAlbum,
     exportAlbum,
+    overrideAlbum,
+    selectedIsOverriding,
+    followingAlbumIntent,
+    toggleOverrideAlbum,
   };
 }

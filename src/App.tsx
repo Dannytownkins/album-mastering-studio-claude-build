@@ -44,6 +44,7 @@ function App() {
         mode={tm.mode}
         onModeChange={tm.setMode}
         onReorder={tm.reorderTracks}
+        overrideAlbum={tm.overrideAlbum}
       />
       <main className="workspace">
         {tm.mode === "album" && tm.tracks.length > 0 && (
@@ -80,6 +81,7 @@ function Sidebar({
   mode,
   onModeChange,
   onReorder,
+  overrideAlbum,
 }: {
   tracks: ImportedTrack[];
   selectedId: string | null;
@@ -90,6 +92,7 @@ function Sidebar({
   mode: "track" | "album";
   onModeChange: (mode: "track" | "album") => void;
   onReorder: (fromIndex: number, toIndex: number) => void;
+  overrideAlbum: Set<string>;
 }) {
   const [dragFromIndex, setDragFromIndex] = useState<number | null>(null);
   const [dragOverIndex, setDragOverIndex] = useState<number | null>(null);
@@ -196,7 +199,14 @@ function Sidebar({
                 onClick={() => onSelect(t.id)}
                 title={t.path}
               >
-                <span className="track-name">{t.display_name}</span>
+                <span className="track-name">
+                  {t.display_name}
+                  {mode === "album" && overrideAlbum.has(t.id) && (
+                    <span className="override-mark" title="Overrides album intent">
+                      ★
+                    </span>
+                  )}
+                </span>
                 <span className="track-meta">.{t.source_format}</span>
               </button>
               <button
@@ -241,6 +251,12 @@ function TrackMaster({ tm }: { tm: ReturnType<typeof useTrackMaster> }) {
   if (!track) return null;
   return (
     <>
+      {tm.mode === "album" && (
+        <OverrideBanner
+          isOverriding={tm.selectedIsOverriding}
+          onToggle={() => tm.toggleOverrideAlbum(track.id)}
+        />
+      )}
       <TrackHeader
         track={track}
         analysis={tm.selectedAnalysis}
@@ -296,6 +312,45 @@ function TrackMaster({ tm }: { tm: ReturnType<typeof useTrackMaster> }) {
         />
       )}
     </>
+  );
+}
+
+function OverrideBanner({
+  isOverriding,
+  onToggle,
+}: {
+  isOverriding: boolean;
+  onToggle: () => void;
+}) {
+  return (
+    <section className={"override-banner " + (isOverriding ? "is-overriding" : "follows")}>
+      <div className="override-info">
+        <span className="section-label">Album adaptation</span>
+        <span className="override-state">
+          {isOverriding
+            ? "This track overrides album intent · its own settings will be applied at export"
+            : "This track follows album intent · edits below change the album for every following track"}
+        </span>
+      </div>
+      <div className="override-toggle">
+        <button
+          type="button"
+          className={!isOverriding ? "on" : ""}
+          onClick={onToggle}
+          disabled={!isOverriding}
+        >
+          Follow album
+        </button>
+        <button
+          type="button"
+          className={isOverriding ? "on" : ""}
+          onClick={onToggle}
+          disabled={isOverriding}
+        >
+          Override
+        </button>
+      </div>
+    </section>
   );
 }
 

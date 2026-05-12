@@ -779,3 +779,48 @@ What failed or remains partial:
 Next recommended slice:
 
 Phase 11.2.b — 4× oversampled true-peak detection inside the limiter. Replace the sample-peak scan with a peak that uses an interpolated signal (FIR-based 4× upsample, take max of the interpolated samples, decimate back). That closes the inter-sample-peak loophole and makes the limiter actually true-peak-safe for streaming targets. Alternatively, Phase 8.3 (per-track override UI in album mode) for the next product surface win.
+
+## 2026-05-11 — Phase 8.3: per-track override in Album Master
+
+Goal:
+
+Each track in album mode can either follow the album intent or override with its own settings. Edits to controls route to album intent (for followers) or per-track settings (for overriders). The override set survives autosave/restore.
+
+What changed:
+
+Backend (`types.rs`):
+
+- `ProjectState` gains `track_override_album: Vec<TrackId>` with `#[serde(default)]`, so v1 sessions persisted before this slice deserialize cleanly as "no overrides." Session schema_version stays at 1.
+
+Frontend (`bindings.ts`, `useTrackMaster.ts`, `App.tsx`, `App.css`):
+
+- `bindings.ts`: `ProjectState.track_override_album?: TrackId[]` to match the new field.
+- `useTrackMaster.ts`:
+  - `overrideAlbum: Set<TrackId>` state, restored from `session.track_override_album` on mount, serialized into the autosave payload.
+  - Derived flags: `selectedIsOverriding`, `followingAlbumIntent`.
+  - `selectedSettings` now resolves to `albumIntent` when in album mode and the selected track is *not* overriding, otherwise to `settingsMap[id]` (or `DEFAULT_SETTINGS`).
+  - `updateSettings` routes writes: mutates `albumIntent` when the selected track is following, mutates `settingsMap[id]` otherwise. Live `api.updateChain` push respects the routing — it fires for the loaded track when (a) the loaded track is overriding and `id === loadedTrackId`, or (b) we're editing album intent and the loaded track is following.
+  - `toggleOverrideAlbum(id)` flips the set membership. Entering override seeds `settingsMap[id]` from a clone of the current `albumIntent`, giving the user a sensible starting point.
+  - `exportAlbum` builds `per_track_overrides` from the override set + each track's `settingsMap` entry; passes `undefined` if no tracks override.
+- `App.tsx`:
+  - `OverrideBanner` renders above `TrackHeader` in album mode + track selected. Two-button segmented toggle ("Follow album" / "Override"). Banner copy explains what edits below will do. Border tint shifts to warm orange when overriding.
+  - Sidebar track rows show a small star (★) next to the track name when in album mode and the row is in the override set.
+- `App.css`: `.override-banner`, `.override-info`, `.override-state`, `.override-toggle` (segmented control), `.override-mark` (star).
+- Session roundtrip test now seeds + asserts `track_override_album` so the schema bump is covered.
+
+Verification:
+
+- `npm run build`: clean. Bundle 223 KB (70 KB gzipped).
+- `cargo test` (from `src-tauri/`): **22/22** pass in 28.20s. Existing tests unaffected; session roundtrip now also covers the override list.
+- `npm run tauri dev`: deferred (manual — toggle Override on one track, edit its EQ, then export album: that track's master uses its own EQ while the rest follow album intent).
+
+What failed or remains partial:
+
+- No standalone "Album Intent" view yet. The user edits album intent by selecting any non-overriding track and editing its controls — slightly indirect. A dedicated album intent panel when no track is selected in album mode would be Phase 8.4.
+- The "Update preview" button still renders an offline WAV using `selectedSettings` (which now resolves correctly to either album intent or override). No behavioral surprise, but the preview WAV name doesn't distinguish "album-intent-following" from "track-override" — could add it to the filename.
+- `track_override_album` was added without bumping schema_version. Justified because the field is `#[serde(default)]` and old v1 sessions don't carry it; new saves still claim v1. If we ever break compatibility (e.g. change `MasteringSettings` shape), bump to v2 + add a migration.
+- All four Album Master non-negotiable gates from PRODUCT.md are now structurally present: track ordering ✓ (Phase 8.1), analyze ✓ (Phase 4.3 runs on every imported track), global intent + per-track adaptation ✓ (this slice), individual + continuous album exports ✓ (Phase 8.2). Track Roles / Story step (Phase 9) is the remaining product-canon item before Album Master can be called PRODUCT.md-complete.
+
+Next recommended slice:
+
+Phase 11.2.b (4× oversampled true-peak detection inside the limiter) for the streaming-grade quality bar, OR Phase 9 (track roles / story step) for the final Album Master non-negotiable. 11.2.b is purely DSP; 9 is heuristics + UI. Both are roughly the same size.

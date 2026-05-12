@@ -196,6 +196,11 @@ pub struct ProjectState {
     pub track_order: Vec<TrackId>,
     pub track_settings: HashMap<String, MasteringSettings>,
     pub album_intent: Option<MasteringSettings>,
+    /// Set of track IDs whose per-track `track_settings` should override the
+    /// shared `album_intent` during album rendering. Defaulted so older
+    /// sessions (without this field) deserialize cleanly as "no overrides."
+    #[serde(default)]
+    pub track_override_album: Vec<TrackId>,
     pub last_saved_iso: Option<String>,
 }
 

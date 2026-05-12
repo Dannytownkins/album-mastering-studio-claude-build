@@ -137,6 +137,7 @@ export interface ProjectState {
   track_order: TrackId[];
   track_settings: Record<string, MasteringSettings>;
   album_intent: MasteringSettings | null;
+  track_override_album?: TrackId[];
   last_saved_iso: string | null;
 }
 

@@ -548,6 +548,7 @@ fn session_write_and_read_roundtrips() {
         track_order: vec![TrackId("alpha".to_string())],
         track_settings,
         album_intent: Some(default_settings()),
+        track_override_album: vec![TrackId("alpha".to_string())],
         last_saved_iso: Some("2026-05-11T12:00:00Z".to_string()),
     };
 
@@ -562,6 +563,8 @@ fn session_write_and_read_roundtrips() {
     assert_eq!(restored.track_order.len(), 1);
     assert!(restored.album_intent.is_some());
     assert!(matches!(restored.mode, ProjectMode::Album));
+    assert_eq!(restored.track_override_album.len(), 1);
+    assert_eq!(restored.track_override_album[0], TrackId("alpha".to_string()));
 }
 
 #[test]
@@ -577,6 +580,7 @@ fn session_write_is_atomic_against_existing_file() {
         track_order: Vec::new(),
         track_settings: std::collections::HashMap::new(),
         album_intent: None,
+        track_override_album: Vec::new(),
         last_saved_iso: None,
     };
 

@@ -235,6 +235,12 @@ select {
   color: var(--text-2);
 }
 
+.override-mark {
+  margin-left: 0.4rem;
+  color: var(--accent-warm);
+  font-size: 0.85em;
+}
+
 .track-remove {
   background: transparent;
   border: none;
@@ -352,6 +358,70 @@ button.primary:disabled {
 
 .album-stat .dim {
   color: var(--text-2);
+}
+
+/* Override banner (album mode) */
+.override-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.6rem 0.9rem;
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  background: var(--bg-1);
+  font-size: 0.8rem;
+}
+
+.override-banner.is-overriding {
+  border-color: rgba(255, 184, 107, 0.45);
+  background: rgba(255, 184, 107, 0.05);
+}
+
+.override-info {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+}
+
+.override-state {
+  color: var(--text-1);
+  line-height: 1.3;
+}
+
+.override-banner.is-overriding .override-state {
+  color: var(--text-0);
+}
+
+.override-toggle {
+  display: flex;
+  background: var(--bg-2);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+  flex-shrink: 0;
+}
+
+.override-toggle button {
+  background: transparent;
+  color: var(--text-1);
+  border: none;
+  padding: 0.35rem 0.85rem;
+  font-size: 0.78rem;
+}
+
+.override-toggle button.on {
+  background: var(--accent);
+  color: #0a0a14;
+}
+
+.override-toggle button:disabled {
+  cursor: default;
+}
+
+.override-toggle button:not(.on):not(:disabled):hover {
+  color: var(--text-0);
+  background: var(--bg-3);
 }
 
 /* Track header */
