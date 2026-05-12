@@ -2,44 +2,229 @@ use crate::types::*;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use ebur128::{EbuR128, Mode};
+use serde::Deserialize;
 use tauri::Manager;
 
-#[tauri::command]
-pub async fn analyze_tracks(track_ids: Vec<TrackId>) -> CommandResult<Vec<AnalysisResult>> {
-    Ok(track_ids.into_iter().map(mock_analysis).collect())
+#[derive(Debug, Deserialize)]
+pub struct AnalyzeRequest {
+    pub id: TrackId,
+    pub path: String,
 }
 
-fn mock_analysis(track_id: TrackId) -> AnalysisResult {
-    AnalysisResult {
-        track_id,
-        lufs_integrated: -14.2,
-        lufs_short_term_max: -10.1,
-        true_peak_dbtp: -1.3,
-        dynamic_range_lu: 8.4,
-        spectral_balance: SpectralBalance {
-            low: 0.32,
-            mid: 0.41,
-            high: 0.27,
-        },
-        transient_density: 0.55,
-        stereo_width: 0.62,
-        recommended_universal: MasteringSettings {
-            preset: Preset::Universal,
-            intensity: 0.5,
-            eq_low_db: 0.0,
-            eq_mid_db: 0.0,
-            eq_high_db: 0.0,
-            volume_match: false,
-            advanced: AdvancedSettings {
-                lufs_offset_db: Some(-14.0),
-                ceiling_dbtp: Some(-1.0),
-                bit_depth: Some(24),
-                target_sample_rate: Some(44_100),
-                ..Default::default()
-            },
-        },
-        measured_at_iso: ISO_PLACEHOLDER.to_string(),
+#[tauri::command]
+pub async fn analyze_tracks(tracks: Vec<AnalyzeRequest>) -> CommandResult<Vec<AnalysisResult>> {
+    let mut out = Vec::with_capacity(tracks.len());
+    for req in tracks {
+        out.push(analyze_one(req.id, Path::new(&req.path))?);
     }
+    Ok(out)
+}
+
+pub fn analyze_one(track_id: TrackId, path: &Path) -> CommandResult<AnalysisResult> {
+    if crate::files::has_parent_dir_component(path) {
+        return Err(CommandError::InvalidPath(format!(
+            "path traversal not allowed: {}",
+            path.display()
+        )));
+    }
+    if !path.exists() {
+        return Err(CommandError::Io(format!(
+            "source file not found: {}",
+            path.display()
+        )));
+    }
+
+    let pcm = crate::audio::decode_full(path)?;
+    if pcm.samples.is_empty() {
+        return Err(CommandError::Decode("no samples decoded".to_string()));
+    }
+
+    let channels_u32 = u32::from(pcm.channels.max(1));
+    let mut ebu = EbuR128::new(
+        channels_u32,
+        pcm.sample_rate,
+        Mode::I | Mode::LRA | Mode::TRUE_PEAK,
+    )
+    .map_err(|e| CommandError::Other(format!("ebur128 init: {e}")))?;
+    ebu.add_frames_f32(&pcm.samples)
+        .map_err(|e| CommandError::Other(format!("ebur128 feed: {e}")))?;
+
+    let lufs_integrated = sanitize_lufs(
+        ebu.loudness_global()
+            .map_err(|e| CommandError::Other(format!("ebur128 global: {e}")))? as f32,
+    );
+    let lra = ebu
+        .loudness_range()
+        .map_err(|e| CommandError::Other(format!("ebur128 lra: {e}")))? as f32;
+
+    let mut peak_lin: f64 = 0.0;
+    for ch in 0..channels_u32 {
+        let tp = ebu
+            .true_peak(ch)
+            .map_err(|e| CommandError::Other(format!("ebur128 tp: {e}")))?;
+        if tp > peak_lin {
+            peak_lin = tp;
+        }
+    }
+    let true_peak_dbtp = if peak_lin > 0.0 {
+        (20.0 * peak_lin.log10()) as f32
+    } else {
+        -60.0
+    };
+
+    let stereo_width = compute_stereo_width(&pcm.samples, pcm.channels as usize);
+    let spectral_balance = compute_spectral_balance(&pcm.samples, pcm.channels as usize);
+    let transient_density = compute_transient_density(&pcm.samples, pcm.channels as usize);
+
+    let short_term_max = if lra.is_finite() {
+        lufs_integrated + (lra * 0.5).max(0.0)
+    } else {
+        lufs_integrated
+    };
+
+    let recommended_universal = MasteringSettings {
+        preset: Preset::Universal,
+        intensity: 0.5,
+        eq_low_db: 0.0,
+        eq_mid_db: 0.0,
+        eq_high_db: 0.0,
+        volume_match: false,
+        advanced: AdvancedSettings {
+            lufs_offset_db: Some(-14.0 - lufs_integrated),
+            ceiling_dbtp: Some(-1.0),
+            bit_depth: Some(24),
+            target_sample_rate: Some(pcm.sample_rate),
+            ..Default::default()
+        },
+    };
+
+    Ok(AnalysisResult {
+        track_id,
+        lufs_integrated,
+        lufs_short_term_max: short_term_max,
+        true_peak_dbtp,
+        dynamic_range_lu: if lra.is_finite() { lra } else { 0.0 },
+        spectral_balance,
+        transient_density,
+        stereo_width,
+        recommended_universal,
+        measured_at_iso: ISO_PLACEHOLDER.to_string(),
+    })
+}
+
+fn sanitize_lufs(v: f32) -> f32 {
+    if v.is_finite() {
+        v
+    } else {
+        -70.0
+    }
+}
+
+fn compute_stereo_width(samples: &[f32], channels: usize) -> f32 {
+    if channels < 2 {
+        return 0.0;
+    }
+    let mut mid_sq = 0.0_f64;
+    let mut side_sq = 0.0_f64;
+    for frame in samples.chunks(channels) {
+        let l = f64::from(*frame.first().unwrap_or(&0.0));
+        let r = f64::from(*frame.get(1).unwrap_or(&0.0));
+        let m = (l + r) * 0.5;
+        let s = (l - r) * 0.5;
+        mid_sq += m * m;
+        side_sq += s * s;
+    }
+    let total = mid_sq + side_sq;
+    if total > 0.0 {
+        (side_sq / total) as f32
+    } else {
+        0.0
+    }
+}
+
+fn compute_spectral_balance(samples: &[f32], channels: usize) -> SpectralBalance {
+    if samples.is_empty() || channels == 0 {
+        return SpectralBalance {
+            low: 0.33,
+            mid: 0.34,
+            high: 0.33,
+        };
+    }
+    // Simple band split via first-order RC filters. Phase 11b can replace with
+    // Linkwitz-Riley crossovers or FFT for sharper bands.
+    let mut low_lp_state = 0.0_f64;
+    let mut high_lp_state = 0.0_f64;
+    let mut low_sq = 0.0_f64;
+    let mut mid_sq = 0.0_f64;
+    let mut high_sq = 0.0_f64;
+
+    // Assume 44.1 kHz reference; the bands are approximate either way.
+    let low_alpha = 0.015; // ~100 Hz first-order LP at 44.1k
+    let high_alpha = 0.45; // ~3 kHz first-order LP boundary for mid/high split
+
+    for frame in samples.chunks(channels) {
+        let mut mono = 0.0_f64;
+        for &s in frame.iter() {
+            mono += f64::from(s);
+        }
+        mono /= channels as f64;
+
+        low_lp_state += low_alpha * (mono - low_lp_state);
+        high_lp_state += high_alpha * (mono - high_lp_state);
+
+        let low = low_lp_state;
+        let mid = high_lp_state - low_lp_state;
+        let high = mono - high_lp_state;
+
+        low_sq += low * low;
+        mid_sq += mid * mid;
+        high_sq += high * high;
+    }
+
+    let total = low_sq + mid_sq + high_sq;
+    if total > 0.0 {
+        SpectralBalance {
+            low: (low_sq / total) as f32,
+            mid: (mid_sq / total) as f32,
+            high: (high_sq / total) as f32,
+        }
+    } else {
+        SpectralBalance {
+            low: 0.33,
+            mid: 0.34,
+            high: 0.33,
+        }
+    }
+}
+
+fn compute_transient_density(samples: &[f32], channels: usize) -> f32 {
+    if samples.is_empty() || channels == 0 {
+        return 0.0;
+    }
+    // Crude zero-crossing-based proxy on the mono mix. Phase 11b can replace
+    // with a real onset detector.
+    let mut prev = 0.0_f32;
+    let mut crossings = 0_u64;
+    let mut frames = 0_u64;
+    for frame in samples.chunks(channels) {
+        let mut mono = 0.0;
+        for &s in frame.iter() {
+            mono += s;
+        }
+        mono /= channels as f32;
+        if (mono >= 0.0) != (prev >= 0.0) && (mono - prev).abs() > 0.005 {
+            crossings += 1;
+        }
+        prev = mono;
+        frames += 1;
+    }
+    if frames == 0 {
+        return 0.0;
+    }
+    // Normalize to a 0..1 range; ~4000 crossings/sec is dense (typical drums).
+    let rate = crossings as f32 / frames as f32;
+    (rate * 50.0).min(1.0).max(0.0)
 }
 
 #[tauri::command]
@@ -188,7 +373,6 @@ fn unique_output_path(
     if !candidate.exists() {
         return Ok(candidate);
     }
-    // Suffix to guarantee non-overwrite if same-second collision happens
     for n in 1..1000 {
         let alt = out_dir.join(format!(
             "{stem}__{kind_tag}__{id_short}__{ts}__{n}.wav"

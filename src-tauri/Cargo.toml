@@ -32,6 +32,7 @@ symphonia = { version = "0.5", features = [
 ] }
 rodio = { version = "0.20", features = ["symphonia-all"] }
 hound = "3"
+ebur128 = "0.1"
 
 [dev-dependencies]
 tokio = { version = "1", features = ["macros", "rt"] }

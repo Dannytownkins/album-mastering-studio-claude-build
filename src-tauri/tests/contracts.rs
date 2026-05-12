@@ -3,21 +3,59 @@ use std::path::{Path, PathBuf};
 use album_mastering_studio_lib::*;
 
 #[tokio::test]
-async fn analyze_tracks_returns_one_result_per_input() {
-    let ids = vec![
-        TrackId("track-a".to_string()),
-        TrackId("track-b".to_string()),
-    ];
-    let results = engine::analyze_tracks(ids.clone()).await.expect("analyze ok");
-    assert_eq!(results.len(), 2);
-    assert_eq!(results[0].track_id, ids[0]);
-    assert_eq!(results[1].track_id, ids[1]);
-    for r in &results {
-        assert!(r.lufs_integrated.is_finite());
-        assert!(r.true_peak_dbtp.is_finite());
-        assert!(r.dynamic_range_lu.is_finite());
-        assert_eq!(r.recommended_universal.preset, Preset::Universal);
-    }
+async fn analyze_tracks_measures_synthetic_wav() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let path = tmp.path().join("sine.wav");
+    write_sine_wav(&path, 44_100, 3.0, 440.0, 2);
+    let path_str = path.to_string_lossy().to_string();
+
+    let results = engine::analyze_tracks(vec![engine::AnalyzeRequest {
+        id: TrackId("test-analyze".to_string()),
+        path: path_str,
+    }])
+    .await
+    .expect("analyze");
+
+    assert_eq!(results.len(), 1);
+    let r = &results[0];
+    assert!(r.lufs_integrated.is_finite(), "LUFS not finite");
+    assert!(
+        (-30.0..=0.0).contains(&r.lufs_integrated),
+        "expected LUFS in (-30, 0) for amplitude-0.5 sine, got {}",
+        r.lufs_integrated
+    );
+    assert!(
+        (-10.0..=3.0).contains(&r.true_peak_dbtp),
+        "expected TP in (-10, 3) dBTP for amplitude-0.5 sine, got {}",
+        r.true_peak_dbtp
+    );
+    assert!(r.dynamic_range_lu.is_finite());
+    assert_eq!(r.recommended_universal.preset, Preset::Universal);
+
+    let sb = &r.spectral_balance;
+    assert!((sb.low + sb.mid + sb.high - 1.0).abs() < 0.05);
+    assert!((0.0..=1.0).contains(&r.stereo_width));
+}
+
+#[tokio::test]
+async fn analyze_tracks_runs_against_real_fixture_if_present() {
+    let Some(path) = real_fixture_path() else {
+        eprintln!("Skipping: no real-audio fixture");
+        return;
+    };
+    let abs = path.canonicalize().expect("canonicalize");
+    let results = engine::analyze_tracks(vec![engine::AnalyzeRequest {
+        id: TrackId("real-analyze".to_string()),
+        path: abs.to_string_lossy().to_string(),
+    }])
+    .await
+    .expect("analyze real");
+    let r = &results[0];
+    assert!(r.lufs_integrated.is_finite());
+    assert!(r.lufs_integrated > -40.0);
+    assert!(r.true_peak_dbtp.is_finite());
+    assert!(r.dynamic_range_lu.is_finite() && r.dynamic_range_lu >= 0.0);
+    assert!((r.spectral_balance.low + r.spectral_balance.mid + r.spectral_balance.high - 1.0).abs() < 0.05);
 }
 
 #[tokio::test]

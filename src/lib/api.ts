@@ -21,8 +21,8 @@ export const api = {
   importTracks: (paths: string[]) =>
     invoke<ImportedTrack[]>("import_tracks", { paths }),
 
-  analyzeTracks: (trackIds: TrackId[]) =>
-    invoke<AnalysisResult[]>("analyze_tracks", { track_ids: trackIds }),
+  analyzeTracks: (tracks: Array<{ id: TrackId; path: string }>) =>
+    invoke<AnalysisResult[]>("analyze_tracks", { tracks }),
 
   renderTrackPreview: (
     trackId: TrackId,

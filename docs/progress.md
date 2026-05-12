@@ -357,3 +357,51 @@ What failed or remains partial:
 Next recommended slice:
 
 Phase 3.4 (carried) — region selection + region loop. Drag on the waveform to define a `[start, end]` region; loop button activates region playback. Backend: `AudioCommand::SetLoop(Option<(f64, f64)>)` + audio thread monitors `Sink::get_pos()` and seeks back to `start` when crossing `end`. Visual: shaded range on the waveform. Then Phase 11 (DSP audit) for real LUFS / true-peak / compressor / limiter — the offline chain is reasonable but `analyze_tracks` still returns mock metering, so `run_export_checks` is operating on fake numbers.
+
+## 2026-05-11 — Phase 4.3: real BS.1770 metering via ebur128 (analyze_tracks no longer lies)
+
+Goal:
+
+Make `analyze_tracks` measure the file, not return constants. Integrated LUFS, true-peak dBTP, loudness range (LRA), stereo width, spectral balance, and a rough transient density now come from the audio, so `run_export_checks` and the metering badges in the UI reflect reality.
+
+What changed:
+
+Backend:
+
+- Added `ebur128 = "0.1"` to `src-tauri/Cargo.toml`. This is the canonical Rust port of BS.1770 (K-weighting, gated integrated loudness, true-peak with 4× oversampling, LRA).
+- Rewrote `engine::analyze_tracks` to take `Vec<AnalyzeRequest { id, path }>` instead of `Vec<TrackId>`. The Tauri command decodes each file via `audio::decode_full`, feeds the interleaved samples into `EbuR128::new(channels, sr, Mode::I | Mode::LRA | Mode::TRUE_PEAK)`, and pulls back integrated loudness, LRA, and per-channel true peaks.
+- `compute_stereo_width` — M/S energy ratio across the whole track. Mono returns 0, perfectly correlated stereo near 0, anti-correlated near 1.
+- `compute_spectral_balance` — first-order RC low-pass network split into low/mid/high bands; ratios normalized to sum to 1. Documented as "approximate; Phase 11b can swap in Linkwitz-Riley crossovers or FFT".
+- `compute_transient_density` — zero-crossing rate on the mono mix, scaled to a 0..1 range as a crude proxy. Phase 11b can replace with a real onset detector.
+- `sanitize_lufs` collapses `-inf` / NaN from silence-only inputs to `-70.0` LUFS so downstream code never gets non-finite values.
+- `recommended_universal.advanced.lufs_offset_db` is now `-14.0 - measured_integrated` — a real target offset toward streaming-canonical -14 LUFS instead of the previous static stub.
+
+Frontend:
+
+- `api.ts`: `analyzeTracks(tracks: { id, path }[])` matches the new command shape.
+- `useTrackMaster.ts`: import flow maps `imported` to `{ id, path }` before calling `api.analyzeTracks` (so the backend has the file paths it needs).
+
+Tests:
+
+- Replaced the old constant-asserting `analyze_tracks_returns_one_result_per_input` with two real tests:
+  - `analyze_tracks_measures_synthetic_wav` — 3-second amplitude-0.5 440 Hz stereo sine. Asserts LUFS in `(-30, 0)`, true peak in `(-10, 3)` dBTP, finite LRA, recommended preset Universal, spectral balance sums to ~1.0, stereo width in `[0, 1]`.
+  - `analyze_tracks_runs_against_real_fixture_if_present` — runs against the real MP3 if it exists in `private-audio-fixtures/`. Asserts finite metering, non-negative LRA, spectral balance sums to ~1.0.
+
+Verification:
+
+- `npm run build`: clean. Bundle 216 KB (68 KB gzipped).
+- `cargo test` (from `src-tauri/`): 16/16 pass in 21.24s — the real-fixture analysis adds significant compute (full-track decode + K-weighted filter + integrated gating across the song).
+- `npm run tauri dev`: deferred (manual — load the MP3, watch the metering badges show real LUFS/TP/DR for the file).
+
+Real-audio fixture used: `private-audio-fixtures/lay-the-money-on-the-desk.mp3` — analyzed end-to-end through ebur128 during cargo test.
+
+What failed or remains partial:
+
+- `lufs_short_term_max` is computed as `integrated + (LRA/2)` rather than tracking actual short-term frames. ebur128 supports `Mode::S` for short-term measurements but we'd need to step through the file in short-term windows to extract the max. Acceptable approximation for Phase 4.3; tighten in Phase 11.
+- Spectral balance uses first-order RC filters with a 44.1 kHz reference. Bands are approximate; the API contract (three normalized ratios) is stable so the UI doesn't change.
+- Transient density is a zero-crossing proxy; not a real onset detector. Useful as a relative signal across tracks but not absolute.
+- The mastering chain's loudness lift still goes through gain + soft-clip rather than a real true-peak limiter — Phase 11 will replace the soft-clip with a lookahead limiter that actually targets `ceiling_dbtp` precisely.
+
+Next recommended slice:
+
+Phase 3.4 — region selection by drag + region loop. Drag on the waveform defines `[start, end]`; loop button activates region playback that repeats `start → end`. Backend: `AudioCommand::SetLoop(Option<(f64, f64)>)` + audio thread monitors `Sink::get_pos()` and seeks back to `start` when crossing `end`. Visual: shaded range on the waveform, plus a "loop on" indicator. After that, Phase 5 (real-time audition engine) or Phase 11 (DSP audit) depending on which gap is more painful to live with.

@@ -157,7 +157,9 @@ export function useTrackMaster() {
 
         setIsAnalyzing(true);
         try {
-          const results = await api.analyzeTracks(newIds);
+          const results = await api.analyzeTracks(
+            imported.map((t) => ({ id: t.id, path: t.path })),
+          );
           setAnalysisMap((prev) => {
             const next = { ...prev };
             for (const r of results) next[r.track_id] = r;
