@@ -349,6 +349,22 @@ export function useTrackMaster() {
     setTransport((t) => ({ ...t, playbackKind: kind }));
   }, []);
 
+  const seek = useCallback(
+    async (positionSec: number) => {
+      if (!selectedTrack) return;
+      const clamped = Math.max(0, positionSec);
+      setTransport((t) => ({ ...t, currentTimeSec: clamped }));
+      if (loadedTrackId === selectedTrack.id) {
+        try {
+          await api.seekPlayback(clamped);
+        } catch (err) {
+          setError(String(err));
+        }
+      }
+    },
+    [selectedTrack, loadedTrackId],
+  );
+
   const toggleLoop = useCallback(() => {
     setTransport((t) => ({ ...t, loop: !t.loop }));
   }, []);
@@ -392,6 +408,7 @@ export function useTrackMaster() {
     updatePreview,
     exportMaster,
     togglePlay,
+    seek,
     setPlaybackKind,
     toggleLoop,
     setVolumeMatch,

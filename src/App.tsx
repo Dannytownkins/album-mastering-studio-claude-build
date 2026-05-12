@@ -1,3 +1,4 @@
+import type { MouseEvent as ReactMouseEvent } from "react";
 import { useTrackMaster } from "./hooks/useTrackMaster";
 import type {
   AnalysisResult,
@@ -149,6 +150,9 @@ function TrackMaster({ tm }: { tm: ReturnType<typeof useTrackMaster> }) {
       <WaveformView
         peaks={tm.selectedWaveform}
         isLoading={tm.isLoadingWaveform}
+        currentTimeSec={tm.transport.currentTimeSec}
+        durationSec={track.duration_seconds ?? 180}
+        onSeek={tm.seek}
       />
       <Transport
         isPlaying={tm.transport.isPlaying}
@@ -232,9 +236,15 @@ function TrackHeader({
 function WaveformView({
   peaks,
   isLoading,
+  currentTimeSec,
+  durationSec,
+  onSeek,
 }: {
   peaks: WaveformPeaks | undefined;
   isLoading: boolean;
+  currentTimeSec: number;
+  durationSec: number;
+  onSeek: (positionSec: number) => void;
 }) {
   if (isLoading || !peaks) {
     return (
@@ -246,9 +256,31 @@ function WaveformView({
   const channel = peaks.channels[0] ?? [];
   const W = 1000;
   const H = 240;
+  const playheadX =
+    durationSec > 0
+      ? Math.max(0, Math.min(W, (currentTimeSec / durationSec) * W))
+      : 0;
+
+  const handleClick = (e: ReactMouseEvent<SVGSVGElement>) => {
+    const rect = e.currentTarget.getBoundingClientRect();
+    if (rect.width <= 0 || durationSec <= 0) return;
+    const ratio = (e.clientX - rect.left) / rect.width;
+    const seekTo = Math.max(0, Math.min(durationSec, ratio * durationSec));
+    onSeek(seekTo);
+  };
+
   return (
     <section className="wf-card">
-      <svg className="wf" viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none">
+      <svg
+        className="wf"
+        viewBox={`0 0 ${W} ${H}`}
+        preserveAspectRatio="none"
+        onClick={handleClick}
+        role="slider"
+        aria-valuemin={0}
+        aria-valuemax={durationSec}
+        aria-valuenow={currentTimeSec}
+      >
         {channel.map((v, i) => {
           const x = (i / channel.length) * W;
           const barW = (W / channel.length) * 0.85;
@@ -256,6 +288,13 @@ function WaveformView({
           const y = (H - barH) / 2;
           return <rect key={i} x={x} y={y} width={barW} height={barH} rx={0.5} />;
         })}
+        <line
+          className="wf-playhead"
+          x1={playheadX}
+          y1={0}
+          x2={playheadX}
+          y2={H}
+        />
       </svg>
     </section>
   );

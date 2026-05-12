@@ -121,6 +121,8 @@ export const api = {
   pausePlayback: () => invoke<null>("pause_playback"),
   resumePlayback: () => invoke<null>("resume_playback"),
   stopPlayback: () => invoke<null>("stop_playback"),
+  seekPlayback: (positionSec: number) =>
+    invoke<null>("seek_playback", { position_sec: positionSec }),
 };
 
 export function onPlaybackTick(

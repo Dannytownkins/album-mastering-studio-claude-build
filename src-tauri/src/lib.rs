@@ -56,6 +56,7 @@ pub fn run() {
             audio::pause_playback,
             audio::resume_playback,
             audio::stop_playback,
+            audio::seek_playback,
             exports::run_export_checks,
             exports::open_output,
             project::save_project,

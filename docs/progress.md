@@ -221,3 +221,43 @@ What failed or remains partial:
 Next recommended slice:
 
 Phase 3.3 — seek + waveform playhead overlay. Add `seek_playback(position_sec)` command; update the audio thread to handle seek via `Sink` rebuild (rodio doesn't have direct seek; the standard pattern is to skip-to-position by decoding a new source pinned to the offset). Frontend: click on the waveform jumps to that position; render a vertical line over the waveform at `transport.currentTimeSec / duration_seconds`. After that, region selection (drag on waveform) + region loop.
+
+## 2026-05-11 — Phase 3.3: seek + waveform playhead
+
+Goal:
+
+Make the waveform clickable to seek, and render a vertical playhead that tracks playback position. (Rodio turns out to have `Sink::try_seek` built in — no manual rebuild needed.)
+
+What changed:
+
+Backend:
+
+- `AudioCommand::Seek { position_sec, reply }` with a 2-second reply timeout.
+- `AudioPlayer::seek(position_sec) -> CommandResult<()>`.
+- `seek_playback` typed command — validates `position_sec` is finite and non-negative before forwarding.
+- Audio-thread handler calls `rodio::Sink::try_seek(Duration::from_secs_f64(...))` and reports the result back. `try_seek` works for symphonia-backed decoders.
+
+Frontend:
+
+- `api.ts`: `seekPlayback(positionSec)`.
+- `useTrackMaster.ts`: `seek(positionSec)` action — clamps to ≥ 0, optimistically updates `transport.currentTimeSec`, and only calls `api.seekPlayback` if the player has the currently-selected track loaded (otherwise the click is a "scrub before play" gesture that just sets the next play position visually).
+- `App.tsx` `WaveformView`: clickable SVG (`cursor: crosshair`); click computes `ratio = (clientX - rectLeft) / rectWidth` → `seekTo = ratio * durationSec` → invokes `onSeek`. Renders a vertical playhead line at `(currentTimeSec / durationSec) * W` across the waveform. ARIA `role="slider"` with `aria-valuemin/max/now` for accessibility.
+- `App.css`: `.wf { cursor: crosshair }`, `.wf-playhead { stroke: white; vector-effect: non-scaling-stroke; pointer-events: none }`.
+
+Verification:
+
+- `npm run build`: clean. Bundle 215 KB (67 KB gzipped).
+- `cargo test` (from `src-tauri/`): 11/11 contract tests pass.
+- `npm run tauri dev`: deferred (manual seek + playback verification).
+
+Real-audio fixture used: same MP3 — exercised at compile/decode time; runtime seek verification is manual.
+
+What failed or remains partial:
+
+- Rodio's `try_seek` may fail for some formats depending on the underlying decoder; the error surfaces as `CommandError::Other` and appears in the toast. Acceptable for the supported formats (WAV/FLAC/MP3/OGG/Vorbis).
+- The playhead sits at `x=0` before playback starts (`currentTimeSec` is 0). Visually OK but worth refining later.
+- Visual scrub-feedback while dragging across the waveform is not implemented — only single clicks trigger seek. Drag interactions land in Phase 3.4 with region selection.
+
+Next recommended slice:
+
+Phase 3.4 — region selection by drag + region loop. Drag on the waveform defines `[start, end]`; clicking the loop button activates region playback that repeats `start → end`. Backend: `AudioCommand::SetLoop(Option<(f64, f64)>)` + audio thread monitors position and seeks back to `start` when crossing `end`. Visual: shaded range on the waveform, plus a "loop on" indicator next to the loop button.

@@ -122,6 +122,19 @@ pub async fn stop_playback(
     Ok(())
 }
 
+#[tauri::command]
+pub async fn seek_playback(
+    position_sec: f64,
+    player: tauri::State<'_, Arc<AudioPlayer>>,
+) -> CommandResult<()> {
+    if !position_sec.is_finite() || position_sec < 0.0 {
+        return Err(CommandError::Other(format!(
+            "invalid seek position: {position_sec}"
+        )));
+    }
+    player.seek(position_sec)
+}
+
 fn handle(track_id: TrackId, kind: PlaybackKind) -> PlaybackHandle {
     PlaybackHandle {
         id: uuid::Uuid::new_v4().to_string(),
@@ -260,6 +273,10 @@ enum AudioCommand {
     Pause,
     Resume,
     Stop,
+    Seek {
+        position_sec: f64,
+        reply: Sender<Result<(), String>>,
+    },
     Shutdown,
 }
 
@@ -318,6 +335,22 @@ impl AudioPlayer {
 
     pub fn stop(&self) {
         let _ = self.send(AudioCommand::Stop);
+    }
+
+    pub fn seek(&self, position_sec: f64) -> CommandResult<()> {
+        let (reply_tx, reply_rx) = mpsc::channel();
+        self.send(AudioCommand::Seek {
+            position_sec,
+            reply: reply_tx,
+        })
+        .map_err(CommandError::Other)?;
+        match reply_rx.recv_timeout(Duration::from_secs(2)) {
+            Ok(Ok(())) => Ok(()),
+            Ok(Err(e)) => Err(CommandError::Other(e)),
+            Err(_) => Err(CommandError::Other(
+                "audio seek reply timeout".to_string(),
+            )),
+        }
     }
 
     pub fn snapshot(&self) -> PlaybackSnapshot {
@@ -384,6 +417,16 @@ fn audio_thread(rx: mpsc::Receiver<AudioCommand>, snapshot: Arc<RwLock<PlaybackS
                     s.sink.stop();
                     s.current_track = None;
                 }
+            }
+            Ok(AudioCommand::Seek { position_sec, reply }) => {
+                let outcome = match state.as_ref() {
+                    Some(s) => s
+                        .sink
+                        .try_seek(Duration::from_secs_f64(position_sec.max(0.0)))
+                        .map_err(|e| e.to_string()),
+                    None => Err("no track loaded".to_string()),
+                };
+                let _ = reply.send(outcome);
             }
             Ok(AudioCommand::Shutdown) => break,
             Err(RecvTimeoutError::Timeout) => {}
