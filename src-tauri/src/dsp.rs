@@ -147,30 +147,65 @@ pub struct ChainCoeffs {
 impl ChainCoeffs {
     pub fn from_settings(sample_rate: u32, settings: &MasteringSettings) -> Self {
         let sr = sample_rate as f32;
-        let low = BiquadCoeffs::low_shelf(sr, 200.0, settings.eq_low_db, 0.7);
-        let mid = BiquadCoeffs::peaking(sr, 1500.0, 0.8, settings.eq_mid_db);
-        let high = BiquadCoeffs::high_shelf(sr, 6000.0, settings.eq_high_db, 0.7);
-
         let intensity = settings.intensity.clamp(0.0, 1.0);
-        let preset_gain_db = match settings.preset {
-            Preset::Universal => 1.5,
-            Preset::Clarity => 1.5,
-            Preset::Tape => 1.0,
-            Preset::Spatial => 1.5,
-            Preset::Oomph => 2.0,
-            Preset::Warmth => 1.0,
-            Preset::Punch => 2.0,
-            Preset::Loud => 3.5,
-            Preset::Custom { .. } => 1.5,
-        };
-        let input_gain_db = preset_gain_db + intensity * 4.5;
+
+        // Per-PRODUCT.md, Intensity is a macro that "should change how hard the
+        // preset works across multiple parameters" — not a volume knob. So each
+        // preset gets a baseline EQ curve, saturation amount, and gain push,
+        // and Intensity scales the whole preset character. At intensity = 0.5
+        // (the default), the preset is at full character; below 0.5 it
+        // softens toward neutral, above 0.5 it pushes harder.
+        //
+        //   preset_scale(intensity) = 0.4 + 1.2 * intensity
+        //     intensity 0.0  -> 0.40 (preset audible but subtle)
+        //     intensity 0.5  -> 1.00 (full preset character — the default)
+        //     intensity 1.0  -> 1.60 (preset pushed past full)
+        //
+        // The user's manual Low/Mid/High EQ adds ON TOP of the preset
+        // baseline, so dialing in a custom tweak doesn't erase the preset's
+        // signature sound. Numbers below were tuned conservatively for a
+        // first pass — Phase 12.1 listening on real material will calibrate.
+        let preset_scale = 0.4 + 1.2 * intensity;
+
+        // (low_db, mid_db, high_db, gain_db, saturation_amount)
+        // EQ values are the preset's signature curve before user EQ adds on.
+        // Gain in dB is the preset's loudness push before Intensity scaling.
+        // Saturation is a unitless drive parameter consumed by the tanh stage.
+        let (preset_low_db, preset_mid_db, preset_high_db, preset_gain_db, preset_sat) =
+            match settings.preset {
+                // Universal: well-rounded, mostly transparent, gentle air on top.
+                Preset::Universal => (0.0, 0.0, 0.5, 1.5, 0.0),
+                // Clarity: cut low mud, lift presence + air for vocal/detail.
+                Preset::Clarity => (-0.5, 1.0, 2.5, 1.5, 0.0),
+                // Tape: low-mid body, softened top, audible saturation glue.
+                Preset::Tape => (1.5, 0.0, -1.5, 1.0, 0.45),
+                // Spatial: cut mids, lift highs — open, V-ish for width feel.
+                Preset::Spatial => (0.0, -1.0, 1.5, 1.5, 0.0),
+                // Oomph: heavy low boost for bass-forward material.
+                Preset::Oomph => (2.5, -0.5, 0.0, 2.0, 0.15),
+                // Warmth: fuller body, softer top, moderate saturation.
+                Preset::Warmth => (1.5, 0.5, -2.0, 1.0, 0.30),
+                // Punch: mid emphasis for transient impact + presence.
+                Preset::Punch => (1.0, 2.0, 1.0, 2.0, 0.20),
+                // Loud: broadband density + gain push for streaming targets.
+                Preset::Loud => (0.5, 0.5, 0.5, 3.5, 0.10),
+                // Custom: neutral baseline — user controls drive everything.
+                Preset::Custom { .. } => (0.0, 0.0, 0.0, 1.5, 0.0),
+            };
+
+        // Effective EQ = scaled preset EQ + user EQ.
+        let effective_low_db = preset_low_db * preset_scale + settings.eq_low_db;
+        let effective_mid_db = preset_mid_db * preset_scale + settings.eq_mid_db;
+        let effective_high_db = preset_high_db * preset_scale + settings.eq_high_db;
+
+        let low = BiquadCoeffs::low_shelf(sr, 200.0, effective_low_db, 0.7);
+        let mid = BiquadCoeffs::peaking(sr, 1500.0, 0.8, effective_mid_db);
+        let high = BiquadCoeffs::high_shelf(sr, 6000.0, effective_high_db, 0.7);
+
+        let input_gain_db = preset_gain_db * preset_scale;
         let input_gain_lin = 10.0_f32.powf(input_gain_db / 20.0);
 
-        let saturation_amount = match settings.preset {
-            Preset::Tape => 0.35 + intensity * 0.25,
-            Preset::Warmth => 0.15 + intensity * 0.15,
-            _ => 0.0,
-        };
+        let saturation_amount = preset_sat * preset_scale;
 
         let ceiling_db = settings
             .advanced

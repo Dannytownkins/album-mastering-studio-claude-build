@@ -708,6 +708,125 @@ fn mastering_render_creates_unique_paths_on_collision() {
     assert!(Path::new(&second.output_paths[0]).exists());
 }
 
+/// Phase 12.1 listening feedback (Dan): "presets aren't very dramatic at all"
+/// — even Clarity at max with +6 dB user EQ was barely audible. The chain now
+/// gives each preset its own baseline EQ + saturation + gain push, scaled by
+/// Intensity. This regression test pins that presets produce meaningfully
+/// distinct ChainCoeffs so a future refactor can't silently flatten them.
+#[test]
+fn presets_produce_distinct_chain_coefficients() {
+    use album_mastering_studio_lib::dsp::ChainCoeffs;
+    let sample_rate = 44_100;
+
+    let mut universal = default_settings();
+    universal.preset = Preset::Universal;
+
+    let mut clarity = default_settings();
+    clarity.preset = Preset::Clarity;
+
+    let mut tape = default_settings();
+    tape.preset = Preset::Tape;
+
+    let mut oomph = default_settings();
+    oomph.preset = Preset::Oomph;
+
+    let mut loud = default_settings();
+    loud.preset = Preset::Loud;
+
+    let cu = ChainCoeffs::from_settings(sample_rate, &universal);
+    let cc = ChainCoeffs::from_settings(sample_rate, &clarity);
+    let ct = ChainCoeffs::from_settings(sample_rate, &tape);
+    let co = ChainCoeffs::from_settings(sample_rate, &oomph);
+    let cl = ChainCoeffs::from_settings(sample_rate, &loud);
+
+    // Loud must have the largest input gain push.
+    assert!(
+        cl.input_gain_lin > cu.input_gain_lin * 1.10,
+        "Loud gain ({}) should be meaningfully above Universal ({})",
+        cl.input_gain_lin,
+        cu.input_gain_lin
+    );
+
+    // Tape must have audible saturation; Universal must have none.
+    assert!(
+        ct.saturation_amount > 0.20,
+        "Tape saturation ({}) should be audible at default intensity",
+        ct.saturation_amount
+    );
+    assert_eq!(
+        cu.saturation_amount, 0.0,
+        "Universal must have no saturation"
+    );
+
+    // The high shelf coefficients must differ between Universal (gentle air),
+    // Clarity (lifted highs), and Tape (cut highs). Use b0 as a coarse
+    // distinguishing fingerprint — it tracks shelf gain.
+    let cu_high_b0 = cu.high.b0;
+    let cc_high_b0 = cc.high.b0;
+    let ct_high_b0 = ct.high.b0;
+    assert!(
+        (cc_high_b0 - cu_high_b0).abs() > 0.01,
+        "Clarity high shelf ({:.4}) should differ from Universal ({:.4})",
+        cc_high_b0,
+        cu_high_b0
+    );
+    assert!(
+        (ct_high_b0 - cu_high_b0).abs() > 0.01,
+        "Tape high shelf ({:.4}) should differ from Universal ({:.4})",
+        ct_high_b0,
+        cu_high_b0
+    );
+    assert!(
+        (cc_high_b0 - ct_high_b0).abs() > 0.02,
+        "Clarity high shelf ({:.4}) should differ from Tape ({:.4}) by enough to be audible",
+        cc_high_b0,
+        ct_high_b0
+    );
+
+    // The low shelf coefficients must differ between Oomph (heavy low boost)
+    // and Universal.
+    assert!(
+        (co.low.b0 - cu.low.b0).abs() > 0.02,
+        "Oomph low shelf ({:.4}) should differ from Universal ({:.4})",
+        co.low.b0,
+        cu.low.b0
+    );
+}
+
+/// Intensity scales preset character. At intensity 0.0 the preset should be
+/// audibly softer than at intensity 1.0 for any preset that has a non-neutral
+/// baseline. Pinning this so a future refactor can't accidentally make
+/// Intensity a pure volume knob (which PRODUCT.md explicitly forbids).
+#[test]
+fn intensity_scales_preset_character() {
+    use album_mastering_studio_lib::dsp::ChainCoeffs;
+    let sample_rate = 44_100;
+    let mut low_intensity = default_settings();
+    low_intensity.preset = Preset::Tape;
+    low_intensity.intensity = 0.0;
+    let mut high_intensity = default_settings();
+    high_intensity.preset = Preset::Tape;
+    high_intensity.intensity = 1.0;
+
+    let cl = ChainCoeffs::from_settings(sample_rate, &low_intensity);
+    let ch = ChainCoeffs::from_settings(sample_rate, &high_intensity);
+
+    // Saturation should grow with intensity.
+    assert!(
+        ch.saturation_amount > cl.saturation_amount * 2.0,
+        "Tape saturation at intensity 1.0 ({}) should be substantially more than at 0.0 ({})",
+        ch.saturation_amount,
+        cl.saturation_amount
+    );
+    // Input gain should grow with intensity.
+    assert!(
+        ch.input_gain_lin > cl.input_gain_lin * 1.10,
+        "Tape gain at intensity 1.0 ({}) should be above intensity 0.0 ({})",
+        ch.input_gain_lin,
+        cl.input_gain_lin
+    );
+}
+
 #[test]
 fn dsp_chain_applies_input_gain_at_default_intensity() {
     let settings = default_settings();
