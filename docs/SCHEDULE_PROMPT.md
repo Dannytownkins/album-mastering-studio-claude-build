@@ -9,7 +9,7 @@ Register via `/schedule create` (only the user can run that command). Suggested 
 Copy this into `/schedule create`:
 
 ```text
-Work directory: C:\Users\Daniel Kinsner\OneDrive\Documents\GitHub\album-mastering-studio-claude-build
+Work directory: C:\Users\SM - Dan\Documents\GitHub\album-mastering-studio-claude-build
 
 1. Read docs/HANDOFF.md first. Then read CLAUDE.md, docs/PRODUCT.md, docs/IMPLEMENTATION_PLAN.md, docs/progress.md, docs/CLAUDE_WORK_LOOP.md.
 
