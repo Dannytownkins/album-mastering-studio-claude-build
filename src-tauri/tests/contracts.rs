@@ -1296,6 +1296,111 @@ fn session_write_is_atomic_against_existing_file() {
     assert!(matches!(restored.mode, ProjectMode::Track));
 }
 
+/// Phase 12.2 — LUFS landing: when `lufs_offset_db` is set to a target
+/// QUIETER than the natural chain output, the rendered file's measured
+/// integrated LUFS must land at/below the target (within ±0.5 LU). Verifies
+/// the downward-attenuation path of the refuse-upward policy.
+#[test]
+fn lufs_target_attenuates_loud_render_to_target() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let src = tmp.path().join("loud.wav");
+    // A 1 kHz sine at 0.5 amplitude through Universal/intensity 0.5 produces
+    // a master comfortably above -20 LUFS — target -28 forces a meaningful
+    // attenuation that we can measure cleanly.
+    write_sine_wav(&src, 44_100, 3.0, 1_000.0, 2);
+
+    let mut settings = default_settings();
+    settings.advanced.lufs_offset_db = Some(-28.0);
+
+    let job = engine::mastering_render(
+        TrackId("loud".to_string()),
+        &src,
+        &settings,
+        tmp.path(),
+        RenderKind::Master,
+    )
+    .expect("render");
+    let out_path = Path::new(&job.output_paths[0]);
+
+    let measured = engine::measure_integrated_lufs_at_path(out_path).expect("measure");
+    assert!(
+        measured.is_finite(),
+        "measured LUFS must be finite, got {measured}"
+    );
+    assert!(
+        (measured - (-28.0)).abs() < 0.5,
+        "rendered LUFS {} should land within ±0.5 LU of target -28.0",
+        measured
+    );
+}
+
+/// Phase 12.2 — refuse-upward: when `lufs_offset_db` is set to a target
+/// LOUDER than the natural chain output, the rendered file's measured LUFS
+/// must STAY at the natural chain output (we refuse to amplify past the
+/// limiter ceiling). Confirms the policy by rendering twice — once with
+/// `lufs_offset_db = Some(target)` set very loud, once with `None` — and
+/// asserting the two outputs measure within 0.1 LU of each other.
+#[test]
+fn lufs_target_refuses_to_amplify_quiet_render() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let src = tmp.path().join("modest.wav");
+    // Very quiet source (0.02 amplitude ≈ -34 dBFS peak). After Custom-preset/
+    // intensity-0 the chain barely lifts it, so the natural rendered LUFS will
+    // be well below the loud LUFS-target slider's maximum (-6 LUFS) — the
+    // refuse-upward branch will fire.
+    write_sine_wav_at_amplitude(&src, 44_100, 3.0, 1_000.0, 2, 0.02);
+
+    // Baseline: render with NO target so the chain produces its natural LUFS.
+    // Custom preset + intensity 0 gives minimal coloration; lets the source
+    // amplitude dominate the loudness.
+    let mut baseline_settings = default_settings();
+    baseline_settings.preset = Preset::Custom {
+        id: "neutral".to_string(),
+    };
+    baseline_settings.intensity = 0.0;
+    let baseline_job = engine::mastering_render(
+        TrackId("baseline".to_string()),
+        &src,
+        &baseline_settings,
+        tmp.path(),
+        RenderKind::Master,
+    )
+    .expect("baseline render");
+    let baseline_lufs =
+        engine::measure_integrated_lufs_at_path(Path::new(&baseline_job.output_paths[0]))
+            .expect("baseline measure");
+
+    // With target -6 LUFS (very loud), the chain's natural output should be
+    // QUIETER than the target — triggering the refuse-upward branch. The
+    // rendered LUFS should equal the baseline within measurement tolerance.
+    let mut amplify_settings = baseline_settings.clone();
+    amplify_settings.advanced.lufs_offset_db = Some(-6.0);
+    let amplify_job = engine::mastering_render(
+        TrackId("amplify".to_string()),
+        &src,
+        &amplify_settings,
+        tmp.path(),
+        RenderKind::Master,
+    )
+    .expect("refuse-upward render");
+    let refused_lufs =
+        engine::measure_integrated_lufs_at_path(Path::new(&amplify_job.output_paths[0]))
+            .expect("refuse measure");
+
+    assert!(
+        baseline_lufs < -6.0,
+        "baseline {} should be quieter than the loud target -6 LUFS (otherwise the \
+         refuse-upward branch isn't exercised)",
+        baseline_lufs
+    );
+    assert!(
+        (refused_lufs - baseline_lufs).abs() < 0.1,
+        "refuse-upward should leave the render unchanged: baseline={}, with target={}",
+        baseline_lufs,
+        refused_lufs
+    );
+}
+
 fn default_settings() -> MasteringSettings {
     MasteringSettings {
         preset: Preset::Universal,
@@ -1311,6 +1416,17 @@ fn default_settings() -> MasteringSettings {
 }
 
 fn write_sine_wav(path: &Path, sample_rate: u32, duration_sec: f32, freq: f32, channels: u16) {
+    write_sine_wav_at_amplitude(path, sample_rate, duration_sec, freq, channels, 0.5);
+}
+
+fn write_sine_wav_at_amplitude(
+    path: &Path,
+    sample_rate: u32,
+    duration_sec: f32,
+    freq: f32,
+    channels: u16,
+    amplitude_lin: f32,
+) {
     let spec = hound::WavSpec {
         channels,
         sample_rate,
@@ -1319,7 +1435,7 @@ fn write_sine_wav(path: &Path, sample_rate: u32, duration_sec: f32, freq: f32, c
     };
     let mut writer = hound::WavWriter::create(path, spec).expect("wav create");
     let n = (sample_rate as f32 * duration_sec) as u32;
-    let amplitude = (0.5_f32 * i16::MAX as f32) as i16;
+    let amplitude = (amplitude_lin * i16::MAX as f32) as i16;
     for i in 0..n {
         let t = i as f32 / sample_rate as f32;
         let s = (t * 2.0 * std::f32::consts::PI * freq).sin();

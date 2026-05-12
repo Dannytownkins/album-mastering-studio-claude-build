@@ -1354,7 +1354,7 @@ function AdvancedPanel({
       </div>
       <div className="advanced-grid">
         <NumberField
-          label="LUFS target (coming soon)"
+          label="LUFS target"
           value={a.lufs_offset_db}
           step={0.5}
           min={-24}

@@ -1659,3 +1659,64 @@ Three slices shipped this session (`977a2d0` live clipping, `fc2674b` width, thi
 3. **Typography pass** (HANDOFF P1 #6) — Dan asked for "UI overall could use larger text." Pure CSS slice, but subjective enough to want Dan's eye on the result before committing.
 
 If Dan returns with listening notes, those override the queue per the goal directive's "subjective sound-quality decisions" clause.
+
+## 2026-05-12 — Phase 12.2 (cont): wire `lufs_offset_db` (refuse-upward LUFS landing)
+
+Goal:
+
+Wire the LUFS-target Advanced control so it actually drives the rendered file's integrated loudness, removing the third "(coming soon)" label of the session. Dan flagged that an industry research doc (`docs/research/most-recent-mastering-app-research.md`, 960 lines) had new evidence on how other mastering apps handle LUFS targeting — that should inform the implementation rather than the naive design in the HANDOFF.
+
+Research summary (delegated to an Explore subagent against the research doc):
+
+- **Industry consensus**: Sonible smart:limit, Ozone Maximizer, Mastering The Mix LIMITER all expose an **input-gain control + true-peak ceiling**. They measure post-render integrated LUFS (BS.1770) in a single pass; they do not iterate.
+- **Gain-staging order**: gain is applied **before** the limiter so the limiter re-establishes true-peak compliance. None of the surveyed tools amplify *past* the user's true-peak ceiling silently.
+- **Refuse-upward policy is standard**: Ozone explicitly documents "Learn Input Gain is not recommended for loudness compliance" — the tool offers a suggestion, not a guarantee. Spotify/YouTube normalization itself only turns loud tracks DOWN, never up.
+- **Tolerance**: ±0.5 dB is the de facto industry tolerance (Loudness Penalty Studio's published number, and BS.1770 measurement itself has ~±0.3 LU variance).
+
+What changed:
+
+Backend (Rust, `src-tauri/src/engine.rs`):
+
+- **New `pub fn measure_integrated_lufs(samples, sample_rate, channels)`**: refactored helper around `EbuR128::new(_, _, Mode::I).add_frames_f32(_).loudness_global()`. Used by the new LUFS-landing code AND by contract tests that need to verify the rendered file's loudness.
+- **New `pub fn measure_integrated_lufs_at_path(path)`**: file-path variant that decodes via the existing `audio::decode_full` pipeline.
+- **`mastering_render_with_progress`**: after chain processing, if `settings.advanced.lufs_offset_db` is `Some(target)`:
+  - Measure post-chain integrated LUFS (single pass, BS.1770).
+  - Compute `delta = target - measured`.
+  - **If `delta < 0`**: source is louder than target → apply `gain_lin = 10^(delta/20)` across all samples. Safe one-pass attenuation; we're going DOWN so peaks can't exceed the (already-limited) ceiling.
+  - **If `delta >= 0`**: source is quieter than target → **refuse-upward**, leave samples unchanged. Future polish can add a `lufs_target_unmet` advisory to the export receipt, but that's a separate slice because the export receipt currently measures source-LUFS not rendered-LUFS (a pre-existing gap).
+- Implementation notes verbatim in the comment for the next agent.
+
+Frontend (`src/App.tsx`):
+
+- `AdvancedPanel`: "LUFS target (coming soon)" label drops the "(coming soon)" qualifier.
+
+Tests (backend, `tests/contracts.rs`):
+
+- **`lufs_target_attenuates_loud_render_to_target`**: loud source (0.5-amplitude 1 kHz sine, 3 s, stereo) + Universal/intensity 0.5 + `lufs_offset_db = Some(-28.0)`. Asserts measured rendered LUFS lands within ±0.5 LU of -28.0. Locks the downward-attenuation path.
+- **`lufs_target_refuses_to_amplify_quiet_render`**: quiet source (0.02-amplitude sine + Custom preset + intensity 0) renders TWICE — once without a target and once with `lufs_offset_db = Some(-6.0)` (very loud target). Asserts the two measured-LUFS values are within 0.1 LU (the second render didn't amplify). Includes a sanity-check assertion that the baseline LUFS is actually quieter than -6.0 so the refuse-upward branch is exercised (the first iteration of this test got this wrong and failed loudly — the natural chain output for a 0.5-amplitude sine through Universal is around -4.5 LUFS, *louder* than the slider's max — so the test source had to be much quieter than my first instinct).
+- **`write_sine_wav` extended**: added a sibling `write_sine_wav_at_amplitude(path, sr, dur, freq, ch, amplitude_lin)` so callers can opt out of the 0.5 hard-coded amplitude. `write_sine_wav` is now a one-line wrapper that passes 0.5. All existing call sites unchanged.
+
+Verification:
+
+- `cargo check --tests`: clean in 1.47 s.
+- `cargo test --test contracts -- lufs_target`: 2/2 new tests pass.
+- `cargo test` (full suite): **56/56 pass** (was 54). 37 contract + 19 lib. Real-fixture tests (`phase_12_1_real_fixture_metering_snapshot`, `mastering_render_processes_real_fixture_if_present`) still pass — LUFS-landing is a no-op when `lufs_offset_db == None` (the default), and the new helpers don't change the chain output for the no-target path.
+- `npm run build`: clean, **253.65 KB / 77.57 KB gzipped** (flat vs prior slice — frontend touch was 13 characters).
+
+Real-audio fixture used: none. Both new tests use synthetic signals. Real-fixture tests still pass without modification.
+
+What failed or remains partial:
+
+- **No "lufs_target_unmet" advisory in the export receipt yet.** The receipt's measured-LUFS field currently reflects the *source*, not the rendered output (see `useTrackMaster.ts::exportMaster` — it sets `measured_lufs: selectedAnalysis.lufs_integrated`). Wiring a target-unmet advisory would require either (a) measuring the rendered output and threading it back from the render command, or (b) fixing the export-receipt source/rendered LUFS gap. Both are bigger than this slice.
+- **No frontend test for the slider's new behavior.** Vitest infra still deferred.
+- **Single-pass tolerance.** Industry tolerance is ±0.5 LU; my synthetic test asserts ±0.5 LU; on real material the first-pass landing accuracy depends on how loudly the chain renders before measurement. If first-pass error is consistently > ±0.5 LU on real fixtures, a second corrective pass would be cheap to add — but the research notes that no surveyed tool does this.
+
+Next recommended slice:
+
+The HANDOFF's P0 wired-controls list is shrinking. Remaining:
+
+1. **`compression_density`** — real envelope-following compressor before the limiter. Larger slice (~300–500 lines per HANDOFF estimate). Worth a brainstorm/plan before coding.
+2. **`warmth` + `presence_air`** — extra EQ shelves with saturation flavor. ~100 lines + tests, similar shape to the width slice. Removes two more "(coming soon)" labels.
+3. **Album-mode LUFS landing** — `album_render_with_progress` doesn't apply LUFS landing per track or album-wide. The per-track decision is the same as Track Master; the album-wide question (apply target to the continuous album WAV vs per-track) is a product decision per HANDOFF's Phase 8.x refinement list.
+
+If Dan returns with listening notes, those override the queue. The session has now shipped 4 slices on origin/master.

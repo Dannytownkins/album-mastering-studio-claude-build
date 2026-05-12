@@ -254,6 +254,36 @@ fn sanitize_lufs(v: f32) -> f32 {
     }
 }
 
+/// Measure post-render integrated loudness (BS.1770) of an interleaved f32
+/// buffer. Returns the raw ebur128 reading — callers should treat values
+/// below -70 LUFS as "effectively silent" and skip downstream gain math, the
+/// same way `analyze_tracks` does. Used by the LUFS-landing stage in
+/// `mastering_render_with_progress` and by contract tests that verify the
+/// landing actually lands.
+pub fn measure_integrated_lufs(
+    samples: &[f32],
+    sample_rate: u32,
+    channels: u16,
+) -> CommandResult<f32> {
+    let channels_u32 = u32::from(channels.max(1));
+    let mut ebu = EbuR128::new(channels_u32, sample_rate, Mode::I)
+        .map_err(|e| CommandError::Render(format!("ebur128 init: {e}")))?;
+    ebu.add_frames_f32(samples)
+        .map_err(|e| CommandError::Render(format!("ebur128 feed: {e}")))?;
+    Ok(ebu
+        .loudness_global()
+        .map_err(|e| CommandError::Render(format!("ebur128 global: {e}")))?
+        as f32)
+}
+
+/// File-path variant: decodes the WAV (or any supported format) via the same
+/// pipeline `analyze_tracks` uses, then measures integrated LUFS. Convenience
+/// for contract tests that want to read back the rendered output's loudness.
+pub fn measure_integrated_lufs_at_path(path: &Path) -> CommandResult<f32> {
+    let pcm = crate::audio::decode_full(path)?;
+    measure_integrated_lufs(&pcm.samples, pcm.sample_rate, pcm.channels)
+}
+
 fn compute_stereo_width(samples: &[f32], channels: usize) -> f32 {
     if channels < 2 {
         return 0.0;
@@ -746,6 +776,37 @@ pub fn mastering_render_with_progress(
         if let Some(cb) = on_progress {
             let fraction = processed as f32 / total_samples.max(1) as f32;
             cb(fraction.min(1.0));
+        }
+    }
+
+    // Phase 12.2 — LUFS landing. When the user has set `lufs_offset_db` as a
+    // target loudness, measure the post-chain integrated LUFS via BS.1770 and
+    // attenuate the rendered samples to meet the target. Refuse-upward
+    // policy: we only ever scale DOWN. Scaling up post-chain would push the
+    // already-limited peaks past the user's true-peak ceiling, which no
+    // mastering tool the research surveyed (Sonible smart:limit, Ozone
+    // Maximizer, Mastering The Mix LIMITER) is willing to do silently. When
+    // the chain produced quieter audio than the target, we leave the samples
+    // unchanged and let the user re-render with more Intensity / Input Gain.
+    // See `docs/research/most-recent-mastering-app-research.md` for the
+    // industry-survey notes behind this decision.
+    if let Some(target_lufs) = settings.advanced.lufs_offset_db {
+        if target_lufs.is_finite() {
+            let measured =
+                measure_integrated_lufs(&samples, pcm.sample_rate, pcm.channels)?;
+            if measured.is_finite() && measured > -70.0 {
+                let delta_db = target_lufs - measured;
+                if delta_db < 0.0 {
+                    let gain_lin = 10.0_f32.powf(delta_db / 20.0);
+                    for s in samples.iter_mut() {
+                        *s *= gain_lin;
+                    }
+                }
+                // delta_db >= 0 → refuse-upward, samples unchanged. The
+                // rendered file's measured LUFS will reveal the gap when the
+                // user re-imports it; future polish can add a
+                // "lufs_target_unmet" advisory to the export receipt.
+            }
         }
     }
 
