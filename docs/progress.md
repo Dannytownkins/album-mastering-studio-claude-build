@@ -1604,3 +1604,58 @@ The HANDOFF's P0 list now has three remaining wired-controls items, in increasin
 3. **`compression_density`** — real envelope-following compressor before the limiter. Larger slice (~300-500 lines, per HANDOFF). Probably worth a brainstorm/plan before coding.
 
 If listening notes come in from Dan first, those take precedence — preset rebalancing is the listening-driven P2.
+
+## 2026-05-12 — Phase 12.2 (cont): album-render progress events
+
+Goal:
+
+Close the third HANDOFF P0 slice for this session. Track-master and preview renders already emit `render:progress` events at ~10 Hz; album renders ran the same per-track loop without forwarding any callback, so the StaleBar's progress fill never moved during an album export. Trivial UX regression, mechanical fix.
+
+What changed:
+
+Backend (Rust, `src-tauri/src/engine.rs`):
+
+- **New `album_render_with_progress(req, out_dir, on_progress)`**: same logic as `album_render` but accepts an optional `Fn(f32)` callback. Reports `(track_index + within_track_fraction) / total_tracks` after every 4096-frame chunk. Fires `cb(0.0)` once at start and `cb(1.0)` once at end, with monotonic-non-decreasing values in between (matches the per-track contract so the frontend's existing wiring needs zero changes).
+- **`album_render`** is now a one-line wrapper: `album_render_with_progress(req, out_dir, None)`. Mirrors the existing `mastering_render` / `mastering_render_with_progress` pair pattern. Keeps existing call sites compiling unchanged.
+- **`render_album_master`** (Tauri command): builds an `AppHandle::emit`-ing closure that publishes `RenderProgress { track_id: representative_id, kind: RenderKind::Album, fraction }` and passes it into the new fn. The representative id is the first track's id; the frontend treats the album bar as one unit, so a stable id avoids per-track flicker if subscribers ever key on it.
+- **Per-track chunked processing**: the per-track loop previously called `chain.process_interleaved(&mut samples, channels)` once on the whole track. Replaced with a 4096-frame chunk loop — same granularity as `mastering_render_with_progress`. Chain state (limiter lookahead, biquad memory) flows correctly across chunks because we reuse the same `chain` instance. Audio output is mathematically identical to the prior single-call version; the existing album-render byte-equality assertions still pass.
+
+Frontend (`src/App.tsx`):
+
+- **StaleBar text logic refactor**: previously `isRendering ? "Rendering preview WAV…" : "Mastered playback is live…"`. Now keyed on `progressPct` first — when render progress events are flowing (which the new album path now does), the message reads `Rendering ${kind} WAV… ${pct}%` regardless of which export state flag is set. Album exports use `isExportingAlbum`, track exports use `isRendering`, etc.; this decouples the message from those flag names.
+
+Tests:
+
+- **`album_render_emits_monotonic_progress_to_completion`** (new contract test, `tests/contracts.rs`): synthesizes a 2-track album (0.5 s each, stereo) and renders via `album_render_with_progress` with a closure that pushes every fraction into a `RefCell<Vec<f32>>`. Asserts:
+  - At least 3 progress samples were emitted (init + per-chunk + final).
+  - First sample is exactly 0.0.
+  - Last sample is exactly 1.0.
+  - All adjacent samples are non-decreasing (the bar never goes backwards).
+  - At least one sample falls within ±0.1 of 0.5 (track boundary lands at ~0.5 for equal-length tracks).
+- All four pre-existing album-render tests (`album_render_writes_continuous_and_individual_masters`, `album_render_rejects_sample_rate_mismatch`, `album_render_applies_per_track_override`, etc.) still pass — confirms the chunked-processing refactor is signal-equivalent.
+
+Verification:
+
+- `cargo check --tests`: clean in 1.53 s.
+- `cargo test --test contracts`: **35/35 pass** in 232 s (was 34; +1 = new test). Includes the real-fixture tests (which still pass — neither the chunking nor the progress wiring touches `mastering_render_with_progress`'s code path).
+- `cargo test` (full suite, lib + contracts): 19 lib + 35 contracts = **54/54 pass** (was 53).
+- `npm run build`: clean, **253.66 KB / 77.57 KB gzipped** (flat — StaleBar text logic refactor was a wash on bundle).
+- `npm run tauri dev`: not run by agents.
+
+Real-audio fixture used: none. The new contract test uses synthetic short tracks; the chunking refactor is signal-equivalent so the real-fixture tests still pass against Dan's WAV.
+
+What failed or remains partial:
+
+- **Frontend-side render-progress event subscription is unchanged.** `useTrackMaster.ts` already listens for any `render:progress` event regardless of `kind`. The album-export path now fires the same shape — no frontend wiring change beyond the message text logic.
+- **No automated test for the StaleBar text refactor.** Vitest infra still deferred. The behavior is straightforward (`progressPct !== null` → render message; else fall back) and Dan can confirm via manual smoke when the dev app is running.
+- **Album-export error path doesn't fire `cb(1.0)`.** If a render fails mid-album (e.g. a sample-rate mismatch on track 3 of 5), the progress bar stops at ~0.4 and stays there until the error toast clears the state. This is consistent with `mastering_render_with_progress` and not regressive; future polish could `cb(1.0)` on error to force the bar to fill+clear, but the explicit error state arguably reads more honestly.
+
+Next recommended slice:
+
+Three slices shipped this session (`977a2d0` live clipping, `fc2674b` width, this commit album-progress). Continuing the HANDOFF P0 list:
+
+1. **`lufs_offset_db` post-render LUFS landing** — measure post-render integrated LUFS via `ebur128`, apply one-pass gain delta. ~50 lines + tests. Removes one more "(coming soon)" label.
+2. **`compression_density`** — real envelope-following compressor before the limiter. ~300-500 lines per HANDOFF estimate. Worth a brainstorm/plan before coding.
+3. **Typography pass** (HANDOFF P1 #6) — Dan asked for "UI overall could use larger text." Pure CSS slice, but subjective enough to want Dan's eye on the result before committing.
+
+If Dan returns with listening notes, those override the queue per the goal directive's "subjective sound-quality decisions" clause.

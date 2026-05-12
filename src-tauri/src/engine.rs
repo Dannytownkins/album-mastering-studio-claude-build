@@ -429,10 +429,45 @@ pub async fn render_album_master(
         return Err(CommandError::Other("album has no tracks".to_string()));
     }
     let out_dir = render_output_dir(&app, RenderKind::Album)?;
-    album_render(&request, &out_dir)
+    // The first track's id is the "representative" id on the progress events.
+    // Frontend treats the album bar as one unit, so it just needs to know
+    // "this is the album render" via `kind = Album` — the track_id field is
+    // populated for consistency with the per-track progress payload shape.
+    let representative_id = request
+        .tracks
+        .first()
+        .map(|t| t.id.clone())
+        .unwrap_or_else(|| TrackId("album".to_string()));
+    let app_for_progress = app.clone();
+    let on_progress = move |fraction: f32| {
+        let _ = app_for_progress.emit(
+            "render:progress",
+            RenderProgress {
+                track_id: representative_id.clone(),
+                kind: RenderKind::Album,
+                fraction,
+            },
+        );
+    };
+    album_render_with_progress(&request, &out_dir, Some(&on_progress))
 }
 
 pub fn album_render(req: &AlbumRenderRequest, out_dir: &Path) -> CommandResult<RenderJob> {
+    album_render_with_progress(req, out_dir, None)
+}
+
+/// Same as `album_render` but accepts an optional progress callback. Reports
+/// `(track_index + within_track_fraction) / total_tracks`, where the inner
+/// fraction comes from processing each track in 4096-frame chunks (same
+/// granularity as `mastering_render_with_progress`). Fires `cb(0.0)` once at
+/// the start and `cb(1.0)` once at the end, with monotonic-non-decreasing
+/// values in between — matches the per-track contract so the frontend's
+/// existing progress-bar wiring needs no changes.
+pub fn album_render_with_progress(
+    req: &AlbumRenderRequest,
+    out_dir: &Path,
+    on_progress: Option<&dyn Fn(f32)>,
+) -> CommandResult<RenderJob> {
     let bit_depth = req.album_intent.advanced.bit_depth.unwrap_or(24);
     let album_path = unique_album_path(out_dir)?;
 
@@ -441,6 +476,11 @@ pub fn album_render(req: &AlbumRenderRequest, out_dir: &Path) -> CommandResult<R
     let mut common_channels: u16 = 0;
     let mut individual_paths: Vec<String> = Vec::with_capacity(req.tracks.len());
     let mut track_ids: Vec<TrackId> = Vec::with_capacity(req.tracks.len());
+
+    let total_tracks = req.tracks.len();
+    if let Some(cb) = on_progress {
+        cb(0.0);
+    }
 
     for (i, input) in req.tracks.iter().enumerate() {
         let path = Path::new(&input.path);
@@ -492,7 +532,25 @@ pub fn album_render(req: &AlbumRenderRequest, out_dir: &Path) -> CommandResult<R
         let mut samples = pcm.samples;
         let channels_usize = pcm.channels.max(1) as usize;
         let mut chain = crate::dsp::MasteringChain::new(pcm.sample_rate, channels_usize, settings);
-        chain.process_interleaved(&mut samples, channels_usize);
+
+        // Chunk the per-track render so we can fire sub-track progress events
+        // — matches `mastering_render_with_progress`'s 4096-frame granularity.
+        // Chain state (limiter lookahead, biquad memory) flows correctly across
+        // chunk boundaries because we reuse the same `chain` instance.
+        const CHUNK_FRAMES: usize = 4096;
+        let chunk_samples = CHUNK_FRAMES * channels_usize;
+        let track_total = samples.len();
+        let mut processed = 0;
+        while processed < track_total {
+            let end = (processed + chunk_samples).min(track_total);
+            chain.process_interleaved(&mut samples[processed..end], channels_usize);
+            processed = end;
+            if let Some(cb) = on_progress {
+                let within_track = processed as f32 / track_total.max(1) as f32;
+                let overall = (i as f32 + within_track) / total_tracks.max(1) as f32;
+                cb(overall.min(1.0));
+            }
+        }
 
         let individual = unique_output_path(out_dir, path, &input.id, RenderKind::Master)?;
         write_wav(&individual, &samples, pcm.sample_rate, pcm.channels, bit_depth)?;
@@ -511,6 +569,10 @@ pub fn album_render(req: &AlbumRenderRequest, out_dir: &Path) -> CommandResult<R
     let mut output_paths = Vec::with_capacity(individual_paths.len() + 1);
     output_paths.push(album_path.to_string_lossy().to_string());
     output_paths.extend(individual_paths);
+
+    if let Some(cb) = on_progress {
+        cb(1.0);
+    }
 
     Ok(RenderJob {
         id: uuid::Uuid::new_v4().to_string(),

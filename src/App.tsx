@@ -1203,10 +1203,10 @@ function StaleBar({
     <section className="stale-bar">
       <span className="stale-dot live" aria-hidden />
       <span className="stale-text">
-        {isRendering
-          ? progressPct !== null
-            ? `Rendering ${renderProgress!.kind} WAV… ${progressPct}%`
-            : "Rendering preview WAV…"
+        {progressPct !== null
+          ? `Rendering ${renderProgress!.kind} WAV… ${progressPct}%`
+          : isRendering
+          ? "Rendering preview WAV…"
           : "Mastered playback is live — drag controls and hear the change immediately."}
       </span>
       {progressPct !== null && (

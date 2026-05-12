@@ -338,6 +338,85 @@ fn album_render_applies_per_track_override() {
     }
 }
 
+/// Phase 12.2 — `album_render_with_progress` must invoke its callback at
+/// least once per track with monotonic-non-decreasing fractions, starting
+/// from 0.0 (or near it) and ending at exactly 1.0. Without this, the
+/// frontend's album-export progress bar shows nothing.
+#[test]
+fn album_render_emits_monotonic_progress_to_completion() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let t1 = tmp.path().join("a.wav");
+    let t2 = tmp.path().join("b.wav");
+    // Two short stereo tracks; the chunked render fires `cb` once per 4096
+    // frames, so a ~0.5 s file produces enough chunks to test monotonicity.
+    write_sine_wav(&t1, 44_100, 0.5, 440.0, 2);
+    write_sine_wav(&t2, 44_100, 0.5, 660.0, 2);
+
+    let request = engine::AlbumRenderRequest {
+        tracks: vec![
+            engine::AlbumTrackInput {
+                id: TrackId("alpha".to_string()),
+                path: t1.to_string_lossy().to_string(),
+            },
+            engine::AlbumTrackInput {
+                id: TrackId("bravo".to_string()),
+                path: t2.to_string_lossy().to_string(),
+            },
+        ],
+        album_intent: default_settings(),
+        per_track_overrides: None,
+    };
+
+    let fractions = std::cell::RefCell::new(Vec::<f32>::new());
+    let job = engine::album_render_with_progress(
+        &request,
+        tmp.path(),
+        Some(&|f| fractions.borrow_mut().push(f)),
+    )
+    .expect("album render with progress");
+    assert!(matches!(job.status, JobStatus::Done));
+
+    let fractions = fractions.into_inner();
+    assert!(
+        fractions.len() >= 3,
+        "expected at least 3 progress samples (init + per-chunk + final), got {}",
+        fractions.len()
+    );
+    assert!(
+        (fractions[0] - 0.0).abs() < 1e-6,
+        "first progress sample should be 0.0, got {}",
+        fractions[0]
+    );
+    let last = *fractions.last().expect("at least one fraction recorded");
+    assert!(
+        (last - 1.0).abs() < 1e-6,
+        "final progress sample should be 1.0, got {}",
+        last
+    );
+    // Monotonic non-decreasing — the frontend bar should never go backwards.
+    for window in fractions.windows(2) {
+        let a = window[0];
+        let b = window[1];
+        assert!(
+            b >= a - 1e-6,
+            "progress regressed from {} to {} (full history: {:?})",
+            a,
+            b,
+            fractions
+        );
+    }
+    // Mid-render fraction should be near 0.5 (one of two equal-length tracks).
+    // Allow generous tolerance — chunk boundaries don't align perfectly with
+    // track boundaries, and the per-track total includes write-tail time the
+    // sample-based fraction can't see.
+    let any_near_half = fractions.iter().any(|f| (f - 0.5).abs() < 0.1);
+    assert!(
+        any_near_half,
+        "expected at least one progress sample near 0.5 mid-album, got {:?}",
+        fractions
+    );
+}
+
 #[test]
 fn mastering_render_processes_real_fixture_if_present() {
     let Some(path) = real_fixture_path() else {
