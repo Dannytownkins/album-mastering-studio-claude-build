@@ -1,4 +1,8 @@
-import { useState, type PointerEvent as ReactPointerEvent } from "react";
+import {
+  useState,
+  type DragEvent as ReactDragEvent,
+  type PointerEvent as ReactPointerEvent,
+} from "react";
 import { api } from "./lib/api";
 import { useTrackMaster } from "./hooks/useTrackMaster";
 import type {
@@ -37,6 +41,9 @@ function App() {
         onRemove={tm.removeTrack}
         onAdd={tm.openImportDialog}
         isAnalyzing={tm.isAnalyzing}
+        mode={tm.mode}
+        onModeChange={tm.setMode}
+        onReorder={tm.reorderTracks}
       />
       <main className="workspace">
         {tm.selectedTrack ? (
@@ -63,6 +70,9 @@ function Sidebar({
   onRemove,
   onAdd,
   isAnalyzing,
+  mode,
+  onModeChange,
+  onReorder,
 }: {
   tracks: ImportedTrack[];
   selectedId: string | null;
@@ -70,16 +80,74 @@ function Sidebar({
   onRemove: (id: string) => void;
   onAdd: () => void;
   isAnalyzing: boolean;
+  mode: "track" | "album";
+  onModeChange: (mode: "track" | "album") => void;
+  onReorder: (fromIndex: number, toIndex: number) => void;
 }) {
+  const [dragFromIndex, setDragFromIndex] = useState<number | null>(null);
+  const [dragOverIndex, setDragOverIndex] = useState<number | null>(null);
+
+  const albumReorderable = mode === "album";
+
+  const handleDragStart = (
+    e: ReactDragEvent<HTMLLIElement>,
+    index: number,
+  ) => {
+    if (!albumReorderable) return;
+    setDragFromIndex(index);
+    e.dataTransfer.effectAllowed = "move";
+    e.dataTransfer.setData("text/plain", String(index));
+  };
+
+  const handleDragOver = (
+    e: ReactDragEvent<HTMLLIElement>,
+    index: number,
+  ) => {
+    if (!albumReorderable || dragFromIndex === null) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = "move";
+    if (dragOverIndex !== index) setDragOverIndex(index);
+  };
+
+  const handleDrop = (e: ReactDragEvent<HTMLLIElement>, index: number) => {
+    if (!albumReorderable || dragFromIndex === null) return;
+    e.preventDefault();
+    onReorder(dragFromIndex, index);
+    setDragFromIndex(null);
+    setDragOverIndex(null);
+  };
+
+  const handleDragEnd = () => {
+    setDragFromIndex(null);
+    setDragOverIndex(null);
+  };
+
   return (
     <aside className="sidebar">
       <header className="sidebar-head">
         <span className="brand">Album Mastering Studio</span>
-        <span className="mode-pill">Track Master</span>
+        <div className="mode-toggle">
+          <button
+            type="button"
+            className={mode === "track" ? "on" : ""}
+            onClick={() => onModeChange("track")}
+          >
+            Track Master
+          </button>
+          <button
+            type="button"
+            className={mode === "album" ? "on" : ""}
+            onClick={() => onModeChange("album")}
+          >
+            Album Master
+          </button>
+        </div>
       </header>
 
       <div className="sidebar-section">
-        <span className="section-label">Tracks ({tracks.length})</span>
+        <span className="section-label">
+          {mode === "album" ? `Album order (${tracks.length})` : `Tracks (${tracks.length})`}
+        </span>
         <button type="button" className="add-btn" onClick={onAdd}>
           + Add files
         </button>
@@ -87,33 +155,55 @@ function Sidebar({
 
       <ul className="track-list">
         {tracks.length === 0 && (
-          <li className="track-empty">No tracks yet. Drop or add audio.</li>
-        )}
-        {tracks.map((t) => (
-          <li
-            key={t.id}
-            className={"track-row " + (t.id === selectedId ? "active" : "")}
-          >
-            <button
-              type="button"
-              className="track-pick"
-              onClick={() => onSelect(t.id)}
-              title={t.path}
-            >
-              <span className="track-name">{t.display_name}</span>
-              <span className="track-meta">.{t.source_format}</span>
-            </button>
-            <button
-              type="button"
-              className="track-remove"
-              onClick={() => onRemove(t.id)}
-              aria-label="Remove track"
-              title="Remove"
-            >
-              ×
-            </button>
+          <li className="track-empty">
+            {mode === "album"
+              ? "No album yet. Drop or add tracks, then drag to reorder."
+              : "No tracks yet. Drop or add audio."}
           </li>
-        ))}
+        )}
+        {tracks.map((t, index) => {
+          const classes = ["track-row"];
+          if (t.id === selectedId) classes.push("active");
+          if (dragFromIndex === index) classes.push("dragging");
+          if (dragOverIndex === index && dragFromIndex !== index)
+            classes.push("drag-over");
+          return (
+            <li
+              key={t.id}
+              className={classes.join(" ")}
+              draggable={albumReorderable}
+              onDragStart={(e) => handleDragStart(e, index)}
+              onDragOver={(e) => handleDragOver(e, index)}
+              onDrop={(e) => handleDrop(e, index)}
+              onDragEnd={handleDragEnd}
+              onDragLeave={() => setDragOverIndex(null)}
+            >
+              {albumReorderable && (
+                <span className="track-index" aria-hidden>
+                  {index + 1}
+                </span>
+              )}
+              <button
+                type="button"
+                className="track-pick"
+                onClick={() => onSelect(t.id)}
+                title={t.path}
+              >
+                <span className="track-name">{t.display_name}</span>
+                <span className="track-meta">.{t.source_format}</span>
+              </button>
+              <button
+                type="button"
+                className="track-remove"
+                onClick={() => onRemove(t.id)}
+                aria-label="Remove track"
+                title="Remove"
+              >
+                ×
+              </button>
+            </li>
+          );
+        })}
       </ul>
 
       {isAnalyzing && <div className="sidebar-status">Analyzing…</div>}

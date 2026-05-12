@@ -76,6 +76,8 @@ export function useTrackMaster() {
   });
   const [advancedOpen, setAdvancedOpen] = useState(false);
   const [lastExportReceipt, setLastExportReceipt] = useState<ExportReceipt | null>(null);
+  const [mode, setMode] = useState<"track" | "album">("track");
+  const [albumIntent, setAlbumIntent] = useState<MasteringSettings>(DEFAULT_SETTINGS);
   const [loadedTrackId, setLoadedTrackId] = useState<TrackId | null>(null);
   const [loadedKindByTrack, setLoadedKindByTrack] = useState<Record<TrackId, PlaybackKindUI>>({});
   const [regionByTrack, setRegionByTrack] = useState<Record<TrackId, LoopRegion | null>>({});
@@ -508,6 +510,31 @@ export function useTrackMaster() {
   const clearError = useCallback(() => setError(null), []);
   const clearExportReceipt = useCallback(() => setLastExportReceipt(null), []);
 
+  const reorderTracks = useCallback((fromIndex: number, toIndex: number) => {
+    setTracks((prev) => {
+      if (
+        fromIndex < 0 ||
+        fromIndex >= prev.length ||
+        toIndex < 0 ||
+        toIndex >= prev.length ||
+        fromIndex === toIndex
+      ) {
+        return prev;
+      }
+      const next = prev.slice();
+      const [moved] = next.splice(fromIndex, 1);
+      next.splice(toIndex, 0, moved);
+      return next;
+    });
+  }, []);
+
+  const updateAlbumIntent = useCallback(
+    (mutate: (prev: MasteringSettings) => MasteringSettings) => {
+      setAlbumIntent((prev) => mutate(prev));
+    },
+    [],
+  );
+
   return {
     tracks,
     selectedTrackId,
@@ -546,5 +573,10 @@ export function useTrackMaster() {
     clearRegion,
     clearError,
     clearExportReceipt,
+    mode,
+    setMode,
+    reorderTracks,
+    albumIntent,
+    updateAlbumIntent,
   };
 }

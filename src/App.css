@@ -92,6 +92,35 @@ select {
   border: 1px solid var(--border);
 }
 
+.mode-toggle {
+  display: flex;
+  background: var(--bg-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+}
+
+.mode-toggle button {
+  flex: 1;
+  background: transparent;
+  color: var(--text-2);
+  border: none;
+  padding: 0.35rem 0.5rem;
+  font-size: 0.7rem;
+  letter-spacing: 0.04em;
+}
+
+.mode-toggle button.on {
+  background: var(--bg-3);
+  color: var(--text-0);
+  box-shadow: inset 0 -2px 0 var(--accent);
+}
+
+.mode-toggle button:not(.on):hover {
+  color: var(--text-1);
+  background: rgba(255, 255, 255, 0.02);
+}
+
 .sidebar-section {
   padding: 0.9rem 1.1rem 0.4rem;
   display: flex;
@@ -143,6 +172,7 @@ select {
   border-radius: var(--radius-sm);
   margin-bottom: 0.15rem;
   transition: background 0.1s;
+  border: 1px solid transparent;
 }
 
 .track-row:hover {
@@ -155,6 +185,29 @@ select {
 
 .track-row.active .track-name {
   color: var(--text-0);
+}
+
+.track-row.dragging {
+  opacity: 0.4;
+}
+
+.track-row.drag-over {
+  border-top-color: var(--accent);
+}
+
+.track-index {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.6rem;
+  font-size: 0.7rem;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-2);
+  user-select: none;
+}
+
+.track-row.active .track-index {
+  color: var(--accent);
 }
 
 .track-pick {

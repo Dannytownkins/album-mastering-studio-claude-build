@@ -539,3 +539,49 @@ What failed or remains partial:
 Next recommended slice:
 
 Phase 11 (DSP audit) — biggest quality unlock left. Real compressor (program-dependent attack/release, soft knee), lookahead true-peak limiter (replaces the soft-clip ceiling), 30 ms crossfade between old and new chain coefficients on preset/intensity changes to remove transient clicks, fade-out on `Sink::stop` swaps. Alternative: Phase 7 (custom presets, autosave, undo/redo) for product depth. Or Phase 8 (Album Master sidebar mode + reorder + global album intent) for the second product mode.
+
+## 2026-05-11 — Phase 8.1: Album Master mode toggle + draggable track reorder
+
+Goal:
+
+Lay the second product mode's groundwork. Toggle between Track Master and Album Master in the sidebar; in Album Master, drag tracks in the sidebar to reorder the album sequence. Per-track and album-wide state both exist; rendering still uses per-track settings (Album rendering lands in 8.2).
+
+What changed:
+
+Frontend:
+
+- `useTrackMaster`:
+  - `mode: "track" | "album"` state with `setMode`.
+  - `albumIntent: MasteringSettings` (defaults to `DEFAULT_SETTINGS`) plus `updateAlbumIntent(mutator)`.
+  - `reorderTracks(fromIndex, toIndex)` mutates the `tracks` array with bounds-checked splice.
+  - All four pieces exposed in the returned object so the UI can drive them.
+- `App.tsx` `Sidebar`:
+  - Replaced the static "Track Master" pill with a segmented `.mode-toggle` (Track Master / Album Master). Active side shows the accent bottom-bar.
+  - Header label switches between `Tracks (N)` and `Album order (N)`.
+  - Empty-state copy differs per mode ("No album yet. Drop or add tracks, then drag to reorder.").
+  - Each `.track-row` is `draggable={mode === "album"}`. HTML5 DnD:
+    - `onDragStart` captures source index, sets `effectAllowed = "move"`.
+    - `onDragOver` allows drop and tracks hover index for visual feedback.
+    - `onDrop` calls `onReorder(from, to)` and clears drag state.
+    - `onDragEnd` / `onDragLeave` clean up.
+  - In album mode a `.track-index` cell shows the 1-based position. The active row's index glows accent.
+- `App.css`:
+  - `.mode-toggle` segmented control (similar styling to the A/B toggle, but with bottom-bar indicator).
+  - `.track-index` styling, plus `.track-row.dragging` (opacity 0.4) and `.track-row.drag-over` (accent top border).
+
+Verification:
+
+- `npm run build`: clean. Bundle 219 KB (69 KB gzipped).
+- `cargo test` (from `src-tauri/`): unchanged — Phase 8.1 is frontend-only, no backend signatures touched. 16/16 still pass from the last run.
+- `npm run tauri dev`: deferred (manual — toggle modes, drag tracks in the sidebar, see them reorder).
+
+What failed or remains partial:
+
+- Album mode is currently *just* UI: rendering still uses each track's individual `settingsMap` entry, not `albumIntent`. The Export Master button on a selected track works the same in either mode.
+- No `albumIntent` UI yet — the state is plumbed but no controls expose it. Phase 8.2 wires album intent controls (probably reusing the existing `Macros` + `AdvancedPanel` components) and the album render path.
+- No "PHASE 8 CONFIRMED" gating; this is foundation work for the album mode and doesn't claim to satisfy the Album Master non-negotiable gates yet.
+- No persistence — toggle modes or close the window and ordering is lost. Phase 7 (autosave) will fix.
+
+Next recommended slice:
+
+Phase 8.2 — Album rendering. Backend: `render_album_master(track_inputs, album_intent, per_track_overrides)` decodes each track in order, applies (intent + override) chain to each, writes individual masters plus a continuous album WAV (sample-rate-aligned concatenation, equal-power crossfade primitive ready but off by default). Frontend: an Export Album button that's visible in album mode and yields one receipt with all output paths. Then 8.3 (per-track adaptation UI: a small "Same as album" / "Override" switch above each control). Phase 9 (track roles / story step) layers on top of 8.2.
