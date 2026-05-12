@@ -758,38 +758,53 @@ fn presets_produce_distinct_chain_coefficients() {
         "Universal must have no saturation"
     );
 
-    // The high shelf coefficients must differ between Universal (gentle air),
-    // Clarity (lifted highs), and Tape (cut highs). Use b0 as a coarse
-    // distinguishing fingerprint — it tracks shelf gain.
-    let cu_high_b0 = cu.high.b0;
-    let cc_high_b0 = cc.high.b0;
-    let ct_high_b0 = ct.high.b0;
+    // The shelf filters must differ measurably between presets. b0 alone is a
+    // poor fingerprint for shelf gain — for a 200 Hz low shelf at 44.1 kHz,
+    // b0/a0 stays near 1.0 even for ±3 dB boosts because the shelf's action
+    // is encoded across b1/b2 too. The honest metric is DC gain for the low
+    // shelf and Nyquist gain for the high shelf: those are exactly the
+    // frequencies the shelves control.
+    let dc_gain = |c: &album_mastering_studio_lib::dsp::BiquadCoeffs| -> f32 {
+        (c.b0 + c.b1 + c.b2) / (1.0 + c.a1 + c.a2)
+    };
+    let nyq_gain = |c: &album_mastering_studio_lib::dsp::BiquadCoeffs| -> f32 {
+        // At Nyquist (z = -1): H(-1) = (b0 - b1 + b2) / (1 - a1 + a2).
+        (c.b0 - c.b1 + c.b2) / (1.0 - c.a1 + c.a2)
+    };
+
+    // High-shelf Nyquist-gain comparison: Universal has +0.5 dB (≈1.06x),
+    // Clarity +2.5 dB (≈1.33x), Tape -1.5 dB (≈0.84x). Pairwise differences
+    // should be well above 0.1.
+    let cu_high_nyq = nyq_gain(&cu.high);
+    let cc_high_nyq = nyq_gain(&cc.high);
+    let ct_high_nyq = nyq_gain(&ct.high);
     assert!(
-        (cc_high_b0 - cu_high_b0).abs() > 0.01,
-        "Clarity high shelf ({:.4}) should differ from Universal ({:.4})",
-        cc_high_b0,
-        cu_high_b0
+        (cc_high_nyq - cu_high_nyq).abs() > 0.1,
+        "Clarity high-shelf Nyquist gain ({:.4}) should differ from Universal ({:.4})",
+        cc_high_nyq,
+        cu_high_nyq
     );
     assert!(
-        (ct_high_b0 - cu_high_b0).abs() > 0.01,
-        "Tape high shelf ({:.4}) should differ from Universal ({:.4})",
-        ct_high_b0,
-        cu_high_b0
+        (ct_high_nyq - cu_high_nyq).abs() > 0.1,
+        "Tape high-shelf Nyquist gain ({:.4}) should differ from Universal ({:.4})",
+        ct_high_nyq,
+        cu_high_nyq
     );
     assert!(
-        (cc_high_b0 - ct_high_b0).abs() > 0.02,
-        "Clarity high shelf ({:.4}) should differ from Tape ({:.4}) by enough to be audible",
-        cc_high_b0,
-        ct_high_b0
+        (cc_high_nyq - ct_high_nyq).abs() > 0.2,
+        "Clarity ({:.4}) and Tape ({:.4}) high-shelf Nyquist gains should differ audibly",
+        cc_high_nyq,
+        ct_high_nyq
     );
 
-    // The low shelf coefficients must differ between Oomph (heavy low boost)
-    // and Universal.
+    // Low-shelf DC gain: Universal 0 dB (=1.0x), Oomph +2.5 dB (≈1.33x).
+    let cu_low_dc = dc_gain(&cu.low);
+    let co_low_dc = dc_gain(&co.low);
     assert!(
-        (co.low.b0 - cu.low.b0).abs() > 0.02,
-        "Oomph low shelf ({:.4}) should differ from Universal ({:.4})",
-        co.low.b0,
-        cu.low.b0
+        (co_low_dc - cu_low_dc).abs() > 0.1,
+        "Oomph low-shelf DC gain ({:.4}) should differ from Universal ({:.4})",
+        co_low_dc,
+        cu_low_dc
     );
 }
 
