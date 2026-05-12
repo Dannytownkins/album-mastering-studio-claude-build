@@ -2,7 +2,7 @@
 
 This document is the entry point for any Claude session — interactive or scheduled — picking up work on this repo. Read this first, then start the loop below.
 
-> **Current snapshot: `docs/HANDOFF_2026-05-12.md`** — a comprehensive end-of-session handoff covering all 19 commits shipped in the Phase 12.1 listening-response session, current verification state, Dan's listening feedback verbatim, pitfalls discovered, prioritized open work, file map, and the suggested next slice. Read it after `docs/PRODUCT.md` and before continuing here. The next dated snapshot supersedes it when written.
+> **Current snapshot: `docs/HANDOFF_2026-05-12_evening.md`** — comprehensive end-of-session handoff covering the four Phase 12.2 wired-controls slices shipped this session (live clipping, width, album progress, LUFS landing) plus one fully-designed-and-planned slice ready for execution (warmth + presence_air). Includes long-term goal from PRODUCT.md, doc map, boundaries, "ask if unsure" guidance, and full verification state. Supersedes `docs/HANDOFF_2026-05-12.md` for forward direction; that earlier file is still authoritative for Phase 12.1 back-context. Read the new snapshot end-to-end before touching anything.
 
 ## Read first (in order)
 
