@@ -190,40 +190,208 @@ pub struct ChannelState {
     high: BiquadState,
 }
 
+// ============================================================================
+// Limiter — linked-stereo brick-wall limiter with lookahead.
+// Phase 11.2.a: sample-peak detection (not yet true-peak), instant attack,
+// exponential release. Phase 11.2.b can upgrade to 4× oversampled true-peak.
+// ============================================================================
+
+#[derive(Debug, Clone)]
+pub struct Limiter {
+    channels: usize,
+    ceiling_lin: f32,
+    lookahead_frames: usize,
+    release_coef: f32,
+    /// Ring buffer of interleaved samples sized `lookahead_frames * channels`.
+    buffer: Vec<f32>,
+    /// Index of the next frame to overwrite (also the oldest frame in the buffer).
+    head_frame: usize,
+    /// How many frames have been written so far (capped at `lookahead_frames`).
+    filled_frames: usize,
+    /// Current linear gain reduction (1.0 = no reduction).
+    gain: f32,
+    /// Reusable scratch buffer for the oldest-frame read; preallocated to avoid
+    /// per-frame allocations on the audio thread.
+    oldest_frame_buf: Vec<f32>,
+}
+
+impl Limiter {
+    pub fn new(
+        sample_rate: u32,
+        channels: usize,
+        ceiling_dbfs: f32,
+        lookahead_ms: f32,
+        release_ms: f32,
+    ) -> Self {
+        let ch = channels.max(1);
+        let lookahead_frames =
+            (((lookahead_ms / 1000.0) * sample_rate as f32).round() as usize).max(1);
+        let release_coef = if release_ms > 0.0 {
+            (-1.0_f32 / (release_ms / 1000.0 * sample_rate as f32)).exp()
+        } else {
+            0.0
+        };
+        let ceiling_lin = 10.0_f32.powf(ceiling_dbfs / 20.0);
+        Self {
+            channels: ch,
+            ceiling_lin,
+            lookahead_frames,
+            release_coef,
+            buffer: vec![0.0; lookahead_frames * ch],
+            head_frame: 0,
+            filled_frames: 0,
+            gain: 1.0,
+            oldest_frame_buf: vec![0.0; ch],
+        }
+    }
+
+    /// Process one frame in place. `frame.len()` must equal `self.channels`
+    /// (smaller frames are zero-padded internally).
+    pub fn process_frame_inplace(&mut self, frame: &mut [f32]) {
+        let ch = self.channels;
+        if ch == 0 {
+            return;
+        }
+        let head_base = self.head_frame * ch;
+        // Read the OLDEST frame from the ring before overwriting.
+        for i in 0..ch {
+            self.oldest_frame_buf[i] = self.buffer[head_base + i];
+        }
+        // Write the new frame into the ring.
+        for i in 0..ch {
+            let s = if i < frame.len() { frame[i] } else { 0.0 };
+            self.buffer[head_base + i] = s;
+        }
+        self.head_frame = (self.head_frame + 1) % self.lookahead_frames;
+        if self.filled_frames < self.lookahead_frames {
+            self.filled_frames += 1;
+        }
+
+        // Scan the buffer for the peak (linked stereo — single max across all
+        // channels). Cost: O(lookahead_frames * channels) per frame. For 3 ms
+        // lookahead at 44.1 kHz stereo that's ~264 comparisons/frame ≈ 23 M
+        // comparisons/sec — well within budget.
+        let mut peak: f32 = 0.0;
+        for &s in &self.buffer {
+            let a = s.abs();
+            if a > peak {
+                peak = a;
+            }
+        }
+
+        let required = if peak > self.ceiling_lin {
+            self.ceiling_lin / peak.max(1.0e-9)
+        } else {
+            1.0
+        };
+
+        if required < self.gain {
+            // Instant attack — the lookahead gives us time to ramp the OUTPUT
+            // down before the peak hits the read pointer, so an instantaneous
+            // gain change here translates to a smooth dip in the audible output.
+            self.gain = required;
+        } else {
+            // Exponential release toward `required` (which is 1.0 when no
+            // reduction is currently needed).
+            self.gain = required - (required - self.gain) * self.release_coef;
+        }
+
+        // Output the OLDEST frame * current gain.
+        for i in 0..frame.len().min(ch) {
+            frame[i] = self.oldest_frame_buf[i] * self.gain;
+        }
+    }
+
+    pub fn reset(&mut self) {
+        for s in self.buffer.iter_mut() {
+            *s = 0.0;
+        }
+        self.head_frame = 0;
+        self.filled_frames = 0;
+        self.gain = 1.0;
+    }
+}
+
 pub struct MasteringChain {
     pub coeffs: ChainCoeffs,
     pub states: Vec<ChannelState>,
+    pub limiter: Limiter,
 }
+
+const LIMITER_LOOKAHEAD_MS: f32 = 3.0;
+const LIMITER_RELEASE_MS: f32 = 50.0;
 
 impl MasteringChain {
     pub fn new(sample_rate: u32, channels: usize, settings: &MasteringSettings) -> Self {
         let coeffs = ChainCoeffs::from_settings(sample_rate, settings);
         let states = (0..channels).map(|_| ChannelState::default()).collect();
-        Self { coeffs, states }
+        let ceiling_dbfs = settings
+            .advanced
+            .ceiling_dbtp
+            .unwrap_or(-1.0)
+            .clamp(-6.0, 0.0);
+        let limiter = Limiter::new(
+            sample_rate,
+            channels,
+            ceiling_dbfs,
+            LIMITER_LOOKAHEAD_MS,
+            LIMITER_RELEASE_MS,
+        );
+        Self {
+            coeffs,
+            states,
+            limiter,
+        }
     }
 
-    /// Build a sibling chain that inherits the current biquad state but uses
-    /// fresh coefficients. Used by `MasteringSource` to crossfade between old
-    /// and new coefficients without re-ringing the filters from zero state.
+    /// Build a sibling chain that inherits the current filter + limiter state
+    /// but uses fresh coefficients. Used by `MasteringSource` to crossfade
+    /// between old and new coefficients without re-ringing the filters or
+    /// dropping the limiter's gain envelope from zero state.
     pub fn with_coeffs_inheriting_state(coeffs: ChainCoeffs, prior: &Self) -> Self {
         Self {
             coeffs,
             states: prior.states.clone(),
+            limiter: prior.limiter.clone(),
         }
+    }
+
+    /// Process one interleaved frame in place. Runs gain → 3-band EQ →
+    /// saturation per channel, then the linked-stereo lookahead limiter
+    /// across the frame.
+    pub fn process_frame_inplace(&mut self, frame: &mut [f32]) {
+        let channels = frame.len().min(self.states.len());
+        if channels == 0 {
+            return;
+        }
+        for ch in 0..channels {
+            let state = &mut self.states[ch];
+            let mut y = frame[ch] * self.coeffs.input_gain_lin;
+            y = state.low.process(&self.coeffs.low, y);
+            y = state.mid.process(&self.coeffs.mid, y);
+            y = state.high.process(&self.coeffs.high, y);
+            if self.coeffs.saturation_amount > 0.0 {
+                let drive = 1.0 + self.coeffs.saturation_amount * 2.0;
+                y = (y * drive).tanh() / drive.tanh().max(1.0e-3);
+            }
+            frame[ch] = y;
+        }
+        self.limiter.process_frame_inplace(frame);
     }
 
     pub fn process_interleaved(&mut self, samples: &mut [f32], channels: usize) {
         if channels == 0 || self.states.is_empty() {
             return;
         }
-        let last_state_idx = self.states.len() - 1;
         for frame in samples.chunks_mut(channels) {
-            for (ch, sample) in frame.iter_mut().enumerate() {
-                *sample = self.process_sample(*sample, ch.min(last_state_idx));
-            }
+            self.process_frame_inplace(frame);
         }
     }
 
+    /// Per-sample API. Bypasses the linked-stereo limiter (which needs a full
+    /// frame to compute peaks). Used only as a legacy path for callers that
+    /// haven't been migrated to `process_frame_inplace`; the soft-clip ceiling
+    /// stays in place as a degraded fallback.
     pub fn process_sample(&mut self, sample: f32, channel: usize) -> f32 {
         let idx = if self.states.is_empty() {
             return sample;
@@ -252,5 +420,6 @@ impl MasteringChain {
         for state in self.states.iter_mut() {
             *state = ChannelState::default();
         }
+        self.limiter.reset();
     }
 }

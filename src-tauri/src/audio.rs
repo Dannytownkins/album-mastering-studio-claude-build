@@ -771,11 +771,14 @@ fn handle_play_master(
 // every COEFFS_CHECK_INTERVAL samples (~6 ms at 44.1 kHz / 2ch).
 // ============================================================================
 
-const COEFFS_CHECK_INTERVAL: usize = 256;
-// Crossfade length when coefficients change. ~12 ms at 44.1 kHz stereo
-// (1024 interleaved samples = 512 frames). Long enough to mask filter-state
-// transients on preset/intensity changes; short enough to feel instantaneous.
-const COEFFS_CROSSFADE_SAMPLES: usize = 1024;
+/// How many frames to process before draining the coefficient channel. At
+/// 44.1 kHz this is ~3 ms — well below the perception threshold for parameter
+/// changes.
+const COEFFS_CHECK_INTERVAL_FRAMES: usize = 128;
+/// Crossfade length between old and new chain when coefficients change.
+/// 512 frames ≈ 12 ms at 44.1 kHz. Long enough to mask filter-state transients
+/// on preset/intensity changes; short enough to feel instantaneous.
+const COEFFS_CROSSFADE_FRAMES: usize = 512;
 
 struct MasteringSource {
     samples: Vec<f32>,
@@ -787,7 +790,13 @@ struct MasteringSource {
     crossfade_remaining: usize,
     crossfade_total: usize,
     coeffs_rx: mpsc::Receiver<crate::dsp::ChainCoeffs>,
-    samples_since_check: usize,
+    frames_since_check: usize,
+    // Frame-level scratch buffers; preallocated to avoid heap traffic on the
+    // audio thread.
+    frame_in: Vec<f32>,
+    frame_main: Vec<f32>,
+    frame_pending: Vec<f32>,
+    frame_out_pos: usize,
 }
 
 impl MasteringSource {
@@ -798,6 +807,7 @@ impl MasteringSource {
         chain: crate::dsp::MasteringChain,
         coeffs_rx: mpsc::Receiver<crate::dsp::ChainCoeffs>,
     ) -> Self {
+        let channels_usize = channels.max(1) as usize;
         Self {
             samples,
             position: 0,
@@ -808,7 +818,13 @@ impl MasteringSource {
             crossfade_remaining: 0,
             crossfade_total: 0,
             coeffs_rx,
-            samples_since_check: 0,
+            frames_since_check: 0,
+            frame_in: vec![0.0; channels_usize],
+            frame_main: vec![0.0; channels_usize],
+            frame_pending: vec![0.0; channels_usize],
+            // Setting to `channels_usize` triggers the fetch on the first
+            // `next()` call rather than requiring a separate "primed" flag.
+            frame_out_pos: channels_usize,
         }
     }
 }
@@ -817,48 +833,82 @@ impl Iterator for MasteringSource {
     type Item = f32;
 
     fn next(&mut self) -> Option<f32> {
-        if self.position >= self.samples.len() {
-            return None;
-        }
-        self.samples_since_check += 1;
-        if self.samples_since_check >= COEFFS_CHECK_INTERVAL {
-            self.samples_since_check = 0;
-            // Drain all pending updates; keep only the latest.
-            let mut latest: Option<crate::dsp::ChainCoeffs> = None;
-            while let Ok(c) = self.coeffs_rx.try_recv() {
-                latest = Some(c);
-            }
-            if let Some(new_coeffs) = latest {
-                self.pending_chain = Some(
-                    crate::dsp::MasteringChain::with_coeffs_inheriting_state(new_coeffs, &self.chain),
-                );
-                self.crossfade_remaining = COEFFS_CROSSFADE_SAMPLES;
-                self.crossfade_total = COEFFS_CROSSFADE_SAMPLES;
-            }
-        }
         let channels = self.channels.max(1) as usize;
-        let ch = self.position % channels;
-        let raw = self.samples[self.position];
-        self.position += 1;
-
-        let y_current = self.chain.process_sample(raw, ch);
-
-        if self.pending_chain.is_some() && self.crossfade_total > 0 {
-            let pending = self.pending_chain.as_mut().expect("pending checked");
-            let y_pending = pending.process_sample(raw, ch);
-            // t goes 0 -> 1 as the crossfade progresses; we mix more pending as t rises.
-            let t = 1.0
-                - (self.crossfade_remaining as f32 / self.crossfade_total as f32);
-            let mixed = y_current * (1.0 - t) + y_pending * t;
-            self.crossfade_remaining = self.crossfade_remaining.saturating_sub(1);
-            if self.crossfade_remaining == 0 {
-                self.chain = self.pending_chain.take().expect("pending checked");
-                self.crossfade_total = 0;
+        if self.frame_out_pos >= channels {
+            // Time to fetch + process the next input frame.
+            if self.position >= self.samples.len() {
+                return None;
             }
-            Some(mixed)
-        } else {
-            Some(y_current)
+
+            // Pull one frame out of the source PCM. If we're short at the end
+            // of the file, zero-pad — keeps the limiter happy.
+            for i in 0..channels {
+                self.frame_in[i] = if self.position + i < self.samples.len() {
+                    self.samples[self.position + i]
+                } else {
+                    0.0
+                };
+            }
+            self.position += channels;
+
+            // Coefficient check / crossfade arming.
+            self.frames_since_check += 1;
+            if self.frames_since_check >= COEFFS_CHECK_INTERVAL_FRAMES {
+                self.frames_since_check = 0;
+                let mut latest: Option<crate::dsp::ChainCoeffs> = None;
+                while let Ok(c) = self.coeffs_rx.try_recv() {
+                    latest = Some(c);
+                }
+                if let Some(new_coeffs) = latest {
+                    self.pending_chain =
+                        Some(crate::dsp::MasteringChain::with_coeffs_inheriting_state(
+                            new_coeffs,
+                            &self.chain,
+                        ));
+                    self.crossfade_remaining = COEFFS_CROSSFADE_FRAMES;
+                    self.crossfade_total = COEFFS_CROSSFADE_FRAMES;
+                }
+            }
+
+            // Process the main chain into frame_main.
+            for i in 0..channels {
+                self.frame_main[i] = self.frame_in[i];
+            }
+            self.chain.process_frame_inplace(&mut self.frame_main[..channels]);
+
+            // Process pending chain into frame_pending and mix.
+            if self.pending_chain.is_some() && self.crossfade_total > 0 {
+                for i in 0..channels {
+                    self.frame_pending[i] = self.frame_in[i];
+                }
+                let pending = self
+                    .pending_chain
+                    .as_mut()
+                    .expect("pending_chain just checked");
+                pending.process_frame_inplace(&mut self.frame_pending[..channels]);
+                let t = 1.0
+                    - (self.crossfade_remaining as f32 / self.crossfade_total as f32);
+                let inv_t = 1.0 - t;
+                for i in 0..channels {
+                    self.frame_main[i] =
+                        self.frame_main[i] * inv_t + self.frame_pending[i] * t;
+                }
+                self.crossfade_remaining = self.crossfade_remaining.saturating_sub(1);
+                if self.crossfade_remaining == 0 {
+                    self.chain = self
+                        .pending_chain
+                        .take()
+                        .expect("pending_chain just checked");
+                    self.crossfade_total = 0;
+                }
+            }
+
+            self.frame_out_pos = 0;
         }
+
+        let out = self.frame_main[self.frame_out_pos];
+        self.frame_out_pos += 1;
+        Some(out)
     }
 }
 
@@ -891,11 +941,13 @@ impl rodio::Source for MasteringSource {
         let target_frame = (pos.as_secs_f64() * self.sample_rate as f64) as usize;
         let target_sample = target_frame.saturating_mul(channels);
         self.position = target_sample.min(self.samples.len());
-        // Drop accumulated biquad state to avoid clicks across discontinuities.
+        // Drop accumulated biquad/limiter state to avoid clicks across
+        // discontinuities. Also force a frame re-fetch on the next yield.
         self.chain.reset_states();
         self.pending_chain = None;
         self.crossfade_remaining = 0;
         self.crossfade_total = 0;
+        self.frame_out_pos = channels;
         Ok(())
     }
 }

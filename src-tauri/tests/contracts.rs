@@ -421,22 +421,62 @@ fn mastering_render_creates_unique_paths_on_collision() {
 fn dsp_chain_applies_input_gain_at_default_intensity() {
     let settings = default_settings();
     let mut chain = album_mastering_studio_lib::dsp::MasteringChain::new(44_100, 1, &settings);
-    let original = vec![0.1_f32, 0.2, 0.3, -0.1, -0.2, -0.3, 0.15, -0.25];
+    // Generate ~46 ms of audio (2048 samples) so we comfortably clear the
+    // limiter's 3 ms lookahead warmup.
+    let original: Vec<f32> = (0..2048)
+        .map(|i| 0.2 * (i as f32 / 44_100.0 * 2.0 * std::f32::consts::PI * 200.0).sin())
+        .collect();
     let mut samples = original.clone();
     chain.process_interleaved(&mut samples, 1);
 
     assert!(samples.iter().all(|s| s.is_finite()));
-    let input_rms = rms(&original);
-    let output_rms = rms(&samples);
+
+    // Skip the limiter's lookahead-delayed warmup region (~3 ms + slack).
+    let warmup = ((3.0e-3 * 44_100.0) as usize) + 16;
+    let steady = &samples[warmup..];
+    let original_steady = &original[warmup..];
+    let input_rms = rms(original_steady);
+    let output_rms = rms(steady);
     assert!(
         output_rms > input_rms,
-        "expected mastered RMS {output_rms} > input RMS {input_rms} due to input gain stage"
+        "expected mastered RMS {output_rms} > input RMS {input_rms} after limiter warmup"
     );
     let ceiling_lin = 10.0_f32.powf(-1.0 / 20.0);
-    let max_abs = samples.iter().map(|s| s.abs()).fold(0.0_f32, f32::max);
+    let max_abs = steady.iter().map(|s| s.abs()).fold(0.0_f32, f32::max);
     assert!(
-        max_abs <= ceiling_lin + 0.05,
-        "expected soft-clip to bound output near ceiling, got max {max_abs}"
+        max_abs <= ceiling_lin + 0.01,
+        "expected limiter to bound output at ceiling {ceiling_lin}, got max {max_abs}"
+    );
+}
+
+#[test]
+fn limiter_keeps_loud_signal_under_ceiling() {
+    let mut settings = default_settings();
+    settings.advanced.ceiling_dbtp = Some(-1.0);
+    settings.intensity = 1.0; // push the input gain hard
+    let mut chain = album_mastering_studio_lib::dsp::MasteringChain::new(44_100, 1, &settings);
+
+    // A loud near-full-scale sine. Without the limiter, the input-gain stage
+    // would push this far above 0 dBFS; with the limiter it must come out
+    // under the -1 dBFS ceiling.
+    let samples_in: Vec<f32> = (0..4096)
+        .map(|i| 0.9 * (i as f32 / 44_100.0 * 2.0 * std::f32::consts::PI * 440.0).sin())
+        .collect();
+    let mut samples = samples_in.clone();
+    chain.process_interleaved(&mut samples, 1);
+
+    let warmup = ((3.0e-3 * 44_100.0) as usize) + 16;
+    let steady = &samples[warmup..];
+    let ceiling_lin = 10.0_f32.powf(-1.0 / 20.0);
+    let max_abs = steady.iter().map(|s| s.abs()).fold(0.0_f32, f32::max);
+    assert!(
+        max_abs <= ceiling_lin + 0.005,
+        "limiter must hold peaks at {ceiling_lin}, got max {max_abs}"
+    );
+    // It should also actually be loud — the limiter is reducing, not silencing.
+    assert!(
+        steady.iter().any(|s| s.abs() > ceiling_lin * 0.7),
+        "limiter must not over-attenuate; expected some samples near the ceiling"
     );
 }
 

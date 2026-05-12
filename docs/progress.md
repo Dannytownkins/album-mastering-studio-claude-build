@@ -730,3 +730,52 @@ What failed or remains partial:
 Next recommended slice:
 
 Phase 8.3 (per-track override UI in album mode) or Phase 11.2 (real compressor + lookahead true-peak limiter to replace the soft-clip ceiling — biggest remaining quality unlock). 8.3 finishes Album Master to the PRODUCT.md gates; 11.2 makes the Loud preset live up to its name and tightens true-peak compliance for streaming delivery.
+
+## 2026-05-11 — Phase 11.2.a: linked-stereo lookahead limiter replaces soft-clip ceiling
+
+Goal:
+
+Replace the per-sample soft-clip with a real brick-wall limiter. Lookahead so the gain reduction starts before the peak hits the output, linked-stereo so L/R move together (no stereo shift), exponential release so it pumps gracefully. Peaks now actually stop at the configured ceiling.
+
+What changed:
+
+`dsp.rs`:
+
+- New `Limiter` struct (3 ms lookahead default, 50 ms release, configurable ceiling in dBFS). Linked-stereo: scans all samples in the ring buffer for the single max-abs peak, computes one gain factor, applies to every channel of the output frame. Instant attack (the lookahead masks the snap); exponential release toward unity gain. Preallocated `oldest_frame_buf` so the audio thread never heap-allocates.
+- `MasteringChain` is now frame-oriented:
+  - New `process_frame_inplace(frame)` runs the per-channel gain → EQ → saturation, then hands the frame to the linked-stereo `Limiter`.
+  - `process_interleaved(samples, channels)` iterates `chunks_mut(channels)` and calls `process_frame_inplace` per frame.
+  - `with_coeffs_inheriting_state` now also clones the limiter, so the Phase 11.1 chain crossfade still works without dropping the limiter's gain envelope.
+  - `reset_states` clears limiter state too.
+- The legacy per-sample `process_sample` API is preserved as a degraded fallback (it bypasses the limiter and falls back to the old soft-clip ceiling). Nothing currently routes through it after the audio-source refactor below.
+
+`audio.rs` `MasteringSource`:
+
+- Refactored from per-sample to per-frame yield. Preallocated `frame_in / frame_main / frame_pending` scratch buffers; `frame_out_pos` tracks which sample inside the current processed frame to yield next, triggering a re-fetch + process when it crosses `channels`.
+- Coefficient-check / crossfade arming counters are now frame-based (`COEFFS_CHECK_INTERVAL_FRAMES = 128` ≈ 3 ms at 44.1 kHz; `COEFFS_CROSSFADE_FRAMES = 512` ≈ 12 ms). Same wall-clock duration as before.
+- During crossfade the pending chain processes the same input frame, and the two output frames are linearly mixed by the crossfade ratio. End-of-crossfade swap moves the pending chain into the live slot.
+- `try_seek` now also forces a frame re-fetch (sets `frame_out_pos = channels`) in addition to wiping biquad + limiter state.
+
+Tests (in `src-tauri/tests/contracts.rs`):
+
+- `dsp_chain_applies_input_gain_at_default_intensity` rewritten: 2048-sample sine instead of 8 samples so the limiter's lookahead doesn't silence the whole signal. The test now skips the warmup region and asserts (RMS up) and (peaks bounded at the ceiling + small tolerance) on the steady-state slice.
+- New `limiter_keeps_loud_signal_under_ceiling`: a 0.9-amplitude 440 Hz sine through max-intensity Universal preset must come out under -1 dBFS, and must remain loud (some samples ≥ 70% of ceiling). Verifies the limiter actually limits *and* doesn't over-attenuate.
+
+Verification:
+
+- `npm run build`: clean (no frontend changes from Phase 7.2; bundle unchanged at 221 KB / 69 KB gzipped).
+- `cargo test` (from `src-tauri/`): **22/22** pass in 28.57s. The two extended/new DSP tests pass; existing 20 tests are unaffected by the chain refactor.
+- `npm run tauri dev`: deferred (manual — push intensity to 1.0 on a track with hot transients, expect peaks bounded near -1 dBFS instead of crunchy soft-clip distortion).
+
+Real-audio fixture used: the limiter's correctness check is synthetic (a loud sine with known characteristics). The MP3 round-trip still exercises the full chain end-to-end via the existing real-fixture render test.
+
+What failed or remains partial:
+
+- Limiter detects **sample peaks**, not **true peaks**. Inter-sample peaks (energy between samples that exceeds 0 dBFS even when all samples are under) can still occur — particularly after the saturation stage which generates harmonics. Phase 11.2.b will add 4× oversampled true-peak detection (likely a polyphase FIR or a fast halfband-cascade filter) so the limiter is true-peak-safe for streaming delivery.
+- 3 ms of latency at the start of every render (the limiter's warmup) — that's the limiter's lookahead delay reaching the output. For an offline render of a multi-minute track this is inaudible; for real-time playback it's about 3 ms additional roundtrip. Both acceptable; Phase 11.2.b can optionally add a 3 ms padding wash at the start of offline renders to keep total length matched to input.
+- No real compressor yet — just gain + EQ + saturation + limiter. Loud preset gets louder via input gain into the limiter (so it pumps a lot when pushed). A program-dependent compressor (attack/release/knee/ratio) lands in Phase 11.3.
+- The legacy `process_sample` API is still present and falls back to the old soft-clip. Nothing routes through it today; it's safe to delete once we've confirmed no callers re-emerge.
+
+Next recommended slice:
+
+Phase 11.2.b — 4× oversampled true-peak detection inside the limiter. Replace the sample-peak scan with a peak that uses an interpolated signal (FIR-based 4× upsample, take max of the interpolated samples, decimate back). That closes the inter-sample-peak loophole and makes the limiter actually true-peak-safe for streaming targets. Alternatively, Phase 8.3 (per-track override UI in album mode) for the next product surface win.
