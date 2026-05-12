@@ -404,6 +404,7 @@ function TrackHeader({
             </>
           )}
         </div>
+        {analysis && <AnalysisSummary analysis={analysis} />}
         {showStoryTags && analysis && (
           <StoryTags analysis={analysis} />
         )}
@@ -412,6 +413,82 @@ function TrackHeader({
         {isAnalyzing ? "Analyzing…" : analysis ? "Analyzed" : "Pending"}
       </div>
     </section>
+  );
+}
+
+/// Plain-English commentary on the analysis numbers — one line per dimension.
+/// Phase 12.1 Dan feedback: "A more prominent assessment of what was done
+/// after analyzation, even perhaps in plain English in a dropdown underneath
+/// the stats." Each line maps a numeric range to a short, non-alarmist phrase.
+function AnalysisSummary({ analysis }: { analysis: AnalysisResult }) {
+  const lines: string[] = [];
+
+  // Loudness commentary.
+  const lufs = analysis.lufs_integrated;
+  if (lufs > -8) {
+    lines.push(
+      `Very loud at ${lufs.toFixed(1)} LUFS — may sound flat vs streaming references.`,
+    );
+  } else if (lufs > -12) {
+    lines.push(`Loud at ${lufs.toFixed(1)} LUFS — streaming-loud territory.`);
+  } else if (lufs > -16) {
+    lines.push(`${lufs.toFixed(1)} LUFS — close to typical streaming targets.`);
+  } else {
+    lines.push(`${lufs.toFixed(1)} LUFS — conservative loudness, room to push.`);
+  }
+
+  // Dynamics commentary.
+  const dr = analysis.dynamic_range_lu;
+  if (dr < 5) {
+    lines.push(`Highly compressed (DR ${dr.toFixed(1)} LU) — limited dynamic contrast.`);
+  } else if (dr < 8) {
+    lines.push(`Moderately compressed (DR ${dr.toFixed(1)} LU).`);
+  } else {
+    lines.push(`Healthy dynamic range (DR ${dr.toFixed(1)} LU).`);
+  }
+
+  // Spectral commentary.
+  const high = analysis.spectral_balance.high;
+  const low = analysis.spectral_balance.low;
+  if (high > 0.35) {
+    lines.push("Bright, presence-forward spectrum.");
+  } else if (high < 0.18) {
+    lines.push("Dark, low-mid-focused spectrum.");
+  } else if (low > 0.45) {
+    lines.push("Low-heavy spectrum.");
+  } else {
+    lines.push("Balanced spectrum.");
+  }
+
+  // Stereo width commentary.
+  const w = analysis.stereo_width;
+  if (w > 0.7) {
+    lines.push("Wide stereo image.");
+  } else if (w < 0.3) {
+    lines.push("Narrow / mono-leaning stereo image.");
+  } else {
+    lines.push("Standard stereo image.");
+  }
+
+  // True peak commentary.
+  const tp = analysis.true_peak_dbtp;
+  if (tp > -0.1) {
+    lines.push(`True peak ${tp.toFixed(2)} dBTP — at or above the digital ceiling, risky.`);
+  } else if (tp > -1.0) {
+    lines.push(`True peak ${tp.toFixed(2)} dBTP — fine digitally, lossy codecs may overshoot.`);
+  } else {
+    lines.push(`True peak ${tp.toFixed(2)} dBTP — comfortable headroom.`);
+  }
+
+  return (
+    <details className="analysis-summary">
+      <summary>What this means</summary>
+      <ul>
+        {lines.map((line, i) => (
+          <li key={i}>{line}</li>
+        ))}
+      </ul>
+    </details>
   );
 }
 
@@ -993,13 +1070,9 @@ function StaleBar({
         className="ghost-btn"
         onClick={onUpdate}
         disabled={isRendering}
-        title={
-          stale
-            ? "Render an offline preview WAV with current settings (for auditing in another player)"
-            : "Re-render the offline preview WAV"
-        }
+        title="Render a temporary WAV with the current settings so you can audit it in another player or DAW. Not required for live audition — the Mastered button above plays through the chain in real time."
       >
-        {stale ? "Render preview WAV" : "Re-render preview"}
+        {stale ? "Render audit WAV" : "Re-render audit WAV"}
       </button>
     </section>
   );

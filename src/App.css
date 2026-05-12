@@ -464,6 +464,41 @@ button.primary:disabled {
   white-space: nowrap;
 }
 
+.analysis-summary {
+  margin-top: 0.5rem;
+  font-size: 0.78rem;
+  color: var(--text-2);
+}
+
+.analysis-summary > summary {
+  cursor: pointer;
+  user-select: none;
+  display: inline-block;
+  padding: 0.15rem 0.4rem;
+  border: 1px solid var(--border-strong);
+  border-radius: 3px;
+  background: var(--bg-2);
+  color: var(--text-1);
+  font-size: 0.72rem;
+  letter-spacing: 0.03em;
+}
+
+.analysis-summary > summary:hover {
+  background: var(--bg-3, var(--bg-2));
+}
+
+.analysis-summary > ul {
+  list-style: none;
+  padding: 0.55rem 0 0 0;
+  margin: 0;
+}
+
+.analysis-summary > ul > li {
+  padding: 0.12rem 0;
+  color: var(--text-1);
+  line-height: 1.35;
+}
+
 .story-tags {
   display: flex;
   gap: 0.4rem;
