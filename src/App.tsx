@@ -1,109 +1,764 @@
-import { useState } from "react";
-import type { AnalysisResult, ImportedTrack } from "./bindings";
-import { api } from "./lib/api";
+import { useTrackMaster } from "./hooks/useTrackMaster";
+import type {
+  AnalysisResult,
+  ImportedTrack,
+  MasteringSettings,
+  Preset,
+  WaveformPeaks,
+  QualityCheck,
+  QualityLevel,
+} from "./bindings";
+import type { ExportReceipt, PlaybackKindUI } from "./hooks/useTrackMaster";
+import "./App.css";
+
+const PRESET_OPTIONS: { value: Preset; label: string; blurb: string }[] = [
+  { value: { kind: "universal" }, label: "Universal", blurb: "Safe, well-rounded default" },
+  { value: { kind: "clarity" }, label: "Clarity", blurb: "Vocal/upper-mid definition" },
+  { value: { kind: "tape" }, label: "Tape", blurb: "Saturation, glue, softer top" },
+  { value: { kind: "spatial" }, label: "Spatial", blurb: "Width and depth" },
+  { value: { kind: "oomph" }, label: "Oomph", blurb: "Low-end weight, punch" },
+  { value: { kind: "warmth" }, label: "Warmth", blurb: "Fuller, smoother body" },
+  { value: { kind: "punch" }, label: "Punch", blurb: "Transient impact" },
+  { value: { kind: "loud" }, label: "Loud", blurb: "Density + level, with safety" },
+];
 
 function App() {
-  const [tracks, setTracks] = useState<ImportedTrack[]>([]);
-  const [analysis, setAnalysis] = useState<AnalysisResult[]>([]);
-  const [error, setError] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
-
-  const importMockTrack = async () => {
-    setBusy(true);
-    setError(null);
-    try {
-      const imported = await api.importTracks([
-        `C:/music/Demo ${tracks.length + 1}.wav`,
-      ]);
-      setTracks((prev) => [...prev, ...imported]);
-    } catch (err) {
-      setError(String(err));
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const runAnalyze = async () => {
-    if (tracks.length === 0) return;
-    setBusy(true);
-    setError(null);
-    try {
-      const results = await api.analyzeTracks(tracks.map((t) => t.id));
-      setAnalysis(results);
-    } catch (err) {
-      setError(String(err));
-    } finally {
-      setBusy(false);
-    }
-  };
+  const tm = useTrackMaster();
 
   return (
-    <main className="placeholder">
-      <h1>Album Mastering Studio</h1>
-      <p className="tagline">Private Windows desktop mastering app.</p>
+    <div className="app">
+      <Sidebar
+        tracks={tm.tracks}
+        selectedId={tm.selectedTrackId}
+        onSelect={tm.selectTrack}
+        onRemove={tm.removeTrack}
+        onAdd={tm.openImportDialog}
+        isAnalyzing={tm.isAnalyzing}
+      />
+      <main className="workspace">
+        {tm.selectedTrack ? (
+          <TrackMaster tm={tm} />
+        ) : (
+          <EmptyState onAdd={tm.openImportDialog} />
+        )}
+      </main>
+      {tm.error && <Toast message={tm.error} onClose={tm.clearError} />}
+      {tm.lastExportReceipt && (
+        <ExportReceiptCard
+          receipt={tm.lastExportReceipt}
+          onClose={tm.clearExportReceipt}
+        />
+      )}
+    </div>
+  );
+}
 
-      <section className="phase-block">
-        <h2>Phase 1 — IPC proof</h2>
-        <p>
-          The Track Master surface is built in Phase 2. This screen verifies
-          that the frontend can call Rust-side typed commands and receive
-          well-shaped responses.
-        </p>
+function Sidebar({
+  tracks,
+  selectedId,
+  onSelect,
+  onRemove,
+  onAdd,
+  isAnalyzing,
+}: {
+  tracks: ImportedTrack[];
+  selectedId: string | null;
+  onSelect: (id: string) => void;
+  onRemove: (id: string) => void;
+  onAdd: () => void;
+  isAnalyzing: boolean;
+}) {
+  return (
+    <aside className="sidebar">
+      <header className="sidebar-head">
+        <span className="brand">Album Mastering Studio</span>
+        <span className="mode-pill">Track Master</span>
+      </header>
 
-        <div className="actions">
-          <button type="button" onClick={importMockTrack} disabled={busy}>
-            Import mock track
+      <div className="sidebar-section">
+        <span className="section-label">Tracks ({tracks.length})</span>
+        <button type="button" className="add-btn" onClick={onAdd}>
+          + Add files
+        </button>
+      </div>
+
+      <ul className="track-list">
+        {tracks.length === 0 && (
+          <li className="track-empty">No tracks yet. Drop or add audio.</li>
+        )}
+        {tracks.map((t) => (
+          <li
+            key={t.id}
+            className={"track-row " + (t.id === selectedId ? "active" : "")}
+          >
+            <button
+              type="button"
+              className="track-pick"
+              onClick={() => onSelect(t.id)}
+              title={t.path}
+            >
+              <span className="track-name">{t.display_name}</span>
+              <span className="track-meta">.{t.source_format}</span>
+            </button>
+            <button
+              type="button"
+              className="track-remove"
+              onClick={() => onRemove(t.id)}
+              aria-label="Remove track"
+              title="Remove"
+            >
+              ×
+            </button>
+          </li>
+        ))}
+      </ul>
+
+      {isAnalyzing && <div className="sidebar-status">Analyzing…</div>}
+    </aside>
+  );
+}
+
+function EmptyState({ onAdd }: { onAdd: () => void }) {
+  return (
+    <div className="empty-state">
+      <h1>Drop audio, analyze, export.</h1>
+      <p>
+        Album Mastering Studio masters one track or a full album. Universal-first
+        — no genre wizard, no jargon walls.
+      </p>
+      <button type="button" className="primary" onClick={onAdd}>
+        Add files
+      </button>
+      <p className="empty-foot">
+        See <code>docs/PRODUCT.md</code> for the product canon.
+      </p>
+    </div>
+  );
+}
+
+function TrackMaster({ tm }: { tm: ReturnType<typeof useTrackMaster> }) {
+  const track = tm.selectedTrack;
+  if (!track) return null;
+  return (
+    <>
+      <TrackHeader
+        track={track}
+        analysis={tm.selectedAnalysis}
+        isAnalyzing={tm.isAnalyzing}
+      />
+      <WaveformView
+        peaks={tm.selectedWaveform}
+        isLoading={tm.isLoadingWaveform}
+      />
+      <Transport
+        isPlaying={tm.transport.isPlaying}
+        playbackKind={tm.transport.playbackKind}
+        loop={tm.transport.loop}
+        volumeMatch={tm.transport.volumeMatch}
+        durationSec={track.duration_seconds ?? 180}
+        currentSec={tm.transport.currentTimeSec}
+        onPlayPause={tm.togglePlay}
+        onPlaybackKindChange={tm.setPlaybackKind}
+        onLoopToggle={tm.toggleLoop}
+        onVolumeMatchChange={tm.setVolumeMatch}
+      />
+      <PresetTiles
+        selected={tm.selectedSettings.preset}
+        onChange={tm.setPreset}
+      />
+      <Macros
+        settings={tm.selectedSettings}
+        onIntensity={tm.setIntensity}
+        onEq={tm.setEqBand}
+      />
+      <StaleBar
+        stale={tm.previewStale}
+        isRendering={tm.isRendering}
+        onUpdate={tm.updatePreview}
+      />
+      <ExportSection
+        canExport={!!tm.selectedAnalysis}
+        isExporting={tm.isExporting}
+        advancedOpen={tm.advancedOpen}
+        onToggleAdvanced={tm.toggleAdvanced}
+        onExport={tm.exportMaster}
+      />
+      {tm.advancedOpen && (
+        <AdvancedPanel
+          settings={tm.selectedSettings}
+          onAdvanced={tm.setAdvanced}
+        />
+      )}
+    </>
+  );
+}
+
+function TrackHeader({
+  track,
+  analysis,
+  isAnalyzing,
+}: {
+  track: ImportedTrack;
+  analysis: AnalysisResult | undefined;
+  isAnalyzing: boolean;
+}) {
+  return (
+    <section className="track-header">
+      <div>
+        <h1 className="track-title">{track.display_name}</h1>
+        <div className="track-sub">
+          <span>.{track.source_format}</span>
+          {analysis && (
+            <>
+              <span className="dot">•</span>
+              <span>LUFS {analysis.lufs_integrated.toFixed(1)}</span>
+              <span className="dot">•</span>
+              <span>TP {analysis.true_peak_dbtp.toFixed(2)} dBTP</span>
+              <span className="dot">•</span>
+              <span>DR {analysis.dynamic_range_lu.toFixed(1)} LU</span>
+              <span className="dot">•</span>
+              <span>W {analysis.stereo_width.toFixed(2)}</span>
+            </>
+          )}
+        </div>
+      </div>
+      <div className="track-badge">
+        {isAnalyzing ? "Analyzing…" : analysis ? "Analyzed" : "Pending"}
+      </div>
+    </section>
+  );
+}
+
+function WaveformView({
+  peaks,
+  isLoading,
+}: {
+  peaks: WaveformPeaks | undefined;
+  isLoading: boolean;
+}) {
+  if (isLoading || !peaks) {
+    return (
+      <section className="wf-card">
+        <div className="wf-empty">{isLoading ? "Loading waveform…" : "No waveform yet."}</div>
+      </section>
+    );
+  }
+  const channel = peaks.channels[0] ?? [];
+  const W = 1000;
+  const H = 240;
+  return (
+    <section className="wf-card">
+      <svg className="wf" viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none">
+        {channel.map((v, i) => {
+          const x = (i / channel.length) * W;
+          const barW = (W / channel.length) * 0.85;
+          const barH = v * (H * 0.88);
+          const y = (H - barH) / 2;
+          return <rect key={i} x={x} y={y} width={barW} height={barH} rx={0.5} />;
+        })}
+      </svg>
+    </section>
+  );
+}
+
+function Transport({
+  isPlaying,
+  playbackKind,
+  loop,
+  volumeMatch,
+  durationSec,
+  currentSec,
+  onPlayPause,
+  onPlaybackKindChange,
+  onLoopToggle,
+  onVolumeMatchChange,
+}: {
+  isPlaying: boolean;
+  playbackKind: PlaybackKindUI;
+  loop: boolean;
+  volumeMatch: boolean;
+  durationSec: number;
+  currentSec: number;
+  onPlayPause: () => void;
+  onPlaybackKindChange: (kind: PlaybackKindUI) => void;
+  onLoopToggle: () => void;
+  onVolumeMatchChange: (on: boolean) => void;
+}) {
+  return (
+    <section className="transport">
+      <div className="transport-left">
+        <button
+          type="button"
+          className="play-btn"
+          onClick={onPlayPause}
+          aria-label={isPlaying ? "Pause" : "Play"}
+        >
+          {isPlaying ? "⏸" : "▶"}
+        </button>
+        <span className="time">
+          {formatTime(currentSec)} <span className="dim">/ {formatTime(durationSec)}</span>
+        </span>
+        <button
+          type="button"
+          className={"icon-btn " + (loop ? "on" : "")}
+          onClick={onLoopToggle}
+          title="Loop region"
+        >
+          ⟲
+        </button>
+      </div>
+      <div className="transport-right">
+        <div className="ab-toggle">
+          <button
+            type="button"
+            className={playbackKind === "source" ? "on" : ""}
+            onClick={() => onPlaybackKindChange("source")}
+          >
+            Original
           </button>
           <button
             type="button"
-            onClick={runAnalyze}
-            disabled={busy || tracks.length === 0}
+            className={playbackKind === "master" ? "on" : ""}
+            onClick={() => onPlaybackKindChange("master")}
           >
-            Analyze
+            Mastered
           </button>
         </div>
-
-        {error && <p className="err">Error: {error}</p>}
-
-        {tracks.length > 0 && (
-          <div className="card">
-            <h3>Imported tracks ({tracks.length})</h3>
-            <ul>
-              {tracks.map((t) => (
-                <li key={t.id}>
-                  <strong>{t.display_name}</strong>{" "}
-                  <span className="hint">({t.source_format})</span>
-                </li>
-              ))}
-            </ul>
-          </div>
-        )}
-
-        {analysis.length > 0 && (
-          <div className="card">
-            <h3>Analysis (mock values)</h3>
-            <ul>
-              {analysis.map((a) => (
-                <li key={a.track_id}>
-                  <strong>{a.track_id.slice(0, 8)}…</strong>
-                  <div className="metering">
-                    <span>LUFS {a.lufs_integrated.toFixed(1)}</span>
-                    <span>TP {a.true_peak_dbtp.toFixed(2)} dBTP</span>
-                    <span>DR {a.dynamic_range_lu.toFixed(1)} LU</span>
-                    <span>W {a.stereo_width.toFixed(2)}</span>
-                  </div>
-                </li>
-              ))}
-            </ul>
-          </div>
-        )}
-      </section>
-
-      <p className="footer">
-        See <code>docs/IMPLEMENTATION_PLAN.md</code> for the phase map.
-      </p>
-    </main>
+        <label className="vm-toggle" title="Aligns playback loudness for fair tone comparison. Export level is unchanged.">
+          <input
+            type="checkbox"
+            checked={volumeMatch}
+            onChange={(e) => onVolumeMatchChange(e.target.checked)}
+          />
+          <span>Volume Match</span>
+        </label>
+      </div>
+    </section>
   );
+}
+
+function PresetTiles({
+  selected,
+  onChange,
+}: {
+  selected: Preset;
+  onChange: (preset: Preset) => void;
+}) {
+  return (
+    <section className="presets">
+      <div className="section-head">
+        <span className="section-label">Preset</span>
+      </div>
+      <div className="tile-row">
+        {PRESET_OPTIONS.map((p) => {
+          const active = isPresetActive(selected, p.value);
+          return (
+            <button
+              key={p.label}
+              type="button"
+              className={"tile " + (active ? "active" : "")}
+              onClick={() => onChange(p.value)}
+            >
+              <span className="tile-label">{p.label}</span>
+              <span className="tile-blurb">{p.blurb}</span>
+            </button>
+          );
+        })}
+      </div>
+    </section>
+  );
+}
+
+function isPresetActive(a: Preset, b: Preset): boolean {
+  if (a.kind === "custom" && b.kind === "custom") return a.id === b.id;
+  return a.kind === b.kind;
+}
+
+function Macros({
+  settings,
+  onIntensity,
+  onEq,
+}: {
+  settings: MasteringSettings;
+  onIntensity: (v: number) => void;
+  onEq: (band: "low" | "mid" | "high", db: number) => void;
+}) {
+  return (
+    <section className="macros">
+      <Slider
+        label="Intensity"
+        value={settings.intensity}
+        min={0}
+        max={1}
+        step={0.01}
+        format={(v) => v.toFixed(2)}
+        onChange={onIntensity}
+      />
+      <Slider
+        label="Low"
+        value={settings.eq_low_db}
+        min={-6}
+        max={6}
+        step={0.1}
+        format={(v) => `${v > 0 ? "+" : ""}${v.toFixed(1)} dB`}
+        onChange={(v) => onEq("low", v)}
+      />
+      <Slider
+        label="Mid"
+        value={settings.eq_mid_db}
+        min={-6}
+        max={6}
+        step={0.1}
+        format={(v) => `${v > 0 ? "+" : ""}${v.toFixed(1)} dB`}
+        onChange={(v) => onEq("mid", v)}
+      />
+      <Slider
+        label="High"
+        value={settings.eq_high_db}
+        min={-6}
+        max={6}
+        step={0.1}
+        format={(v) => `${v > 0 ? "+" : ""}${v.toFixed(1)} dB`}
+        onChange={(v) => onEq("high", v)}
+      />
+    </section>
+  );
+}
+
+function Slider({
+  label,
+  value,
+  min,
+  max,
+  step,
+  format,
+  onChange,
+}: {
+  label: string;
+  value: number;
+  min: number;
+  max: number;
+  step: number;
+  format: (v: number) => string;
+  onChange: (v: number) => void;
+}) {
+  return (
+    <div className="slider-row">
+      <label className="slider-label">{label}</label>
+      <input
+        type="range"
+        min={min}
+        max={max}
+        step={step}
+        value={value}
+        onChange={(e) => onChange(parseFloat(e.target.value))}
+        className="slider-input"
+      />
+      <span className="slider-value">{format(value)}</span>
+    </div>
+  );
+}
+
+function StaleBar({
+  stale,
+  isRendering,
+  onUpdate,
+}: {
+  stale: boolean;
+  isRendering: boolean;
+  onUpdate: () => void;
+}) {
+  return (
+    <section className="stale-bar">
+      <span className={"stale-dot " + (stale ? "stale" : "fresh")} aria-hidden />
+      <span className="stale-text">
+        {isRendering
+          ? "Rendering preview…"
+          : stale
+            ? "Preview is stale — settings changed since last render."
+            : "Preview matches current settings."}
+      </span>
+      <button
+        type="button"
+        className="ghost-btn"
+        onClick={onUpdate}
+        disabled={isRendering || !stale}
+      >
+        Update preview
+      </button>
+    </section>
+  );
+}
+
+function ExportSection({
+  canExport,
+  isExporting,
+  advancedOpen,
+  onToggleAdvanced,
+  onExport,
+}: {
+  canExport: boolean;
+  isExporting: boolean;
+  advancedOpen: boolean;
+  onToggleAdvanced: () => void;
+  onExport: () => void;
+}) {
+  return (
+    <section className="export-bar">
+      <button
+        type="button"
+        className="primary export-btn"
+        onClick={onExport}
+        disabled={!canExport || isExporting}
+      >
+        {isExporting ? "Exporting…" : "Export Master"}
+      </button>
+      <button type="button" className="advanced-toggle" onClick={onToggleAdvanced}>
+        {advancedOpen ? "▲ Hide advanced" : "▼ Advanced"}
+      </button>
+    </section>
+  );
+}
+
+function AdvancedPanel({
+  settings,
+  onAdvanced,
+}: {
+  settings: MasteringSettings;
+  onAdvanced: (adv: MasteringSettings["advanced"]) => void;
+}) {
+  const a = settings.advanced;
+  const update = (
+    field: keyof MasteringSettings["advanced"],
+    value: number | null,
+  ) => {
+    onAdvanced({ ...a, [field]: value });
+  };
+  return (
+    <section className="advanced">
+      <div className="section-head">
+        <span className="section-label">Advanced</span>
+      </div>
+      <div className="advanced-grid">
+        <NumberField
+          label="LUFS target"
+          value={a.lufs_offset_db}
+          step={0.5}
+          min={-24}
+          max={-6}
+          format={(v) => `${v.toFixed(1)} LUFS`}
+          onChange={(v) => update("lufs_offset_db", v)}
+        />
+        <NumberField
+          label="Ceiling"
+          value={a.ceiling_dbtp}
+          step={0.1}
+          min={-3}
+          max={0}
+          format={(v) => `${v.toFixed(1)} dBTP`}
+          onChange={(v) => update("ceiling_dbtp", v)}
+        />
+        <NumberField
+          label="Width"
+          value={a.width}
+          step={0.05}
+          min={0}
+          max={1.5}
+          format={(v) => v.toFixed(2)}
+          onChange={(v) => update("width", v)}
+        />
+        <NumberField
+          label="Warmth"
+          value={a.warmth}
+          step={0.05}
+          min={0}
+          max={1}
+          format={(v) => v.toFixed(2)}
+          onChange={(v) => update("warmth", v)}
+        />
+        <NumberField
+          label="Presence/Air"
+          value={a.presence_air}
+          step={0.05}
+          min={0}
+          max={1}
+          format={(v) => v.toFixed(2)}
+          onChange={(v) => update("presence_air", v)}
+        />
+        <NumberField
+          label="Compression"
+          value={a.compression_density}
+          step={0.05}
+          min={0}
+          max={1}
+          format={(v) => v.toFixed(2)}
+          onChange={(v) => update("compression_density", v)}
+        />
+        <SelectField
+          label="Bit depth"
+          value={a.bit_depth}
+          options={[
+            { value: null, label: "Auto" },
+            { value: 16, label: "16-bit" },
+            { value: 24, label: "24-bit" },
+            { value: 32, label: "32-bit float" },
+          ]}
+          onChange={(v) => update("bit_depth", v)}
+        />
+        <SelectField
+          label="Sample rate"
+          value={a.target_sample_rate}
+          options={[
+            { value: null, label: "Source" },
+            { value: 44100, label: "44.1 kHz" },
+            { value: 48000, label: "48 kHz" },
+            { value: 88200, label: "88.2 kHz" },
+            { value: 96000, label: "96 kHz" },
+          ]}
+          onChange={(v) => update("target_sample_rate", v)}
+        />
+      </div>
+    </section>
+  );
+}
+
+function NumberField({
+  label,
+  value,
+  min,
+  max,
+  step,
+  format,
+  onChange,
+}: {
+  label: string;
+  value: number | null;
+  min: number;
+  max: number;
+  step: number;
+  format: (v: number) => string;
+  onChange: (v: number | null) => void;
+}) {
+  const effective = value ?? min;
+  return (
+    <div className="adv-field">
+      <span className="adv-label">{label}</span>
+      <div className="adv-control">
+        <input
+          type="range"
+          min={min}
+          max={max}
+          step={step}
+          value={effective}
+          onChange={(e) => onChange(parseFloat(e.target.value))}
+          disabled={value === null}
+        />
+        <button
+          type="button"
+          className="micro-btn"
+          onClick={() => onChange(value === null ? (min + max) / 2 : null)}
+        >
+          {value === null ? "Set" : "Auto"}
+        </button>
+        <span className="adv-value">{value === null ? "Auto" : format(value)}</span>
+      </div>
+    </div>
+  );
+}
+
+function SelectField({
+  label,
+  value,
+  options,
+  onChange,
+}: {
+  label: string;
+  value: number | null;
+  options: { value: number | null; label: string }[];
+  onChange: (v: number | null) => void;
+}) {
+  return (
+    <div className="adv-field">
+      <span className="adv-label">{label}</span>
+      <select
+        className="adv-select"
+        value={value === null ? "" : String(value)}
+        onChange={(e) => {
+          const v = e.target.value;
+          onChange(v === "" ? null : Number(v));
+        }}
+      >
+        {options.map((o) => (
+          <option key={o.label} value={o.value === null ? "" : String(o.value)}>
+            {o.label}
+          </option>
+        ))}
+      </select>
+    </div>
+  );
+}
+
+function Toast({
+  message,
+  onClose,
+}: {
+  message: string;
+  onClose: () => void;
+}) {
+  return (
+    <div className="toast">
+      <span>{message}</span>
+      <button type="button" className="toast-close" onClick={onClose} aria-label="Dismiss">
+        ×
+      </button>
+    </div>
+  );
+}
+
+function ExportReceiptCard({
+  receipt,
+  onClose,
+}: {
+  receipt: ExportReceipt;
+  onClose: () => void;
+}) {
+  return (
+    <div className="receipt-backdrop" onClick={onClose}>
+      <div className="receipt" onClick={(e) => e.stopPropagation()}>
+        <header>
+          <h2>Export complete</h2>
+          <button type="button" className="toast-close" onClick={onClose} aria-label="Close">
+            ×
+          </button>
+        </header>
+        <p className="receipt-path">{receipt.outputPath}</p>
+        <div className="receipt-checks">
+          {receipt.checks.map((c, i) => (
+            <CheckRow key={i} check={c} />
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function CheckRow({ check }: { check: QualityCheck }) {
+  return (
+    <div className={"check-row level-" + levelClass(check.level)}>
+      <span className="check-level">{check.level}</span>
+      <span className="check-msg">{check.message}</span>
+    </div>
+  );
+}
+
+function levelClass(level: QualityLevel): string {
+  return level;
+}
+
+function formatTime(sec: number): string {
+  const m = Math.floor(sec / 60);
+  const s = Math.floor(sec % 60);
+  return `${m}:${s.toString().padStart(2, "0")}`;
 }
 
 export default App;
