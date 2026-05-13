@@ -1,3 +1,4 @@
+pub mod album;
 pub mod audio;
 pub mod dsp;
 pub mod engine;
