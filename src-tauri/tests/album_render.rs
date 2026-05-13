@@ -92,6 +92,57 @@ fn write_wav_mono(path: &PathBuf, sample_rate: u32, samples: &[f32]) {
     writer.finalize().expect("finalize");
 }
 
+/// Single-track album: no transitions, one per-track WAV, one album.wav.
+/// Confirms the render path doesn't choke on `transitions.len() == 0`.
+#[test]
+fn album_render_single_track_edge() {
+    let tmp = TempDir::new().expect("tempdir");
+    let sr = 48_000_u32;
+    let one_second_frames = sr as usize;
+    let omega = 2.0 * std::f32::consts::PI * 440.0 / sr as f32;
+    let samples: Vec<f32> = (0..one_second_frames)
+        .map(|i| 0.3 * (omega * i as f32).sin())
+        .collect();
+    let path = tmp.path().join("solo.wav");
+    write_wav_mono(&path, sr, &samples);
+
+    let analysis = fake_analysis("solo", TrackRole::AlbumTrack, None, 0.5, 0.5);
+    let analyses = [analysis];
+    let refs: Vec<&AnalysisResult> = analyses.iter().collect();
+    let plan = album::build_album_plan(
+        "Solo".to_string(),
+        &refs,
+        &[1.0],
+        AlbumArc::Preset {
+            preset: AlbumArcKind::Cinematic,
+        },
+        1.0,
+    );
+    assert_eq!(plan.tracks.len(), 1);
+    assert_eq!(plan.transitions.len(), 0);
+
+    let request = AlbumPlanRenderRequest {
+        plan,
+        tracks: vec![AlbumTrackRenderInput {
+            track_id: TrackId("solo".to_string()),
+            source_path: path.to_string_lossy().to_string(),
+            settings: default_master_settings(),
+        }],
+    };
+    let out_dir = tmp.path().join("solo_out");
+    let report = render_album_plan_impl(&request, &out_dir, None).expect("render");
+    assert_eq!(report.tracks.len(), 1);
+    assert!(std::path::Path::new(&report.album_wav_path).exists());
+    let reader = hound::WavReader::open(&report.album_wav_path).expect("open");
+    // 1 s of input, no gap, ≈ 1 s of output.
+    let duration_frames = reader.duration();
+    assert!(
+        duration_frames >= sr,
+        "single-track album should be ≥ 1 s; got {} frames",
+        duration_frames
+    );
+}
+
 #[test]
 fn album_render_three_tracks_smoke() {
     let tmp = TempDir::new().expect("tempdir");
