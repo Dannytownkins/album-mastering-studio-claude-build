@@ -1033,6 +1033,9 @@ fn sanitize_for_filename(s: &str) -> String {
 fn apply_album_shadow(
     settings: &MasteringSettings,
     entry: &AlbumTrackEntry,
+    album_intensity: f32,
+    curve_value: f32,
+    energy_density: f32,
 ) -> MasteringSettings {
     let mut shadowed = settings.clone();
     let base_target = shadowed
@@ -1042,6 +1045,33 @@ fn apply_album_shadow(
         Some(base_target + entry.arc_lufs_offset_db);
     shadowed.intensity =
         (shadowed.intensity * entry.intensity_scale).clamp(0.0, 1.5);
+
+    // Phase B+ Step 7: apply the per-character mastering bias on top of
+    // the user's per-track settings. EQ band offsets add to the existing
+    // user EQ; width / warmth coerce None to a neutral baseline (1.0 /
+    // 0.0) before the offset lands; intensity gets a final bias add then
+    // re-clamp.
+    let bias = crate::album::mastering_bias_for(
+        entry.album_character,
+        energy_density,
+        curve_value,
+        album_intensity,
+    );
+    shadowed.eq_low_db += bias.low_end_db;
+    shadowed.eq_low_mid_db += bias.low_mid_db;
+    shadowed.eq_mid_db += bias.presence_db;
+    shadowed.eq_high_db += bias.air_db;
+    if bias.width_offset.abs() > 1.0e-4 {
+        let base_width = shadowed.advanced.width.unwrap_or(1.0);
+        shadowed.advanced.width = Some((base_width + bias.width_offset).clamp(0.0, 2.0));
+    }
+    if bias.warmth_offset.abs() > 1.0e-4 {
+        let base_warmth = shadowed.advanced.warmth.unwrap_or(0.0);
+        shadowed.advanced.warmth = Some((base_warmth + bias.warmth_offset).clamp(0.0, 1.0));
+    }
+    shadowed.intensity =
+        (shadowed.intensity + bias.intensity_offset).clamp(0.0, 1.5);
+
     shadowed
 }
 
@@ -1134,7 +1164,28 @@ pub fn render_album_plan_impl(
             )));
         }
 
-        let shadowed = apply_album_shadow(&input.settings, entry);
+        // Per-track curve value for the per-character mastering bias.
+        // For Preset arcs we resample the 6-point curve to actual track
+        // count; for Custom arcs we use a neutral 0.5 (no curve-driven
+        // air-band swing in the bias).
+        let curve_value = match &request.plan.arc {
+            AlbumArc::Preset { preset } => {
+                let curve =
+                    crate::album::resample_arc_curve(preset.curve(), total_tracks);
+                curve.get(i).copied().unwrap_or(0.5)
+            }
+            AlbumArc::Custom { .. } => 0.5,
+        };
+        // Energy density for the bias presence_db energy-gate. Default
+        // 0.5 (neutral) when the analysis didn't produce a score.
+        let energy_density = 0.5_f32;
+        let shadowed = apply_album_shadow(
+            &input.settings,
+            entry,
+            request.plan.intensity,
+            curve_value,
+            energy_density,
+        );
         let mut samples = pcm.samples;
         let channels_usize = pcm.channels.max(1) as usize;
         let mut chain = crate::dsp::MasteringChain::new(

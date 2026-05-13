@@ -185,6 +185,84 @@ fn label_from_name(name: &str) -> Option<AlbumCharacter> {
     }
 }
 
+/// Phase B+ Step 7 — per-character EQ + width + warmth + intensity
+/// moves, ported from Codex's `arc.py::_mastering_bias` (lines 302–352).
+///
+/// Each per-track field is in dB or a unitless offset; the render layer
+/// applies them ON TOP of the user's per-track `MasteringSettings`
+/// (user EQ + preset baseline + this album-character bias all stack).
+///
+/// `None` character → all-zero bias (track passes through with only the
+/// LUFS / intensity_scale shadow from the arc planner).
+#[derive(Debug, Clone, Copy, Default)]
+pub struct MasteringBias {
+    pub low_end_db: f32,
+    pub low_mid_db: f32,
+    pub presence_db: f32,
+    pub air_db: f32,
+    pub width_offset: f32,
+    pub warmth_offset: f32,
+    pub intensity_offset: f32,
+}
+
+/// Compute the per-track mastering bias for a given album character.
+///
+/// `energy` is the track's `energy_density_score` (defaults to 0.5).
+/// `curve_value` is the resampled arc curve at this track's position
+/// (defaults to 0.5 = neutral). `intensity` is the album-level intensity.
+pub fn mastering_bias_for(
+    character: Option<AlbumCharacter>,
+    energy: f32,
+    curve_value: f32,
+    intensity: f32,
+) -> MasteringBias {
+    let Some(c) = character else {
+        return MasteringBias::default();
+    };
+    match c {
+        AlbumCharacter::HeavyDjent => MasteringBias {
+            low_end_db: 0.35,
+            low_mid_db: -0.55,
+            // Codex: "presence pulled down at very high energy so the
+            // top doesn't get hectic, otherwise gently lifted."
+            presence_db: if energy > 0.66 { -0.20 } else { 0.15 },
+            air_db: 0.35,
+            width_offset: 0.035,
+            warmth_offset: 0.015,
+            intensity_offset: 0.24 + 0.08 * intensity,
+        },
+        AlbumCharacter::ReturnAcoustic => MasteringBias {
+            low_end_db: 0.18,
+            low_mid_db: 0.10,
+            presence_db: -0.45,
+            air_db: -0.10,
+            width_offset: -0.055,
+            warmth_offset: 0.055,
+            intensity_offset: -0.22,
+        },
+        AlbumCharacter::Transition => MasteringBias {
+            low_end_db: -0.10,
+            low_mid_db: -0.25,
+            presence_db: -0.25,
+            air_db: 0.15,
+            width_offset: 0.025,
+            warmth_offset: 0.020,
+            intensity_offset: -0.12,
+        },
+        AlbumCharacter::AcousticFolk => MasteringBias {
+            low_end_db: 0.20,
+            low_mid_db: 0.05,
+            presence_db: -0.20,
+            // Codex: "lift the air a touch at the upper end of the arc;
+            // pull it down in the quieter section."
+            air_db: if curve_value > 0.55 { 0.05 } else { -0.10 },
+            width_offset: -0.030,
+            warmth_offset: 0.035,
+            intensity_offset: -0.16,
+        },
+    }
+}
+
 /// Infer per-track album-character labels for the whole album. Two-pass:
 ///
 /// Pass 1 picks the best-scoring label per track (or filename hint when
@@ -709,6 +787,92 @@ mod tests {
         );
         assert_eq!(plan.tracks[0].arc_lufs_offset_db, -1.5);
         assert_eq!(plan.tracks[1].arc_lufs_offset_db, 2.5);
+    }
+
+    /// Per-character mastering bias table — Phase B+ Step 7. Pins the
+    /// exact Codex values so a future numeric tweak forces re-think.
+    #[test]
+    fn mastering_bias_per_character_table() {
+        let energy = 0.5;
+        let curve = 0.5;
+        let intensity = 1.0;
+
+        // Heavy: low_end +0.35, low_mid -0.55, air +0.35, width +0.035.
+        let heavy = mastering_bias_for(
+            Some(AlbumCharacter::HeavyDjent),
+            energy,
+            curve,
+            intensity,
+        );
+        assert!((heavy.low_end_db - 0.35).abs() < 1e-5);
+        assert!((heavy.low_mid_db - (-0.55)).abs() < 1e-5);
+        assert!((heavy.air_db - 0.35).abs() < 1e-5);
+        assert!((heavy.width_offset - 0.035).abs() < 1e-5);
+        // intensity_offset = 0.24 + 0.08 * 1.0 = 0.32.
+        assert!((heavy.intensity_offset - 0.32).abs() < 1e-5);
+        // Heavy presence_db energy-gated: at energy=0.5 (≤ 0.66) → +0.15.
+        assert!((heavy.presence_db - 0.15).abs() < 1e-5);
+
+        // Heavy at energy > 0.66 → presence_db = -0.20.
+        let heavy_hot = mastering_bias_for(
+            Some(AlbumCharacter::HeavyDjent),
+            0.80,
+            curve,
+            intensity,
+        );
+        assert!((heavy_hot.presence_db - (-0.20)).abs() < 1e-5);
+
+        // Return: presence -0.45, warmth +0.055, intensity -0.22.
+        let ret = mastering_bias_for(
+            Some(AlbumCharacter::ReturnAcoustic),
+            energy,
+            curve,
+            intensity,
+        );
+        assert!((ret.presence_db - (-0.45)).abs() < 1e-5);
+        assert!((ret.warmth_offset - 0.055).abs() < 1e-5);
+        assert!((ret.intensity_offset - (-0.22)).abs() < 1e-5);
+
+        // Transition: low_mid -0.25, intensity -0.12.
+        let tx = mastering_bias_for(
+            Some(AlbumCharacter::Transition),
+            energy,
+            curve,
+            intensity,
+        );
+        assert!((tx.low_mid_db - (-0.25)).abs() < 1e-5);
+        assert!((tx.intensity_offset - (-0.12)).abs() < 1e-5);
+
+        // Acoustic at curve > 0.55 → air_db = +0.05.
+        let acoustic_bright =
+            mastering_bias_for(Some(AlbumCharacter::AcousticFolk), energy, 0.7, intensity);
+        assert!((acoustic_bright.air_db - 0.05).abs() < 1e-5);
+        // Acoustic at curve <= 0.55 → air_db = -0.10.
+        let acoustic_dim =
+            mastering_bias_for(Some(AlbumCharacter::AcousticFolk), energy, 0.4, intensity);
+        assert!((acoustic_dim.air_db - (-0.10)).abs() < 1e-5);
+
+        // None → zero bias.
+        let none = mastering_bias_for(None, energy, curve, intensity);
+        assert_eq!(none.low_end_db, 0.0);
+        assert_eq!(none.low_mid_db, 0.0);
+        assert_eq!(none.presence_db, 0.0);
+        assert_eq!(none.air_db, 0.0);
+        assert_eq!(none.width_offset, 0.0);
+        assert_eq!(none.warmth_offset, 0.0);
+        assert_eq!(none.intensity_offset, 0.0);
+    }
+
+    /// Heavy intensity_offset scales with album intensity:
+    /// 0.24 + 0.08 * intensity. At album_intensity=2.0 (max) → 0.40.
+    #[test]
+    fn mastering_bias_heavy_intensity_scales_with_album_intensity() {
+        let low = mastering_bias_for(Some(AlbumCharacter::HeavyDjent), 0.5, 0.5, 0.0);
+        let mid = mastering_bias_for(Some(AlbumCharacter::HeavyDjent), 0.5, 0.5, 1.0);
+        let high = mastering_bias_for(Some(AlbumCharacter::HeavyDjent), 0.5, 0.5, 2.0);
+        assert!((low.intensity_offset - 0.24).abs() < 1e-5);
+        assert!((mid.intensity_offset - 0.32).abs() < 1e-5);
+        assert!((high.intensity_offset - 0.40).abs() < 1e-5);
     }
 
     /// Empty plan: 0 tracks, 0 transitions, intensity preserved.
