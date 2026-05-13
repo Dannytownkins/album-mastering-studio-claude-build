@@ -285,6 +285,40 @@ impl DeliveryProfile {
 // `engine.rs::arc_planner`.
 // ============================================================================
 
+/// Phase B+ — position-aware album character labels ported from Codex's
+/// `character.py`. Distinct from `TrackCharacter` which is intrinsic
+/// (Bright/Dark/Dense/Sparse/Balanced); these are inferred per-track in
+/// the context of the WHOLE album: a track may be `AcousticFolk` on
+/// its own but `ReturnAcoustic` if it sits in the back half AFTER a
+/// `HeavyDjent` track in the same album.
+///
+/// Used by the arc planner to apply per-character LUFS offsets and the
+/// per-character `mastering_bias` EQ moves. Optional — older serialized
+/// plans / analyses load with None.
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[serde(rename_all = "kebab-case")]
+pub enum AlbumCharacter {
+    AcousticFolk,
+    Transition,
+    HeavyDjent,
+    /// `AcousticFolk` whose album-position falls AFTER a `HeavyDjent`
+    /// track and in the back half. Codex's listening sessions found
+    /// these tracks needed a different (deeper) LUFS pull than a
+    /// front-half acoustic track.
+    ReturnAcoustic,
+}
+
+impl AlbumCharacter {
+    pub fn display_name(&self) -> &'static str {
+        match self {
+            Self::AcousticFolk => "Acoustic / Folk",
+            Self::Transition => "Transition",
+            Self::HeavyDjent => "Heavy / Djent",
+            Self::ReturnAcoustic => "Return / Acoustic",
+        }
+    }
+}
+
 #[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
 #[serde(rename_all = "kebab-case")]
 pub enum AlbumArcKind {
@@ -393,6 +427,13 @@ pub struct AlbumTrackEntry {
     /// Per-track intensity multiplier. `1.0` = the album-intent intensity;
     /// >1.0 pushes harder for this track; <1.0 softens.
     pub intensity_scale: f32,
+    /// Phase B+ — position-aware character label. Drives the
+    /// per-character LUFS offset (built into arc_lufs_offset_db) and
+    /// the per-character mastering_bias EQ moves at render time.
+    /// None means "no album-character signal — use intrinsic character
+    /// only / treat as a default track."
+    #[serde(default)]
+    pub album_character: Option<AlbumCharacter>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]

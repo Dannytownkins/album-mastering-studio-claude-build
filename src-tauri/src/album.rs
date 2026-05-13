@@ -47,42 +47,208 @@ pub fn resample_arc_curve(curve: [f32; 6], n: usize) -> Vec<f32> {
     out
 }
 
-/// Per-track LUFS offset driven by inferred character. Captures Codex's
-/// per-character "this section should sit a bit louder/quieter than the
-/// album-intent target" intent (`arc.py:287-299`). Codex labels
-/// (acoustic_folk / transition / heavy_djent / return_acoustic) don't map
-/// 1:1 to our `TrackCharacter` enum (we don't carry position-aware labels
-/// like "return_acoustic"), so we project the four-label intent onto our
-/// five-label enum via the intrinsic-character axis:
+/// Per-track LUFS offset driven by the position-aware AlbumCharacter
+/// label. Direct port of Codex's `arc.py:287-299` offset table:
 ///
-/// * `Sparse`   → -0.72 dB  (Codex `acoustic_folk`). Extra -0.25 at
-///                first track (Codex's acoustic-opener bonus).
-///                Extra -0.20 at last track (Codex's return_acoustic
-///                last-track bonus).
-/// * `Dense`    → +0.82 dB  (Codex `heavy_djent`).
-/// * `Bright`, `Dark`, `Balanced`, `None` → 0 dB.
+/// * `AcousticFolk`   → -0.72 dB. Extra -0.25 dB at first track.
+/// * `Transition`     → -1.25 dB. Connective tissue sits below the
+///                       surrounding songs so it can redirect the
+///                       album rather than compete.
+/// * `HeavyDjent`     → +0.82 dB. The heavy section is allowed to feel
+///                       bigger than the rest of the record.
+/// * `ReturnAcoustic` → -1.05 dB. Extra -0.20 dB at last track. Pulled
+///                       inward after the heavy center so the record
+///                       lands quietly.
+///
+/// `None` returns 0 — a track with no inferred album-character gets no
+/// album-position pull, only the arc + source compensation.
 pub fn character_loudness_offset(
-    character: Option<TrackCharacter>,
+    character: Option<AlbumCharacter>,
     index: usize,
     count: usize,
 ) -> f32 {
     let Some(c) = character else { return 0.0 };
     let mut offset = match c {
-        TrackCharacter::Sparse => -0.72,
-        TrackCharacter::Dense => 0.82,
-        TrackCharacter::Bright | TrackCharacter::Dark | TrackCharacter::Balanced => {
-            0.0
-        }
+        AlbumCharacter::AcousticFolk => -0.72,
+        AlbumCharacter::Transition => -1.25,
+        AlbumCharacter::HeavyDjent => 0.82,
+        AlbumCharacter::ReturnAcoustic => -1.05,
     };
-    if matches!(c, TrackCharacter::Sparse) {
-        if index == 0 {
-            offset -= 0.25;
-        }
-        if count > 1 && index == count - 1 {
-            offset -= 0.20;
-        }
+    if matches!(c, AlbumCharacter::AcousticFolk) && index == 0 {
+        offset -= 0.25;
+    }
+    if matches!(c, AlbumCharacter::ReturnAcoustic)
+        && count > 1
+        && index == count - 1
+    {
+        offset -= 0.20;
     }
     offset
+}
+
+// ============================================================================
+// Position-aware album character inference — ported from Codex's
+// `character.py`. Two passes:
+//
+//   Pass 1 — per-track scoring across (energy_density, crest, low-band
+//            weight, mid+air weight, stereo_width, transient_density,
+//            duration). Filename hints (when provided) override the
+//            score if the name contains a strong keyword.
+//   Pass 2 — album-position promotion: once a HeavyDjent track has been
+//            seen, any AcousticFolk in the back half is upgraded to
+//            ReturnAcoustic. Mirrors Codex's "after the heavy center"
+//            rule.
+//
+// We use signals already on AnalysisResult: spectral_balance_6band,
+// transient_flux (or transient_density fallback), energy_density_score,
+// stereo_width, and `true_peak_dbtp - lufs_integrated` as a crest-factor
+// proxy. Codex's `crest_factor_db` and ours aren't identical (true peak
+// vs sample peak; BS.1770 LUFS vs RMS) but for the score-comparison
+// purposes here they behave equivalently — both are "how much headroom
+// between peaks and the perceived level."
+// ============================================================================
+
+fn crest_proxy_db(a: &AnalysisResult) -> f32 {
+    // `true_peak_dbtp - lufs_integrated` ≈ how much louder the peaks
+    // are than the perceived RMS. ~6 dB for very dense / loud, ~15 dB
+    // for open / dynamic material.
+    let raw = a.true_peak_dbtp - a.lufs_integrated;
+    if raw.is_finite() {
+        raw.clamp(0.0, 30.0)
+    } else {
+        10.0
+    }
+}
+
+fn transient_signal(a: &AnalysisResult) -> f32 {
+    a.transient_flux.unwrap_or(a.transient_density)
+}
+
+fn heavy_score(a: &AnalysisResult) -> f32 {
+    let energy = a.energy_density_score.unwrap_or(0.5);
+    let crest = crest_proxy_db(a);
+    let crest_density =
+        1.0 - ((crest - 6.0) / 10.0).clamp(0.0, 1.0);
+    let low_weight = a
+        .spectral_balance_6band
+        .as_ref()
+        .map(|s| s.sub + s.low + s.low_mid * 0.35)
+        .unwrap_or(0.5);
+    let transient = transient_signal(a);
+    (energy * 0.42)
+        + (crest_density * 0.24)
+        + ((low_weight * 2.8).min(1.0) * 0.16)
+        + (transient * 0.18)
+}
+
+fn acoustic_score(a: &AnalysisResult) -> f32 {
+    let energy = a.energy_density_score.unwrap_or(0.5);
+    let crest = crest_proxy_db(a);
+    let openness = ((crest - 7.5) / 10.0).clamp(0.0, 1.0);
+    let mid_air = a
+        .spectral_balance_6band
+        .as_ref()
+        .map(|s| s.mid + s.presence + s.air * 0.4)
+        .unwrap_or(0.5);
+    let transient = transient_signal(a);
+    ((1.0 - energy) * 0.38)
+        + (openness * 0.30)
+        + ((mid_air * 2.2).min(1.0) * 0.20)
+        + ((1.0 - transient) * 0.12)
+}
+
+fn transition_score(a: &AnalysisResult, duration_seconds: f64) -> f32 {
+    let energy = a.energy_density_score.unwrap_or(0.5);
+    let short_form = if (20.0..=100.0).contains(&duration_seconds) {
+        0.30
+    } else {
+        0.0
+    };
+    let low_pressure = 1.0 - energy;
+    let texture = (a.stereo_width * 0.8 + transient_signal(a) * 0.2).min(1.0);
+    short_form + (low_pressure * 0.42) + (texture * 0.18)
+}
+
+/// Filename-hint pass — Codex's `_infer_one` first-stage check. Returns
+/// `Some(label)` when the name contains a strong keyword, else None.
+fn label_from_name(name: &str) -> Option<AlbumCharacter> {
+    let lowered = name.to_ascii_lowercase();
+    let has = |needles: &[&str]| needles.iter().any(|n| lowered.contains(*n));
+    if has(&["djent", "heavy", "metal", "riff", "chug"]) {
+        Some(AlbumCharacter::HeavyDjent)
+    } else if has(&["interlude", "transition", "bridge", "segue"]) {
+        Some(AlbumCharacter::Transition)
+    } else if has(&["acoustic", "folk", "intro"]) {
+        Some(AlbumCharacter::AcousticFolk)
+    } else {
+        None
+    }
+}
+
+/// Infer per-track album-character labels for the whole album. Two-pass:
+///
+/// Pass 1 picks the best-scoring label per track (or filename hint when
+/// present). Pass 2 promotes AcousticFolk → ReturnAcoustic when sitting
+/// in the back half of the album after a HeavyDjent track has played.
+///
+/// `names` is parallel to `analyses` — when empty / missing, the filename
+/// hint pass is skipped and we rely purely on scoring.
+pub fn infer_album_characters(
+    analyses: &[&AnalysisResult],
+    durations: &[f64],
+    names: &[&str],
+) -> Vec<Option<AlbumCharacter>> {
+    let n = analyses.len();
+    if n == 0 {
+        return Vec::new();
+    }
+    let mut labels: Vec<Option<AlbumCharacter>> = Vec::with_capacity(n);
+    // Pass 1: per-track inference.
+    for i in 0..n {
+        let a = analyses[i];
+        let duration = durations.get(i).copied().unwrap_or(0.0);
+        let name = names.get(i).copied().unwrap_or("");
+        if let Some(hint) = label_from_name(name) {
+            labels.push(Some(hint));
+            continue;
+        }
+        let h = heavy_score(a);
+        let t = transition_score(a, duration);
+        let f = acoustic_score(a);
+        // Need a minimum confidence threshold so "neutral" tracks stay
+        // unlabeled. 0.45 picked to match Codex's `max(score, 0.52)`
+        // lower bound — anything below this is "we can't tell."
+        let max_score = h.max(t).max(f);
+        if max_score < 0.45 {
+            labels.push(None);
+            continue;
+        }
+        let label = if h >= t && h >= f {
+            AlbumCharacter::HeavyDjent
+        } else if t >= f {
+            AlbumCharacter::Transition
+        } else {
+            AlbumCharacter::AcousticFolk
+        };
+        labels.push(Some(label));
+    }
+    // Pass 2: position-aware promotion. Walk left → right; once a
+    // HeavyDjent is seen, any AcousticFolk in the back half becomes
+    // ReturnAcoustic.
+    let mut has_seen_heavy = false;
+    let half = (n / 2).max(1);
+    for i in 0..n {
+        if labels[i] == Some(AlbumCharacter::HeavyDjent) {
+            has_seen_heavy = true;
+        }
+        if has_seen_heavy
+            && labels[i] == Some(AlbumCharacter::AcousticFolk)
+            && i >= half
+        {
+            labels[i] = Some(AlbumCharacter::ReturnAcoustic);
+        }
+    }
+    labels
 }
 
 /// Per-track LUFS offset from the arc curve and source energy. Mirror of
@@ -99,7 +265,7 @@ pub fn character_loudness_offset(
 pub fn track_loudness_offset(
     curve_value: f32,
     energy_density: Option<f32>,
-    character: Option<TrackCharacter>,
+    character: Option<AlbumCharacter>,
     intensity: f32,
     index: usize,
     count: usize,
@@ -168,7 +334,7 @@ fn resolve_arc_offsets(
     arc: &AlbumArc,
     analyses: &[&AnalysisResult],
     intensity: f32,
-    characters: &[Option<TrackCharacter>],
+    characters: &[Option<AlbumCharacter>],
 ) -> Vec<f32> {
     let n = analyses.len();
     match arc {
@@ -213,6 +379,21 @@ pub fn build_album_plan(
     arc: AlbumArc,
     intensity: f32,
 ) -> AlbumPlan {
+    build_album_plan_with_names(title, analyses, durations, &[], arc, intensity)
+}
+
+/// Like `build_album_plan` but takes parallel track display names. Names
+/// feed the filename-hint pass in `infer_album_characters` — when a name
+/// contains "djent" / "acoustic" / "interlude" / etc., the inference
+/// short-circuits to the hinted label instead of running the scoring.
+pub fn build_album_plan_with_names(
+    title: String,
+    analyses: &[&AnalysisResult],
+    durations: &[f64],
+    names: &[&str],
+    arc: AlbumArc,
+    intensity: f32,
+) -> AlbumPlan {
     let n = analyses.len();
     let intensity = intensity.clamp(0.0, 2.0);
     if n == 0 {
@@ -224,8 +405,11 @@ pub fn build_album_plan(
             intensity,
         };
     }
-    let characters: Vec<Option<TrackCharacter>> =
-        analyses.iter().map(|a| a.inferred_character).collect();
+    // Phase B+ — replace the lossy intrinsic-character mapping with the
+    // position-aware Codex labels. `infer_album_characters` runs the
+    // per-track scoring + the album-position promotion (HeavyDjent →
+    // ReturnAcoustic for back-half AcousticFolk).
+    let characters = infer_album_characters(analyses, durations, names);
     let offsets = resolve_arc_offsets(&arc, analyses, intensity, &characters);
 
     let mut tracks: Vec<AlbumTrackEntry> = Vec::with_capacity(n);
@@ -239,6 +423,7 @@ pub fn build_album_plan(
             role_locked: false,
             arc_lufs_offset_db: offsets.get(i).copied().unwrap_or(0.0),
             intensity_scale: 1.0,
+            album_character: characters.get(i).copied().flatten(),
         });
     }
     let mut transitions: Vec<TransitionSpec> = Vec::with_capacity(n.saturating_sub(1));
@@ -364,42 +549,53 @@ mod tests {
         assert!((resampled[0] - 0.78).abs() < 1.0e-5);
     }
 
-    /// Character offset table from Codex's arc.py:287-299, mapped onto
-    /// our TrackCharacter enum.
+    /// Character offset table from Codex's arc.py:287-299 — full
+    /// position-aware label set (Phase B+).
     #[test]
     fn character_loudness_offset_table() {
-        // Sparse (≈ acoustic_folk): -0.72 base.
+        // AcousticFolk: -0.72 base.
         assert!(
-            (character_loudness_offset(Some(TrackCharacter::Sparse), 1, 4) - (-0.72))
+            (character_loudness_offset(Some(AlbumCharacter::AcousticFolk), 1, 4) - (-0.72))
                 .abs()
                 < 1.0e-5
         );
-        // Sparse at first track: extra -0.25.
+        // AcousticFolk at first track: extra -0.25.
         assert!(
-            (character_loudness_offset(Some(TrackCharacter::Sparse), 0, 4) - (-0.97))
+            (character_loudness_offset(Some(AlbumCharacter::AcousticFolk), 0, 4) - (-0.97))
                 .abs()
                 < 1.0e-5
         );
-        // Sparse at last track: extra -0.20.
+        // AcousticFolk at last track: no extra (that bonus is for ReturnAcoustic).
         assert!(
-            (character_loudness_offset(Some(TrackCharacter::Sparse), 3, 4) - (-0.92))
+            (character_loudness_offset(Some(AlbumCharacter::AcousticFolk), 3, 4) - (-0.72))
                 .abs()
                 < 1.0e-5
         );
-        // Dense (≈ heavy_djent): +0.82.
+        // Transition: -1.25.
         assert!(
-            (character_loudness_offset(Some(TrackCharacter::Dense), 1, 4) - 0.82).abs()
+            (character_loudness_offset(Some(AlbumCharacter::Transition), 1, 4) - (-1.25))
+                .abs()
                 < 1.0e-5
         );
-        // Bright / Dark / Balanced / None: 0.
-        for c in [
-            Some(TrackCharacter::Bright),
-            Some(TrackCharacter::Dark),
-            Some(TrackCharacter::Balanced),
-            None,
-        ] {
-            assert!(character_loudness_offset(c, 1, 4).abs() < 1.0e-5);
-        }
+        // HeavyDjent: +0.82.
+        assert!(
+            (character_loudness_offset(Some(AlbumCharacter::HeavyDjent), 1, 4) - 0.82).abs()
+                < 1.0e-5
+        );
+        // ReturnAcoustic: -1.05 base.
+        assert!(
+            (character_loudness_offset(Some(AlbumCharacter::ReturnAcoustic), 1, 4) - (-1.05))
+                .abs()
+                < 1.0e-5
+        );
+        // ReturnAcoustic at last track: extra -0.20.
+        assert!(
+            (character_loudness_offset(Some(AlbumCharacter::ReturnAcoustic), 3, 4) - (-1.25))
+                .abs()
+                < 1.0e-5
+        );
+        // None: 0.
+        assert!(character_loudness_offset(None, 1, 4).abs() < 1.0e-5);
     }
 
     /// `track_loudness_offset` composes arc + source_comp + char.

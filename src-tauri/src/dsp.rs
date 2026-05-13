@@ -2963,6 +2963,7 @@ mod tests {
                     role_locked: false,
                     arc_lufs_offset_db: -2.1,
                     intensity_scale: 1.0,
+                    album_character: None,
                 },
                 AlbumTrackEntry {
                     track_id: TrackId("t2".to_string()),
@@ -2971,6 +2972,7 @@ mod tests {
                     role_locked: true,
                     arc_lufs_offset_db: 0.0,
                     intensity_scale: 0.95,
+                    album_character: None,
                 },
                 AlbumTrackEntry {
                     track_id: TrackId("t3".to_string()),
@@ -2979,6 +2981,7 @@ mod tests {
                     role_locked: false,
                     arc_lufs_offset_db: 1.8,
                     intensity_scale: 1.1,
+                    album_character: None,
                 },
                 AlbumTrackEntry {
                     track_id: TrackId("t4".to_string()),
@@ -2987,6 +2990,7 @@ mod tests {
                     role_locked: false,
                     arc_lufs_offset_db: -1.4,
                     intensity_scale: 0.85,
+                    album_character: None,
                 },
             ],
             transitions: vec![
