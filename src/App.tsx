@@ -525,7 +525,6 @@ function TrackMaster({ tm }: { tm: ReturnType<typeof useTrackMaster> }) {
         onSetRegion={tm.setRegion}
         onClearRegion={tm.clearRegion}
       />
-      <SignalChain settings={tm.selectedSettings} />
       <Transport
         isPlaying={tm.transport.isPlaying}
         playbackKind={tm.transport.playbackKind}
@@ -543,6 +542,7 @@ function TrackMaster({ tm }: { tm: ReturnType<typeof useTrackMaster> }) {
         selected={tm.selectedSettings.preset}
         onChange={tm.setPreset}
       />
+      <SignalChain settings={tm.selectedSettings} />
       <UserPresetSection
         presets={tm.userPresets}
         savingPreset={tm.savingPreset}
@@ -1253,24 +1253,34 @@ function UserPresetSection({
   onApply: (preset: UserPreset) => void;
 }) {
   const [name, setName] = useState("");
+  const [isExpanded, setIsExpanded] = useState(false);
 
   const handleSave = () => {
     if (!name.trim()) return;
     onSave(name);
     setName("");
+    setIsExpanded(false);
   };
+
+  // Empty state collapses to a single inline "+ Save current as preset"
+  // button so we don't burn a full row of vertical space on nothing.
+  if (presets.length === 0 && !isExpanded) {
+    return (
+      <button
+        type="button"
+        className="user-presets-add-inline"
+        onClick={() => setIsExpanded(true)}
+        title="Save the current settings as a named preset"
+      >
+        + Save current as preset
+      </button>
+    );
+  }
 
   return (
     <section className="user-presets">
-      <div className="section-head">
-        <span className="section-label">My presets</span>
-      </div>
       <div className="user-preset-row">
-        {presets.length === 0 && (
-          <span className="user-preset-empty">
-            Save the current settings as a preset to reuse later.
-          </span>
-        )}
+        <span className="section-label user-preset-row-label">MY PRESETS</span>
         {presets.map((p) => (
           <div key={p.id} className="user-preset-chip">
             <button
@@ -1293,31 +1303,44 @@ function UserPresetSection({
             </button>
           </div>
         ))}
-      </div>
-      <form
-        className="user-preset-save"
-        onSubmit={(e) => {
-          e.preventDefault();
-          handleSave();
-        }}
-      >
-        <input
-          type="text"
-          className="user-preset-name"
-          placeholder="Save current as…"
-          value={name}
-          onChange={(e) => setName(e.target.value)}
-          maxLength={64}
-          disabled={savingPreset}
-        />
-        <button
-          type="submit"
-          className="ghost-btn"
-          disabled={savingPreset || !name.trim()}
+        <form
+          className="user-preset-save"
+          onSubmit={(e) => {
+            e.preventDefault();
+            handleSave();
+          }}
         >
-          {savingPreset ? "Saving…" : "Save preset"}
-        </button>
-      </form>
+          <input
+            type="text"
+            className="user-preset-name"
+            placeholder="Save current as…"
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            maxLength={64}
+            disabled={savingPreset}
+            autoFocus={isExpanded}
+          />
+          <button
+            type="submit"
+            className="ghost-btn"
+            disabled={savingPreset || !name.trim()}
+          >
+            {savingPreset ? "Saving…" : "Save"}
+          </button>
+          {presets.length === 0 && (
+            <button
+              type="button"
+              className="ghost-btn"
+              onClick={() => {
+                setName("");
+                setIsExpanded(false);
+              }}
+            >
+              Cancel
+            </button>
+          )}
+        </form>
+      </div>
     </section>
   );
 }
