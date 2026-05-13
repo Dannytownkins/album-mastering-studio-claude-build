@@ -1660,23 +1660,15 @@ function AdvancedPanel({
         <span className="section-label">Advanced</span>
       </div>
       <div className="advanced-grid">
-        <NumberField
+        <GainField
           label="Input gain"
-          value={settings.input_gain_db === 0 ? null : settings.input_gain_db}
-          step={0.1}
-          min={-24}
-          max={24}
-          format={(v) => `${v > 0 ? "+" : ""}${v.toFixed(1)} dB`}
-          onChange={(v) => onInputGain(v ?? 0)}
+          value={settings.input_gain_db}
+          onChange={onInputGain}
         />
-        <NumberField
+        <GainField
           label="Output gain"
-          value={settings.output_gain_db === 0 ? null : settings.output_gain_db}
-          step={0.1}
-          min={-24}
-          max={24}
-          format={(v) => `${v > 0 ? "+" : ""}${v.toFixed(1)} dB`}
-          onChange={(v) => onOutputGain(v ?? 0)}
+          value={settings.output_gain_db}
+          onChange={onOutputGain}
         />
         <NumberField
           label="LUFS target"
@@ -1890,6 +1882,82 @@ function CompressionBandColumn({
         format={(v) => `${v.toFixed(0)} ms`}
         onChange={onRelease}
       />
+    </div>
+  );
+}
+
+// Always-on slider for required dB trim values (input gain, output gain).
+// No "Auto" affordance — the value is always present (default 0 dB), so the
+// slider is always active and double-click resets to 0.
+function GainField({
+  label,
+  value,
+  onChange,
+}: {
+  label: string;
+  value: number;
+  onChange: (db: number) => void;
+}) {
+  const [draft, setDraft] = useState<string | null>(null);
+  const inputRef = useRef<HTMLInputElement | null>(null);
+  useEffect(() => {
+    if (
+      draft !== null &&
+      inputRef.current &&
+      document.activeElement !== inputRef.current
+    ) {
+      setDraft(null);
+    }
+  }, [value, draft]);
+  const commitDraft = (raw: string) => {
+    const parsed = parseFloat(raw);
+    if (!Number.isFinite(parsed)) {
+      setDraft(null);
+      return;
+    }
+    const clamped = Math.max(-24, Math.min(24, parsed));
+    if (clamped !== value) onChange(clamped);
+    setDraft(null);
+  };
+  return (
+    <div className="adv-field">
+      <span className="adv-label">{label}</span>
+      <div className="adv-control">
+        <input
+          type="range"
+          min={-24}
+          max={24}
+          step={0.1}
+          value={value}
+          onChange={(e) => onChange(parseFloat(e.target.value))}
+          onDoubleClick={() => onChange(0)}
+          title="Double-click to reset to 0 dB"
+        />
+        <span className="adv-value">
+          {value > 0 ? "+" : ""}{value.toFixed(1)} dB
+        </span>
+        <input
+          ref={inputRef}
+          type="number"
+          className="adv-number"
+          min={-24}
+          max={24}
+          step={0.1}
+          value={draft !== null ? draft : value}
+          onChange={(e) => setDraft(e.target.value)}
+          onBlur={(e) => commitDraft(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") {
+              commitDraft((e.target as HTMLInputElement).value);
+              (e.target as HTMLInputElement).blur();
+            } else if (e.key === "Escape") {
+              setDraft(null);
+              (e.target as HTMLInputElement).blur();
+            }
+          }}
+          title="Type a value or double-click slider to reset to 0 dB"
+        />
+      </div>
     </div>
   );
 }

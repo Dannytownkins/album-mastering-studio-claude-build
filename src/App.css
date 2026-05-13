@@ -1654,12 +1654,79 @@ button.primary:disabled {
   gap: 0.5rem;
 }
 
+/* Custom-styled range slider used in the AdvancedPanel rows. We pull the
+   browser defaults off both Chromium and WebKit thumbs/tracks and build a
+   slim, glowing accent-blue look that matches the rest of the UI. */
 .adv-control input[type="range"] {
-  accent-color: var(--accent);
+  -webkit-appearance: none;
+  appearance: none;
+  height: 22px;
+  background: transparent;
+  cursor: pointer;
+  margin: 0;
+  padding: 0;
+  width: 100%;
+}
+
+.adv-control input[type="range"]::-webkit-slider-runnable-track {
+  height: 4px;
+  background: linear-gradient(90deg, var(--bg-3) 0%, var(--bg-4) 100%);
+  border-radius: 999px;
+  border: 1px solid var(--border-strong);
+  box-shadow: inset 0 1px 0 rgba(0, 0, 0, 0.35);
+}
+
+.adv-control input[type="range"]::-moz-range-track {
+  height: 4px;
+  background: linear-gradient(90deg, var(--bg-3) 0%, var(--bg-4) 100%);
+  border-radius: 999px;
+  border: 1px solid var(--border-strong);
+}
+
+.adv-control input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: linear-gradient(180deg, var(--accent-bright) 0%, var(--accent-deep) 100%);
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  box-shadow: var(--accent-glow-soft);
+  margin-top: -6px;
+  cursor: grab;
+  transition: box-shadow 100ms, transform 80ms;
+}
+
+.adv-control input[type="range"]::-webkit-slider-thumb:hover {
+  box-shadow: var(--accent-glow);
+  transform: scale(1.1);
+}
+
+.adv-control input[type="range"]::-webkit-slider-thumb:active {
+  cursor: grabbing;
+  transform: scale(1.05);
+}
+
+.adv-control input[type="range"]::-moz-range-thumb {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: linear-gradient(180deg, var(--accent-bright) 0%, var(--accent-deep) 100%);
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  box-shadow: var(--accent-glow-soft);
+  cursor: grab;
+}
+
+.adv-control input[type="range"]:disabled::-webkit-slider-thumb,
+.adv-control input[type="range"]:disabled::-moz-range-thumb {
+  background: var(--bg-4);
+  border-color: var(--border);
+  box-shadow: none;
+  cursor: not-allowed;
 }
 
 .adv-control input[type="range"]:disabled {
-  opacity: 0.4;
+  opacity: 0.5;
 }
 
 .adv-value {
