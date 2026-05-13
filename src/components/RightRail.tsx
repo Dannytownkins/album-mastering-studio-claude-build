@@ -124,7 +124,15 @@ function MasterOutPanel({
     <section className="panel master-out">
       <header className="panel-head">
         <span className="panel-title">MASTER OUT</span>
-        {isAnalyzing && <span className="panel-hint">analyzing…</span>}
+        {isPlaying ? (
+          <span className="panel-live-pill" title="Bars are metering the live post-output peak in real time.">
+            <span className="panel-live-dot" aria-hidden /> LIVE
+          </span>
+        ) : isAnalyzing ? (
+          <span className="panel-hint">analyzing…</span>
+        ) : (
+          <span className="panel-hint">hold</span>
+        )}
       </header>
       <div className="lufs-meter">
         <div className="lufs-bars">

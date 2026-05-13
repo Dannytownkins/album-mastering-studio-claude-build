@@ -2004,8 +2004,11 @@ function NumberField({
     setDraft(null);
   };
   return (
-    <div className="adv-field">
-      <span className="adv-label">{label}</span>
+    <div className={"adv-field " + (value === null ? "is-auto" : "")}>
+      <span className="adv-label">
+        {label}
+        {value === null && <span className="adv-auto-pill">AUTO</span>}
+      </span>
       <div className="adv-control">
         <input
           type="range"
@@ -2013,41 +2016,50 @@ function NumberField({
           max={max}
           step={step}
           value={effective}
+          // Always live: dragging an Auto slider engages it at the dragged
+          // value instead of staying greyed out. Double-click reverts to Auto.
           onChange={(e) => onChange(parseFloat(e.target.value))}
-          disabled={value === null}
+          onDoubleClick={() => onChange(null)}
+          title={
+            value === null
+              ? "Drag to engage. Double-click to leave it on Auto."
+              : `Drag or type a value. Double-click slider to reset to Auto.`
+          }
         />
-        <button
-          type="button"
-          className="micro-btn"
-          onClick={() => onChange(value === null ? (min + max) / 2 : null)}
-        >
-          {value === null ? "Set" : "Auto"}
-        </button>
-        {value === null ? (
-          <span className="adv-value">Auto</span>
-        ) : (
-          <input
-            ref={inputRef}
-            type="number"
-            className="adv-number"
-            min={min}
-            max={max}
-            step={step}
-            value={draft !== null ? draft : value}
-            onChange={(e) => setDraft(e.target.value)}
-            onBlur={(e) => commitDraft(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") {
-                commitDraft((e.target as HTMLInputElement).value);
-                (e.target as HTMLInputElement).blur();
-              } else if (e.key === "Escape") {
-                setDraft(null);
-                (e.target as HTMLInputElement).blur();
-              }
-            }}
-            title={`Type a value or click Auto to reset. Format: ${format(value)}`}
-          />
-        )}
+        <span className="adv-value">{value === null ? "Auto" : format(value)}</span>
+        <input
+          ref={inputRef}
+          type="number"
+          className="adv-number"
+          min={min}
+          max={max}
+          step={step}
+          value={draft !== null ? draft : value ?? ""}
+          placeholder="auto"
+          onChange={(e) => {
+            if (e.target.value === "") {
+              onChange(null);
+              setDraft(null);
+            } else {
+              setDraft(e.target.value);
+            }
+          }}
+          onBlur={(e) => commitDraft(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") {
+              commitDraft((e.target as HTMLInputElement).value);
+              (e.target as HTMLInputElement).blur();
+            } else if (e.key === "Escape") {
+              setDraft(null);
+              (e.target as HTMLInputElement).blur();
+            }
+          }}
+          title={
+            value === null
+              ? "Type a number to engage, or leave blank for Auto."
+              : `Type a value or clear to reset to Auto.`
+          }
+        />
       </div>
     </div>
   );
