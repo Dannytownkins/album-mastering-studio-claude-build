@@ -1385,6 +1385,7 @@ function Macros({
           <Knob
             label="Low"
             size="md"
+            tone="cyan"
             value={settings.eq_low_db}
             min={-12}
             max={12}
@@ -1396,6 +1397,7 @@ function Macros({
           <Knob
             label="Mid"
             size="md"
+            tone="green"
             value={settings.eq_mid_db}
             min={-12}
             max={12}
@@ -1407,6 +1409,7 @@ function Macros({
           <Knob
             label="High"
             size="md"
+            tone="purple"
             value={settings.eq_high_db}
             min={-12}
             max={12}

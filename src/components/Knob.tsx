@@ -17,6 +17,28 @@
 import { useId, useRef, useState } from "react";
 
 type KnobSize = "sm" | "md" | "lg";
+export type KnobTone =
+  | "blue"
+  | "cyan"
+  | "green"
+  | "purple"
+  | "pink"
+  | "gold"
+  | "orange"
+  | "red";
+
+// Solid color per tone — used for the accent arc, indicator notch, and the
+// CSS variable that downstream halo/glow rules reference via color-mix.
+const TONE_COLOR: Record<KnobTone, string> = {
+  blue: "#4d8bff",
+  cyan: "#22d3ee",
+  green: "#34d399",
+  purple: "#a78bfa",
+  pink: "#f472b6",
+  gold: "#fbbf24",
+  orange: "#fb923c",
+  red: "#f87171",
+};
 
 type KnobProps = {
   label: string;
@@ -31,6 +53,10 @@ type KnobProps = {
   centerValue?: boolean;
   caption?: string;
   disabled?: boolean;
+  /// Color identity for this knob's accent ring + indicator. Used to give
+  /// each band a distinct character (Low=cyan, Mid=green, High=purple, etc.)
+  /// like the reference UI. Defaults to blue (matches --accent-bright).
+  tone?: KnobTone;
 };
 
 const SIZES: Record<KnobSize, { px: number; font: number; valueFont: number }> = {
@@ -57,8 +83,10 @@ export function Knob({
   centerValue = false,
   caption,
   disabled = false,
+  tone = "blue",
 }: KnobProps) {
   const dims = SIZES[size];
+  const toneColor = TONE_COLOR[tone];
   const px = dims.px;
   const cx = px / 2;
   const cy = px / 2;
@@ -147,7 +175,10 @@ export function Knob({
   const notchY2 = cy + notchOuterR * Math.sin(notchAngle);
 
   return (
-    <div className={`knob knob-${size} ${disabled ? "is-disabled" : ""}`}>
+    <div
+      className={`knob knob-${size} knob-tone-${tone} ${disabled ? "is-disabled" : ""}`}
+      style={{ ["--knob-tone" as never]: toneColor }}
+    >
       {label && <span className="knob-label">{label}</span>}
       <div className="knob-vis" style={{ width: px, height: px }}>
         <svg
@@ -234,10 +265,10 @@ export function Knob({
             <path
               d={arcPath}
               fill="none"
-              stroke="var(--accent-bright)"
+              stroke={toneColor}
               strokeWidth={Math.max(2.5, px * 0.028)}
               strokeLinecap="round"
-              style={{ filter: "drop-shadow(0 0 6px rgba(111,163,255,0.55))" }}
+              style={{ filter: `drop-shadow(0 0 6px ${toneColor}cc)` }}
             />
           )}
 
@@ -270,10 +301,10 @@ export function Knob({
             y1={notchY1}
             x2={notchX2}
             y2={notchY2}
-            stroke="var(--accent-bright)"
+            stroke={toneColor}
             strokeWidth={Math.max(2, px * 0.022)}
             strokeLinecap="round"
-            style={{ filter: "drop-shadow(0 0 5px rgba(111,163,255,0.85))" }}
+            style={{ filter: `drop-shadow(0 0 5px ${toneColor}e0)` }}
           />
 
           {centerValue && (
