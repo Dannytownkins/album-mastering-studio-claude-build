@@ -37,6 +37,24 @@ export interface AdvancedSettings {
   warmth: number | null;
   presence_air: number | null;
   compression_density: number | null;
+  // Phase 12.2 per-band compressor overrides. `null` = let the macro
+  // (compression_density) drive that band's threshold; per-band ratio/
+  // attack/release fall back to fixed musical defaults in the backend.
+  compression_low_threshold_db: number | null;
+  compression_low_ratio: number | null;
+  compression_low_attack_ms: number | null;
+  compression_low_release_ms: number | null;
+  compression_mid_threshold_db: number | null;
+  compression_mid_ratio: number | null;
+  compression_mid_attack_ms: number | null;
+  compression_mid_release_ms: number | null;
+  compression_high_threshold_db: number | null;
+  compression_high_ratio: number | null;
+  compression_high_attack_ms: number | null;
+  compression_high_release_ms: number | null;
+  /// `null` or `true` = linked stereo (max-of-|L|,|R| envelope per band).
+  /// `false` = independent L/R envelopes per band.
+  compression_link_stereo: boolean | null;
   bit_depth: number | null;
   target_sample_rate: number | null;
 }
@@ -190,6 +208,11 @@ export interface PlaybackTick {
   /// `-120` is the silence sentinel (no signal seen in the window). Values
   /// above `-0.1` indicate clipping risk; values above `0` are clipping.
   peak_dbfs: number;
+  /// Phase 12.2 — per-band compressor gain reduction in dB (negative).
+  /// `-120` is the silence sentinel; values like -2.3 mean 2.3 dB of GR.
+  gr_low_db: number;
+  gr_mid_db: number;
+  gr_high_db: number;
 }
 
 export interface LoopRegion {

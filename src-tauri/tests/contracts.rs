@@ -614,7 +614,7 @@ async fn phase_12_1_real_fixture_metering_snapshot() {
         bit_depth: 24,
         checks: Vec::new(),
     };
-    let checks = exports::run_export_checks(report).await.expect("checks");
+    let checks = exports::run_export_checks(report, None, None).await.expect("checks");
     eprintln!("Export checks ({} fired):", checks.len());
     for c in &checks {
         eprintln!("  [{:?}] {} -- {}", c.level, c.code, c.message);
@@ -649,7 +649,7 @@ async fn run_export_checks_warns_on_high_true_peak() {
         bit_depth: 24,
         checks: Vec::new(),
     };
-    let checks = exports::run_export_checks(report).await.expect("checks ok");
+    let checks = exports::run_export_checks(report, None, None).await.expect("checks ok");
     assert!(checks.iter().any(|c| c.code == "true_peak_high"));
 }
 
@@ -667,7 +667,7 @@ async fn run_export_checks_passes_silently_when_clean() {
         bit_depth: 24,
         checks: Vec::new(),
     };
-    let checks = exports::run_export_checks(report).await.expect("checks ok");
+    let checks = exports::run_export_checks(report, None, None).await.expect("checks ok");
     assert_eq!(checks.len(), 1);
     assert_eq!(checks[0].code, "export_ok");
 }
@@ -690,7 +690,7 @@ async fn run_export_checks_warns_on_low_streaming_headroom() {
         bit_depth: 24,
         checks: Vec::new(),
     };
-    let checks = exports::run_export_checks(report).await.expect("checks ok");
+    let checks = exports::run_export_checks(report, None, None).await.expect("checks ok");
     assert!(
         checks.iter().any(|c| c.code == "streaming_headroom_low"),
         "expected streaming_headroom_low advisory, got: {:?}",
@@ -719,7 +719,7 @@ async fn run_export_checks_streaming_headroom_quiet_at_streaming_ceiling() {
         bit_depth: 24,
         checks: Vec::new(),
     };
-    let checks = exports::run_export_checks(report).await.expect("checks ok");
+    let checks = exports::run_export_checks(report, None, None).await.expect("checks ok");
     assert!(
         !checks.iter().any(|c| c.code == "streaming_headroom_low"),
         "advisory should not fire at exactly the streaming ceiling -1.0 dBTP"
@@ -1398,6 +1398,155 @@ fn lufs_target_refuses_to_amplify_quiet_render() {
         "refuse-upward should leave the render unchanged: baseline={}, with target={}",
         baseline_lufs,
         refused_lufs
+    );
+}
+
+/// Phase 12.2 — end-to-end render comparison. With macro density=1.0 the
+/// 5-second loud sine should land at integrated LUFS at least 2 LU lower
+/// than at density=0.0. Pins the wiring from `MasteringSettings.advanced.
+/// compression_density` all the way through `MasteringChain` and the
+/// downstream LUFS measurement on the rendered output. The chain's per-band
+/// auto-makeup (half-compensation per the design) partially offsets the raw
+/// reduction; the net audible delta on a 1 kHz mid-band signal lands around
+/// -2.5 LU at density=1.0 / preset=Custom / intensity=0.0. >=2 LU is well
+/// above the loudness just-noticeable threshold.
+#[test]
+fn mastering_render_with_heavy_compression_attenuates_loud_section() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let in_path = tmp.path().join("loud_sine.wav");
+    write_sine_wav(&in_path, 44_100, 5.0, 1_000.0, 2);
+
+    let mut s0 = default_settings();
+    s0.preset = Preset::Custom { id: "neutral".to_string() };
+    s0.intensity = 0.0;
+    s0.advanced.compression_density = Some(0.0);
+    let mut s1 = s0.clone();
+    s1.advanced.compression_density = Some(1.0);
+
+    let out0_job = engine::mastering_render(
+        TrackId("d0".to_string()),
+        &in_path,
+        &s0,
+        tmp.path(),
+        RenderKind::Master,
+    )
+    .expect("render density=0");
+    let out1_job = engine::mastering_render(
+        TrackId("d1".to_string()),
+        &in_path,
+        &s1,
+        tmp.path(),
+        RenderKind::Master,
+    )
+    .expect("render density=1");
+
+    let lufs0 = engine::measure_integrated_lufs_at_path(Path::new(&out0_job.output_paths[0]))
+        .expect("measure d0");
+    let lufs1 = engine::measure_integrated_lufs_at_path(Path::new(&out1_job.output_paths[0]))
+        .expect("measure d1");
+    let delta_lu = lufs1 - lufs0;
+    assert!(
+        delta_lu <= -2.0,
+        "density=1.0 render should be >=2 LU quieter than density=0.0 \
+         (got {:.2} LU; d0 LUFS = {}, d1 LUFS = {})",
+        delta_lu,
+        lufs0,
+        lufs1
+    );
+}
+
+#[tokio::test]
+async fn run_export_checks_warns_on_compressed_source_with_heavy_density() {
+    let analysis = AnalysisResult {
+        track_id: TrackId("stub".to_string()),
+        lufs_integrated: -10.0,
+        lufs_short_term_max: -8.0,
+        true_peak_dbtp: -0.5,
+        dynamic_range_lu: 4.0,
+        spectral_balance: SpectralBalance {
+            low: 0.33,
+            mid: 0.34,
+            high: 0.33,
+        },
+        transient_density: 0.5,
+        stereo_width: 0.5,
+        recommended_universal: default_settings(),
+        measured_at_iso: "2026-05-12T12:00:00Z".to_string(),
+        inferred_role: None,
+        role_confidence: None,
+        inferred_character: None,
+        character_confidence: None,
+    };
+    let mut settings = default_settings();
+    settings.advanced.compression_density = Some(0.5);
+    let report = ExportReport {
+        track_id: TrackId("t".to_string()),
+        output_path: "out.wav".to_string(),
+        measured_lufs: -14.0,
+        measured_true_peak_dbtp: -1.2,
+        measured_dynamic_range_lu: 4.0,
+        source_format: "wav".to_string(),
+        destination_format: "wav".to_string(),
+        sample_rate: 44_100,
+        bit_depth: 24,
+        checks: Vec::new(),
+    };
+    let checks = exports::run_export_checks(report, Some(analysis), Some(settings))
+        .await
+        .expect("checks ok");
+    assert!(
+        checks
+            .iter()
+            .any(|c| c.code == "comp_density_on_compressed_source"),
+        "expected comp_density_on_compressed_source advisory, got: {:?}",
+        checks.iter().map(|c| &c.code).collect::<Vec<_>>()
+    );
+
+    // Per-band threshold override should suppress the advisory.
+    let mut settings2 = default_settings();
+    settings2.advanced.compression_density = Some(0.5);
+    settings2.advanced.compression_mid_threshold_db = Some(-30.0);
+    let report2 = ExportReport {
+        track_id: TrackId("t".to_string()),
+        output_path: "out.wav".to_string(),
+        measured_lufs: -14.0,
+        measured_true_peak_dbtp: -1.2,
+        measured_dynamic_range_lu: 4.0,
+        source_format: "wav".to_string(),
+        destination_format: "wav".to_string(),
+        sample_rate: 44_100,
+        bit_depth: 24,
+        checks: Vec::new(),
+    };
+    let analysis2 = AnalysisResult {
+        track_id: TrackId("stub".to_string()),
+        lufs_integrated: -10.0,
+        lufs_short_term_max: -8.0,
+        true_peak_dbtp: -0.5,
+        dynamic_range_lu: 4.0,
+        spectral_balance: SpectralBalance {
+            low: 0.33,
+            mid: 0.34,
+            high: 0.33,
+        },
+        transient_density: 0.5,
+        stereo_width: 0.5,
+        recommended_universal: default_settings(),
+        measured_at_iso: "2026-05-12T12:00:00Z".to_string(),
+        inferred_role: None,
+        role_confidence: None,
+        inferred_character: None,
+        character_confidence: None,
+    };
+    let checks2 = exports::run_export_checks(report2, Some(analysis2), Some(settings2))
+        .await
+        .expect("checks ok");
+    assert!(
+        !checks2
+            .iter()
+            .any(|c| c.code == "comp_density_on_compressed_source"),
+        "per-band threshold override should suppress the advisory, got: {:?}",
+        checks2.iter().map(|c| &c.code).collect::<Vec<_>>()
     );
 }
 

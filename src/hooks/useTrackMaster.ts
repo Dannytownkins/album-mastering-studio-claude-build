@@ -36,6 +36,19 @@ const DEFAULT_SETTINGS: MasteringSettings = {
     warmth: null,
     presence_air: null,
     compression_density: null,
+    compression_low_threshold_db: null,
+    compression_low_ratio: null,
+    compression_low_attack_ms: null,
+    compression_low_release_ms: null,
+    compression_mid_threshold_db: null,
+    compression_mid_ratio: null,
+    compression_mid_attack_ms: null,
+    compression_mid_release_ms: null,
+    compression_high_threshold_db: null,
+    compression_high_ratio: null,
+    compression_high_attack_ms: null,
+    compression_high_release_ms: null,
+    compression_link_stereo: null,
     bit_depth: null,
     target_sample_rate: null,
   },
@@ -86,6 +99,10 @@ export function useTrackMaster() {
     // Stored here so the StaleBar's indicator can flash red on clipping
     // without DevTools or an export round-trip.
     peakDbfs: -120,
+    // Phase 12.2 per-band compressor GR readouts. -120 = silence sentinel
+    // ("no reduction in the window"). Driven by PlaybackTick → snapshot →
+    // atomic-swap on the backend audio thread.
+    compressionGr: { low: -120, mid: -120, high: -120 },
   });
   const [advancedOpen, setAdvancedOpen] = useState(false);
   const [lastExportReceipt, setLastExportReceipt] = useState<ExportReceipt | null>(null);
@@ -142,6 +159,11 @@ export function useTrackMaster() {
         currentTimeSec: tick.position_sec,
         isPlaying: tick.is_playing,
         peakDbfs: tick.peak_dbfs,
+        compressionGr: {
+          low: tick.gr_low_db,
+          mid: tick.gr_mid_db,
+          high: tick.gr_high_db,
+        },
       }));
     }).then((fn) => {
       unlistenTick = fn;
@@ -776,7 +798,7 @@ export function useTrackMaster() {
         bit_depth: selectedSettings.advanced.bit_depth ?? 24,
         checks: [],
       };
-      const checks = await api.runExportChecks(report);
+      const checks = await api.runExportChecks(report, selectedAnalysis, selectedSettings);
       setLastExportReceipt({
         trackId: selectedTrackId,
         outputPath,

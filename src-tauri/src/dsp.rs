@@ -80,6 +80,50 @@ impl BiquadCoeffs {
         }
     }
 
+    /// Butterworth low-pass (RBJ cookbook, Q=0.7071 for one stage). For an
+    /// LR4 crossover (-24 dB/oct), cascade two of these at the same corner.
+    pub fn butter_lp(sample_rate: f32, freq_hz: f32, q: f32) -> Self {
+        let omega = 2.0 * PI * freq_hz / sample_rate;
+        let cos_o = omega.cos();
+        let sin_o = omega.sin();
+        let alpha = sin_o / (2.0 * q);
+        let b0 = (1.0 - cos_o) / 2.0;
+        let b1 = 1.0 - cos_o;
+        let b2 = (1.0 - cos_o) / 2.0;
+        let a0 = 1.0 + alpha;
+        let a1 = -2.0 * cos_o;
+        let a2 = 1.0 - alpha;
+        Self {
+            b0: b0 / a0,
+            b1: b1 / a0,
+            b2: b2 / a0,
+            a1: a1 / a0,
+            a2: a2 / a0,
+        }
+    }
+
+    /// Butterworth high-pass (RBJ cookbook, Q=0.7071 for one stage). Cascade
+    /// two of these for an LR4 -24 dB/oct slope.
+    pub fn butter_hp(sample_rate: f32, freq_hz: f32, q: f32) -> Self {
+        let omega = 2.0 * PI * freq_hz / sample_rate;
+        let cos_o = omega.cos();
+        let sin_o = omega.sin();
+        let alpha = sin_o / (2.0 * q);
+        let b0 = (1.0 + cos_o) / 2.0;
+        let b1 = -(1.0 + cos_o);
+        let b2 = (1.0 + cos_o) / 2.0;
+        let a0 = 1.0 + alpha;
+        let a1 = -2.0 * cos_o;
+        let a2 = 1.0 - alpha;
+        Self {
+            b0: b0 / a0,
+            b1: b1 / a0,
+            b2: b2 / a0,
+            a1: a1 / a0,
+            a2: a2 / a0,
+        }
+    }
+
     pub fn peaking(sample_rate: f32, freq_hz: f32, q: f32, gain_db: f32) -> Self {
         if gain_db.abs() < 1.0e-4 {
             return Self::identity();
@@ -161,6 +205,41 @@ pub struct ChainCoeffs {
     /// running on a stereo frame. Clamped to [0.0, 2.0] in `from_settings`
     /// so an out-of-range user value can't flip phase or destabilize gain.
     pub width_side_scale: f32,
+    // ----- Phase 12.2: multiband compressor coefficients -----
+    /// Whether the compressor is active. `false` triggers the identity early-
+    /// return in `process_frame_inplace` — byte-equivalent to the pre-slice
+    /// chain output. `true` when ANY of: macro density > 1e-4, any per-band
+    /// override is `Some(_)`, or link_stereo is `Some(false)`.
+    pub compression_active: bool,
+    pub comp_low_lp: BiquadCoeffs,
+    pub comp_mid_hp: BiquadCoeffs,
+    pub comp_mid_lp: BiquadCoeffs,
+    pub comp_high_hp: BiquadCoeffs,
+    pub comp_low_threshold_db: f32,
+    pub comp_low_ratio: f32,
+    pub comp_low_attack_alpha: f32,
+    pub comp_low_release_alpha: f32,
+    pub comp_low_makeup_db: f32,
+    pub comp_low_makeup_lin: f32,
+    pub comp_mid_threshold_db: f32,
+    pub comp_mid_ratio: f32,
+    pub comp_mid_attack_alpha: f32,
+    pub comp_mid_release_alpha: f32,
+    pub comp_mid_makeup_db: f32,
+    pub comp_mid_makeup_lin: f32,
+    pub comp_high_threshold_db: f32,
+    pub comp_high_ratio: f32,
+    pub comp_high_attack_alpha: f32,
+    pub comp_high_release_alpha: f32,
+    pub comp_high_makeup_db: f32,
+    pub comp_high_makeup_lin: f32,
+    /// Soft-knee width in dB (fixed at 6 dB per the design — not user-tunable
+    /// in v1). Stored on the coeffs so the gain-stage code reads one source
+    /// of truth.
+    pub comp_knee_db: f32,
+    /// Linked-stereo behavior. `true` = max(|L|,|R|) drives a shared
+    /// envelope; `false` = independent per-channel envelopes per band.
+    pub comp_link_stereo: bool,
 }
 
 impl ChainCoeffs {
@@ -288,6 +367,141 @@ impl ChainCoeffs {
             .unwrap_or(1.0)
             .clamp(0.0, 2.0);
 
+        // ----- Phase 12.2: multiband compressor coefficients -----
+        // Macro: density 0..1 → uniform threshold 0 dBFS (off) to -24 dBFS
+        // (heavy). Below 1e-4 the macro is "off"; per-band overrides may
+        // still pull bands into reduction independently.
+        let density = settings
+            .advanced
+            .compression_density
+            .unwrap_or(0.0)
+            .clamp(0.0, 1.0);
+        let macro_threshold_db = -24.0 * density;
+
+        // Per-band fixed musical defaults (see brainstorm "Macro mapping").
+        const LOW_RATIO_DEFAULT: f32 = 2.5;
+        const MID_RATIO_DEFAULT: f32 = 2.0;
+        const HIGH_RATIO_DEFAULT: f32 = 1.8;
+        const LOW_ATTACK_MS_DEFAULT: f32 = 30.0;
+        const LOW_RELEASE_MS_DEFAULT: f32 = 300.0;
+        const MID_ATTACK_MS_DEFAULT: f32 = 15.0;
+        const MID_RELEASE_MS_DEFAULT: f32 = 150.0;
+        const HIGH_ATTACK_MS_DEFAULT: f32 = 5.0;
+        const HIGH_RELEASE_MS_DEFAULT: f32 = 80.0;
+
+        let comp_low_threshold_db = settings
+            .advanced
+            .compression_low_threshold_db
+            .unwrap_or(macro_threshold_db);
+        let comp_mid_threshold_db = settings
+            .advanced
+            .compression_mid_threshold_db
+            .unwrap_or(macro_threshold_db);
+        let comp_high_threshold_db = settings
+            .advanced
+            .compression_high_threshold_db
+            .unwrap_or(macro_threshold_db);
+
+        let comp_low_ratio = settings
+            .advanced
+            .compression_low_ratio
+            .unwrap_or(LOW_RATIO_DEFAULT)
+            .max(1.0);
+        let comp_mid_ratio = settings
+            .advanced
+            .compression_mid_ratio
+            .unwrap_or(MID_RATIO_DEFAULT)
+            .max(1.0);
+        let comp_high_ratio = settings
+            .advanced
+            .compression_high_ratio
+            .unwrap_or(HIGH_RATIO_DEFAULT)
+            .max(1.0);
+
+        let low_attack_ms = settings
+            .advanced
+            .compression_low_attack_ms
+            .unwrap_or(LOW_ATTACK_MS_DEFAULT)
+            .max(0.1);
+        let low_release_ms = settings
+            .advanced
+            .compression_low_release_ms
+            .unwrap_or(LOW_RELEASE_MS_DEFAULT)
+            .max(0.1);
+        let mid_attack_ms = settings
+            .advanced
+            .compression_mid_attack_ms
+            .unwrap_or(MID_ATTACK_MS_DEFAULT)
+            .max(0.1);
+        let mid_release_ms = settings
+            .advanced
+            .compression_mid_release_ms
+            .unwrap_or(MID_RELEASE_MS_DEFAULT)
+            .max(0.1);
+        let high_attack_ms = settings
+            .advanced
+            .compression_high_attack_ms
+            .unwrap_or(HIGH_ATTACK_MS_DEFAULT)
+            .max(0.1);
+        let high_release_ms = settings
+            .advanced
+            .compression_high_release_ms
+            .unwrap_or(HIGH_RELEASE_MS_DEFAULT)
+            .max(0.1);
+
+        let comp_low_attack_alpha = alpha_from_time_ms(sr, low_attack_ms);
+        let comp_low_release_alpha = alpha_from_time_ms(sr, low_release_ms);
+        let comp_mid_attack_alpha = alpha_from_time_ms(sr, mid_attack_ms);
+        let comp_mid_release_alpha = alpha_from_time_ms(sr, mid_release_ms);
+        let comp_high_attack_alpha = alpha_from_time_ms(sr, high_attack_ms);
+        let comp_high_release_alpha = alpha_from_time_ms(sr, high_release_ms);
+
+        // Auto makeup: half-compensation of the threshold drop scaled by
+        // (1 - 1/ratio). Splitting the compensation in half (the `/ 2.0`)
+        // keeps the chain conservative — full compensation would push the
+        // limiter harder on every density tweak.
+        let makeup_db = |threshold_db: f32, ratio: f32| -> f32 {
+            let threshold_drop_db = (-threshold_db).max(0.0);
+            threshold_drop_db * (1.0 - 1.0 / ratio) / 2.0
+        };
+        let comp_low_makeup_db = makeup_db(comp_low_threshold_db, comp_low_ratio);
+        let comp_mid_makeup_db = makeup_db(comp_mid_threshold_db, comp_mid_ratio);
+        let comp_high_makeup_db = makeup_db(comp_high_threshold_db, comp_high_ratio);
+        let comp_low_makeup_lin = 10.0_f32.powf(comp_low_makeup_db / 20.0);
+        let comp_mid_makeup_lin = 10.0_f32.powf(comp_mid_makeup_db / 20.0);
+        let comp_high_makeup_lin = 10.0_f32.powf(comp_high_makeup_db / 20.0);
+
+        let comp_low_lp = BiquadCoeffs::butter_lp(sr, LR4_CROSSOVER_LOW_HZ, BUTTERWORTH_Q);
+        let comp_mid_hp = BiquadCoeffs::butter_hp(sr, LR4_CROSSOVER_LOW_HZ, BUTTERWORTH_Q);
+        let comp_mid_lp = BiquadCoeffs::butter_lp(sr, LR4_CROSSOVER_HIGH_HZ, BUTTERWORTH_Q);
+        let comp_high_hp = BiquadCoeffs::butter_hp(sr, LR4_CROSSOVER_HIGH_HZ, BUTTERWORTH_Q);
+
+        let comp_link_stereo = settings
+            .advanced
+            .compression_link_stereo
+            .unwrap_or(true);
+
+        let comp_macro_off = density < 1.0e-4;
+        let comp_no_overrides = settings.advanced.compression_low_threshold_db.is_none()
+            && settings.advanced.compression_low_ratio.is_none()
+            && settings.advanced.compression_low_attack_ms.is_none()
+            && settings.advanced.compression_low_release_ms.is_none()
+            && settings.advanced.compression_mid_threshold_db.is_none()
+            && settings.advanced.compression_mid_ratio.is_none()
+            && settings.advanced.compression_mid_attack_ms.is_none()
+            && settings.advanced.compression_mid_release_ms.is_none()
+            && settings.advanced.compression_high_threshold_db.is_none()
+            && settings.advanced.compression_high_ratio.is_none()
+            && settings.advanced.compression_high_attack_ms.is_none()
+            && settings.advanced.compression_high_release_ms.is_none();
+        let comp_link_unset = !matches!(
+            settings.advanced.compression_link_stereo,
+            Some(false)
+        );
+        let compression_active = !(comp_macro_off && comp_no_overrides && comp_link_unset);
+
+        let comp_knee_db = 6.0_f32;
+
         Self {
             low,
             mid,
@@ -300,6 +514,31 @@ impl ChainCoeffs {
             user_output_gain_lin,
             volume_match_gain_lin,
             width_side_scale,
+            compression_active,
+            comp_low_lp,
+            comp_mid_hp,
+            comp_mid_lp,
+            comp_high_hp,
+            comp_low_threshold_db,
+            comp_low_ratio,
+            comp_low_attack_alpha,
+            comp_low_release_alpha,
+            comp_low_makeup_db,
+            comp_low_makeup_lin,
+            comp_mid_threshold_db,
+            comp_mid_ratio,
+            comp_mid_attack_alpha,
+            comp_mid_release_alpha,
+            comp_mid_makeup_db,
+            comp_mid_makeup_lin,
+            comp_high_threshold_db,
+            comp_high_ratio,
+            comp_high_attack_alpha,
+            comp_high_release_alpha,
+            comp_high_makeup_db,
+            comp_high_makeup_lin,
+            comp_knee_db,
+            comp_link_stereo,
         }
     }
 }
@@ -333,6 +572,15 @@ pub struct ChannelState {
     high: BiquadState,
     warmth: BiquadState,
     presence_air: BiquadState,
+    // Phase 12.2: multiband compressor — per-channel crossover network state.
+    comp_split: LR4State,
+    // Per-channel per-band envelope follower. Used directly when
+    // `comp_link_stereo = false`; when linked, all channels' envelopes are
+    // driven by the same max-of-channels detector input, but each channel
+    // still keeps its own follower so the swap-on-toggle stays smooth.
+    comp_low_env: f32,
+    comp_mid_env: f32,
+    comp_high_env: f32,
 }
 
 // ============================================================================
@@ -505,10 +753,130 @@ impl Limiter {
     }
 }
 
+// ============================================================================
+// Phase 12.2 — LR4 crossover network for the multiband compressor. 3-way
+// split via cascaded-Butterworth LP+LP (low) and HP+HP (high), with the mid
+// band as the HP_120 → LP_4000 cascade. LR4 sums flat across all band edges
+// (mathematical property of cascaded Butterworth at the same corner, no
+// magnitude bump like LR2). All four cascade pairs hold their own state per
+// channel — that's 8 biquads per channel for the split.
+// ============================================================================
+
+const LR4_CROSSOVER_LOW_HZ: f32 = 120.0;
+const LR4_CROSSOVER_HIGH_HZ: f32 = 4000.0;
+const BUTTERWORTH_Q: f32 = 0.707_106_8; // sqrt(2)/2
+
+/// Per-channel filter memory for the LR4 split: two LP stages for the low
+/// band, two HP stages and two LP stages for the mid band, two HP stages for
+/// the high band. Default = all zero (no signal in history).
+#[derive(Debug, Clone, Default)]
+pub struct LR4State {
+    pub low_lp1: BiquadState,
+    pub low_lp2: BiquadState,
+    pub mid_hp1: BiquadState,
+    pub mid_hp2: BiquadState,
+    pub mid_lp1: BiquadState,
+    pub mid_lp2: BiquadState,
+    pub high_hp1: BiquadState,
+    pub high_hp2: BiquadState,
+}
+
+/// Test-only entry point: splits a single sample at sample_rate = 44_100 with
+/// the LR4 crossovers fixed at 120 Hz and 4000 Hz. Production callers use
+/// `MasteringChain::process_frame_inplace`, which fetches the coefficients
+/// from `ChainCoeffs` (sample-rate-aware) and walks the same biquads in the
+/// same order.
+#[cfg(test)]
+pub(crate) fn split_lr4_into_bands(x: f32, state: &mut LR4State) -> (f32, f32, f32) {
+    let sr = 44_100.0f32;
+    let low_lp_c = BiquadCoeffs::butter_lp(sr, LR4_CROSSOVER_LOW_HZ, BUTTERWORTH_Q);
+    let mid_hp_c = BiquadCoeffs::butter_hp(sr, LR4_CROSSOVER_LOW_HZ, BUTTERWORTH_Q);
+    let mid_lp_c = BiquadCoeffs::butter_lp(sr, LR4_CROSSOVER_HIGH_HZ, BUTTERWORTH_Q);
+    let high_hp_c = BiquadCoeffs::butter_hp(sr, LR4_CROSSOVER_HIGH_HZ, BUTTERWORTH_Q);
+    let low_a = state.low_lp1.process(&low_lp_c, x);
+    let low = state.low_lp2.process(&low_lp_c, low_a);
+    let mid_after_hp1 = state.mid_hp1.process(&mid_hp_c, x);
+    let mid_after_hp2 = state.mid_hp2.process(&mid_hp_c, mid_after_hp1);
+    let mid_after_lp1 = state.mid_lp1.process(&mid_lp_c, mid_after_hp2);
+    let mid = state.mid_lp2.process(&mid_lp_c, mid_after_lp1);
+    let high_a = state.high_hp1.process(&high_hp_c, x);
+    let high = state.high_hp2.process(&high_hp_c, high_a);
+    (low, mid, high)
+}
+
+/// Peak-detector envelope follower. One-pole smoothing with separate attack
+/// and release time constants. `env_n = (alpha * env_{n-1}) + ((1 - alpha) *
+/// |x_n|)` where `alpha = exp(-1 / (time_ms/1000 * sr))`. The selected alpha
+/// depends on whether the signal is rising (use attack) or decaying (use
+/// release).
+#[derive(Debug, Clone)]
+pub struct EnvelopeFollower {
+    pub env: f32,
+    pub alpha_attack: f32,
+    pub alpha_release: f32,
+}
+
+impl EnvelopeFollower {
+    pub fn new(sample_rate: f32, attack_ms: f32, release_ms: f32) -> Self {
+        Self {
+            env: 0.0,
+            alpha_attack: alpha_from_time_ms(sample_rate, attack_ms),
+            alpha_release: alpha_from_time_ms(sample_rate, release_ms),
+        }
+    }
+
+    #[inline]
+    pub fn process(&mut self, x_abs: f32) -> f32 {
+        let alpha = if x_abs > self.env {
+            self.alpha_attack
+        } else {
+            self.alpha_release
+        };
+        self.env = alpha * self.env + (1.0 - alpha) * x_abs;
+        self.env
+    }
+
+    pub fn reset(&mut self) {
+        self.env = 0.0;
+    }
+}
+
+#[inline]
+fn alpha_from_time_ms(sample_rate: f32, time_ms: f32) -> f32 {
+    if time_ms <= 0.0 || sample_rate <= 0.0 {
+        return 0.0;
+    }
+    (-1.0_f32 / (time_ms * 0.001 * sample_rate)).exp()
+}
+
+/// Phase 12.2 — per-band gain-reduction snapshots. `MasteringChain` writes
+/// per-frame max-|reduction_db| into these atomics; the audio thread reads
+/// via `swap` on the 50 ms snapshot cycle, mirroring the existing
+/// `peak_linear` pattern. Integer storage (|reduction_db| * 100 as u32) avoids
+/// the IEEE 754 sign-bit ordering edge case for negative dB values. 0 = no
+/// reduction in the window.
+#[derive(Debug, Default)]
+pub struct GrSnapshotSlots {
+    pub low: std::sync::Arc<std::sync::atomic::AtomicU32>,
+    pub mid: std::sync::Arc<std::sync::atomic::AtomicU32>,
+    pub high: std::sync::Arc<std::sync::atomic::AtomicU32>,
+}
+
+impl Clone for GrSnapshotSlots {
+    fn clone(&self) -> Self {
+        Self {
+            low: self.low.clone(),
+            mid: self.mid.clone(),
+            high: self.high.clone(),
+        }
+    }
+}
+
 pub struct MasteringChain {
     pub coeffs: ChainCoeffs,
     pub states: Vec<ChannelState>,
     pub limiter: Limiter,
+    pub gr_snapshots: GrSnapshotSlots,
 }
 
 const LIMITER_LOOKAHEAD_MS: f32 = 3.0;
@@ -534,7 +902,23 @@ impl MasteringChain {
             coeffs,
             states,
             limiter,
+            gr_snapshots: GrSnapshotSlots::default(),
         }
+    }
+
+    /// Construct a chain that writes gain-reduction snapshots into the
+    /// provided shared atomic slots. Used by `MasteringSource` so the
+    /// audio thread's `AudioThreadState` shares the same atomics with the
+    /// chain inside the running source.
+    pub fn new_with_gr_snapshots(
+        sample_rate: u32,
+        channels: usize,
+        settings: &MasteringSettings,
+        gr_snapshots: GrSnapshotSlots,
+    ) -> Self {
+        let mut chain = Self::new(sample_rate, channels, settings);
+        chain.gr_snapshots = gr_snapshots;
+        chain
     }
 
     /// Build a sibling chain that inherits the current filter + limiter state
@@ -546,6 +930,7 @@ impl MasteringChain {
             coeffs,
             states: prior.states.clone(),
             limiter: prior.limiter.clone(),
+            gr_snapshots: prior.gr_snapshots.clone(),
         }
     }
 
@@ -571,6 +956,15 @@ impl MasteringChain {
             y = state.warmth.process(&self.coeffs.warmth, y);
             y = state.presence_air.process(&self.coeffs.presence_air, y);
             frame[ch] = y;
+        }
+        // Phase 12.2 — 3-band multiband downward compressor (LR4 split,
+        // peak-detector envelope followers, soft 6 dB knee, auto makeup).
+        // Position: between presence_air (end of EQ) and width (start of M/S
+        // / saturation). Identity early-return when inactive — preserves
+        // byte-equivalence with all existing real-fixture tests when the
+        // slider is untouched.
+        if self.coeffs.compression_active {
+            self.apply_multiband_compressor(frame, channels);
         }
         // Width: only meaningful for stereo. The `≈ 1` guard skips the M/S
         // dance when the user hasn't touched the slider, keeping the
@@ -609,6 +1003,130 @@ impl MasteringChain {
         }
     }
 
+    fn apply_multiband_compressor(&mut self, frame: &mut [f32], channels: usize) {
+        let mut bands: [[f32; 3]; 2] = [[0.0; 3]; 2];
+        let ch_active = channels.min(2);
+        for ch in 0..ch_active {
+            let state = &mut self.states[ch];
+            let x = frame[ch];
+            let low_a = state.comp_split.low_lp1.process(&self.coeffs.comp_low_lp, x);
+            let low = state.comp_split.low_lp2.process(&self.coeffs.comp_low_lp, low_a);
+            let m1 = state.comp_split.mid_hp1.process(&self.coeffs.comp_mid_hp, x);
+            let m2 = state.comp_split.mid_hp2.process(&self.coeffs.comp_mid_hp, m1);
+            let m3 = state.comp_split.mid_lp1.process(&self.coeffs.comp_mid_lp, m2);
+            let mid = state.comp_split.mid_lp2.process(&self.coeffs.comp_mid_lp, m3);
+            let h1 = state.comp_split.high_hp1.process(&self.coeffs.comp_high_hp, x);
+            let high = state.comp_split.high_hp2.process(&self.coeffs.comp_high_hp, h1);
+            bands[ch] = [low, mid, high];
+        }
+
+        let mut gain_lin: [[f32; 3]; 2] = [[1.0; 3]; 2];
+        let mut max_gr_db_low: f32 = 0.0;
+        let mut max_gr_db_mid: f32 = 0.0;
+        let mut max_gr_db_high: f32 = 0.0;
+        let knee = self.coeffs.comp_knee_db;
+        let link = self.coeffs.comp_link_stereo;
+        let band_params: [(f32, f32, f32, f32); 3] = [
+            (
+                self.coeffs.comp_low_threshold_db,
+                self.coeffs.comp_low_ratio,
+                self.coeffs.comp_low_attack_alpha,
+                self.coeffs.comp_low_release_alpha,
+            ),
+            (
+                self.coeffs.comp_mid_threshold_db,
+                self.coeffs.comp_mid_ratio,
+                self.coeffs.comp_mid_attack_alpha,
+                self.coeffs.comp_mid_release_alpha,
+            ),
+            (
+                self.coeffs.comp_high_threshold_db,
+                self.coeffs.comp_high_ratio,
+                self.coeffs.comp_high_attack_alpha,
+                self.coeffs.comp_high_release_alpha,
+            ),
+        ];
+
+        for b in 0..3 {
+            let (thr_db, ratio, alpha_a, alpha_r) = band_params[b];
+            let mut linked_x: f32 = 0.0;
+            if link {
+                for ch in 0..ch_active {
+                    let a = bands[ch][b].abs();
+                    if a > linked_x {
+                        linked_x = a;
+                    }
+                }
+            }
+            for ch in 0..ch_active {
+                let detector = if link {
+                    linked_x
+                } else {
+                    bands[ch][b].abs()
+                };
+                let env_ref = match b {
+                    0 => &mut self.states[ch].comp_low_env,
+                    1 => &mut self.states[ch].comp_mid_env,
+                    _ => &mut self.states[ch].comp_high_env,
+                };
+                let alpha = if detector > *env_ref { alpha_a } else { alpha_r };
+                *env_ref = alpha * (*env_ref) + (1.0 - alpha) * detector;
+                let env = *env_ref;
+                let env_db = if env <= 1.0e-7 {
+                    -140.0
+                } else {
+                    20.0 * env.log10()
+                };
+                let half_knee = knee * 0.5;
+                let gr_db = if env_db < thr_db - half_knee {
+                    0.0
+                } else if env_db > thr_db + half_knee {
+                    (env_db - thr_db) * (1.0 - 1.0 / ratio)
+                } else {
+                    let x = env_db - (thr_db - half_knee);
+                    let t = x / knee;
+                    let above = (env_db - thr_db) * (1.0 - 1.0 / ratio);
+                    t * t * above.max(0.0)
+                };
+                let gain_db = -gr_db.max(0.0);
+                let g_lin = 10.0_f32.powf(gain_db / 20.0);
+                gain_lin[ch][b] = g_lin;
+                let gr_abs = gr_db.max(0.0);
+                match b {
+                    0 => {
+                        if gr_abs > max_gr_db_low {
+                            max_gr_db_low = gr_abs;
+                        }
+                    }
+                    1 => {
+                        if gr_abs > max_gr_db_mid {
+                            max_gr_db_mid = gr_abs;
+                        }
+                    }
+                    _ => {
+                        if gr_abs > max_gr_db_high {
+                            max_gr_db_high = gr_abs;
+                        }
+                    }
+                }
+            }
+        }
+
+        for ch in 0..ch_active {
+            let [low, mid, high] = bands[ch];
+            let y = low * gain_lin[ch][0] * self.coeffs.comp_low_makeup_lin
+                + mid * gain_lin[ch][1] * self.coeffs.comp_mid_makeup_lin
+                + high * gain_lin[ch][2] * self.coeffs.comp_high_makeup_lin;
+            frame[ch] = y;
+        }
+
+        use std::sync::atomic::Ordering;
+        let to_u = |db: f32| (db.max(0.0) * 100.0) as u32;
+        self.gr_snapshots.low.fetch_max(to_u(max_gr_db_low), Ordering::Relaxed);
+        self.gr_snapshots.mid.fetch_max(to_u(max_gr_db_mid), Ordering::Relaxed);
+        self.gr_snapshots.high.fetch_max(to_u(max_gr_db_high), Ordering::Relaxed);
+    }
+
     pub fn process_interleaved(&mut self, samples: &mut [f32], channels: usize) {
         if channels == 0 || self.states.is_empty() {
             return;
@@ -635,6 +1153,76 @@ impl MasteringChain {
         y = state.high.process(&self.coeffs.high, y);
         y = state.warmth.process(&self.coeffs.warmth, y);
         y = state.presence_air.process(&self.coeffs.presence_air, y);
+        if self.coeffs.compression_active {
+            let state = &mut self.states[idx];
+            let low_a = state.comp_split.low_lp1.process(&self.coeffs.comp_low_lp, y);
+            let low = state.comp_split.low_lp2.process(&self.coeffs.comp_low_lp, low_a);
+            let m1 = state.comp_split.mid_hp1.process(&self.coeffs.comp_mid_hp, y);
+            let m2 = state.comp_split.mid_hp2.process(&self.coeffs.comp_mid_hp, m1);
+            let m3 = state.comp_split.mid_lp1.process(&self.coeffs.comp_mid_lp, m2);
+            let mid = state.comp_split.mid_lp2.process(&self.coeffs.comp_mid_lp, m3);
+            let h1 = state.comp_split.high_hp1.process(&self.coeffs.comp_high_hp, y);
+            let high = state.comp_split.high_hp2.process(&self.coeffs.comp_high_hp, h1);
+            let bands = [low, mid, high];
+            let band_params: [(f32, f32, f32, f32); 3] = [
+                (
+                    self.coeffs.comp_low_threshold_db,
+                    self.coeffs.comp_low_ratio,
+                    self.coeffs.comp_low_attack_alpha,
+                    self.coeffs.comp_low_release_alpha,
+                ),
+                (
+                    self.coeffs.comp_mid_threshold_db,
+                    self.coeffs.comp_mid_ratio,
+                    self.coeffs.comp_mid_attack_alpha,
+                    self.coeffs.comp_mid_release_alpha,
+                ),
+                (
+                    self.coeffs.comp_high_threshold_db,
+                    self.coeffs.comp_high_ratio,
+                    self.coeffs.comp_high_attack_alpha,
+                    self.coeffs.comp_high_release_alpha,
+                ),
+            ];
+            let makeup_lin = [
+                self.coeffs.comp_low_makeup_lin,
+                self.coeffs.comp_mid_makeup_lin,
+                self.coeffs.comp_high_makeup_lin,
+            ];
+            let knee = self.coeffs.comp_knee_db;
+            let mut sum_y = 0.0f32;
+            for b in 0..3 {
+                let (thr_db, ratio, alpha_a, alpha_r) = band_params[b];
+                let env_ref = match b {
+                    0 => &mut state.comp_low_env,
+                    1 => &mut state.comp_mid_env,
+                    _ => &mut state.comp_high_env,
+                };
+                let detector = bands[b].abs();
+                let alpha = if detector > *env_ref { alpha_a } else { alpha_r };
+                *env_ref = alpha * (*env_ref) + (1.0 - alpha) * detector;
+                let env = *env_ref;
+                let env_db = if env <= 1.0e-7 {
+                    -140.0
+                } else {
+                    20.0 * env.log10()
+                };
+                let half_knee = knee * 0.5;
+                let gr_db = if env_db < thr_db - half_knee {
+                    0.0
+                } else if env_db > thr_db + half_knee {
+                    (env_db - thr_db) * (1.0 - 1.0 / ratio)
+                } else {
+                    let x = env_db - (thr_db - half_knee);
+                    let t = x / knee;
+                    let above = (env_db - thr_db) * (1.0 - 1.0 / ratio);
+                    t * t * above.max(0.0)
+                };
+                let g_lin = 10.0_f32.powf(-gr_db.max(0.0) / 20.0);
+                sum_y += bands[b] * g_lin * makeup_lin[b];
+            }
+            y = sum_y;
+        }
         if self.coeffs.saturation_amount > 0.0 {
             let drive = 1.0 + self.coeffs.saturation_amount * 2.0;
             y = (y * drive).tanh() / drive.tanh().max(1.0e-3);
@@ -1059,6 +1647,290 @@ mod tests {
             gain_low.abs() < 0.5,
             "presence_air=1.0 should leave 1 kHz near 0 dB, got {} dB",
             gain_low
+        );
+    }
+
+    // ====================================================================
+    // Phase 12.2 — multiband compressor tests. Closed-form math where
+    // possible; otherwise pin behavior by feeding known-amplitude steady
+    // signals through `MasteringChain` and observing steady-state output.
+    // ====================================================================
+
+    fn default_master_settings() -> MasteringSettings {
+        MasteringSettings {
+            preset: Preset::Custom { id: "t".to_string() },
+            intensity: 0.0,
+            eq_low_db: 0.0,
+            eq_mid_db: 0.0,
+            eq_high_db: 0.0,
+            volume_match: false,
+            input_gain_db: 0.0,
+            output_gain_db: 0.0,
+            advanced: AdvancedSettings::default(),
+        }
+    }
+
+    #[test]
+    fn compression_density_default_is_identity() {
+        let c = ChainCoeffs::from_settings(44_100, &default_master_settings());
+        assert!(
+            !c.compression_active,
+            "default settings must set compression_active = false (got true)"
+        );
+    }
+
+    #[test]
+    fn lr4_crossover_sums_flat_at_unity() {
+        // LR4 sums flat in magnitude (Linkwitz–Riley property) but the band
+        // network has non-zero group delay, so sample-equality of L+M+H with
+        // x is impossible — they're equal only as time-shifted signals. We
+        // pin the magnitude property by RMS equality: the energy of the
+        // summed bands matches the energy of the input within ~0.1 dB.
+        let sr = 44_100.0f32;
+        for &freq in &[60.0f32, 1_000.0, 8_000.0] {
+            let mut state = LR4State::default();
+            for n in 0..1024 {
+                let x = (n as f32 * 2.0 * std::f32::consts::PI * freq / sr).sin();
+                let _ = split_lr4_into_bands(x, &mut state);
+            }
+            let mut sum_in_sq = 0.0f64;
+            let mut sum_out_sq = 0.0f64;
+            let measure_len: usize = 4096;
+            for n in 1024..(1024 + measure_len) {
+                let x = (n as f32 * 2.0 * std::f32::consts::PI * freq / sr).sin();
+                let (l, m, h) = split_lr4_into_bands(x, &mut state);
+                sum_in_sq += (x as f64).powi(2);
+                sum_out_sq += ((l + m + h) as f64).powi(2);
+            }
+            let rms_in = (sum_in_sq / measure_len as f64).sqrt();
+            let rms_out = (sum_out_sq / measure_len as f64).sqrt();
+            let ratio_db = 20.0 * (rms_out / rms_in.max(1e-9)).log10();
+            assert!(
+                ratio_db.abs() < 0.12,
+                "LR4 summing flatness (RMS) violated at {} Hz: |L+M+H| / |x| = {:.3} dB (rms_in={}, rms_out={})",
+                freq,
+                ratio_db,
+                rms_in,
+                rms_out
+            );
+        }
+    }
+
+    #[test]
+    fn compression_density_at_one_attenuates_loud_signal() {
+        let sr = 44_100;
+        let freq = 1_000.0f32;
+        let amp = 0.8f32;
+        let mut s0 = default_master_settings();
+        s0.advanced.compression_density = Some(0.0);
+        let mut s1 = default_master_settings();
+        s1.advanced.compression_density = Some(1.0);
+        let mut chain0 = MasteringChain::new(sr, 2, &s0);
+        let mut chain1 = MasteringChain::new(sr, 2, &s1);
+        let settle = (0.4 * sr as f32) as usize;
+        let measure = (0.2 * sr as f32) as usize;
+        let mut sum0 = 0.0f64;
+        let mut sum1 = 0.0f64;
+        for n in 0..(settle + measure) {
+            let x = amp * (n as f32 * 2.0 * std::f32::consts::PI * freq / sr as f32).sin();
+            let mut f0 = [x, x];
+            let mut f1 = [x, x];
+            chain0.process_frame_inplace(&mut f0);
+            chain1.process_frame_inplace(&mut f1);
+            if n >= settle {
+                sum0 += (f0[0] as f64).powi(2);
+                sum1 += (f1[0] as f64).powi(2);
+            }
+        }
+        let rms0 = (sum0 / measure as f64).sqrt() as f32;
+        let rms1 = (sum1 / measure as f64).sqrt() as f32;
+        let delta_db = 20.0 * (rms1 / rms0.max(1e-9)).log10();
+        assert!(
+            delta_db <= -3.0,
+            "density=1.0 should attenuate the loud mid-band sine by >=3 dB \
+             vs density=0.0; got delta = {:.2} dB (rms0={}, rms1={})",
+            delta_db,
+            rms0,
+            rms1
+        );
+    }
+
+    #[test]
+    fn compression_per_band_override_replaces_macro() {
+        let mut s = default_master_settings();
+        s.advanced.compression_density = Some(0.0);
+        s.advanced.compression_mid_threshold_db = Some(-30.0);
+        let c = ChainCoeffs::from_settings(44_100, &s);
+        assert!(
+            (c.comp_mid_threshold_db - (-30.0)).abs() < 1e-4,
+            "mid threshold should be -30, got {}",
+            c.comp_mid_threshold_db
+        );
+        assert!(
+            c.comp_low_threshold_db.abs() < 1e-4,
+            "low threshold should be macro (0 dBFS at density=0), got {}",
+            c.comp_low_threshold_db
+        );
+        assert!(
+            c.comp_high_threshold_db.abs() < 1e-4,
+            "high threshold should be macro (0 dBFS at density=0), got {}",
+            c.comp_high_threshold_db
+        );
+    }
+
+    #[test]
+    fn envelope_follower_attack_release_time_constants() {
+        let sr = 44_100.0f32;
+        let mut env = EnvelopeFollower::new(sr, 10.0, 100.0);
+        let attack_samples = (sr * 0.010) as usize;
+        let mut last = 0.0f32;
+        for _ in 0..attack_samples {
+            last = env.process(1.0);
+        }
+        assert!(
+            last >= 0.63,
+            "after 10 ms (attack tau) of step input, env should be >= 0.63 \
+             (1 - 1/e); got {}",
+            last
+        );
+        let release_samples = (sr * 0.100) as usize;
+        for _ in 0..release_samples {
+            last = env.process(0.0);
+        }
+        assert!(
+            last <= 0.37,
+            "after 100 ms (release tau) of zero input, env should be <= 0.37 \
+             (1/e); got {}",
+            last
+        );
+    }
+
+    #[test]
+    fn compression_linked_stereo_applies_same_gain_to_both_channels() {
+        // RMS-based comparison: per-sample ratios blow up at sine zero
+        // crossings, so we measure gain via energy ratios. In linked mode,
+        // both channels see the same band-gain envelope (driven by the louder
+        // channel) — the L:R output-vs-input dB ratios should match within
+        // a small tolerance. In unlinked mode, the quiet channel barely
+        // triggers reduction while the loud one is hammered — the two ratios
+        // diverge.
+        let sr = 44_100;
+        let freq = 1_000.0f32;
+        let mut s_linked = default_master_settings();
+        s_linked.advanced.compression_density = Some(1.0);
+        s_linked.advanced.compression_link_stereo = Some(true);
+        let mut s_unlinked = s_linked.clone();
+        s_unlinked.advanced.compression_link_stereo = Some(false);
+        let mut linked = MasteringChain::new(sr, 2, &s_linked);
+        let mut unlinked = MasteringChain::new(sr, 2, &s_unlinked);
+        let settle = (0.4 * sr as f32) as usize;
+        let measure = (0.2 * sr as f32) as usize;
+        let mut sum_l_in_sq = 0.0f64;
+        let mut sum_r_in_sq = 0.0f64;
+        let mut sum_l_lk_sq = 0.0f64;
+        let mut sum_r_lk_sq = 0.0f64;
+        let mut sum_l_un_sq = 0.0f64;
+        let mut sum_r_un_sq = 0.0f64;
+        for n in 0..(settle + measure) {
+            let phase = n as f32 * 2.0 * std::f32::consts::PI * freq / sr as f32;
+            let l_in = 0.8 * phase.sin();
+            let r_in = 0.05 * phase.sin();
+            let mut f_l = [l_in, r_in];
+            let mut f_u = [l_in, r_in];
+            linked.process_frame_inplace(&mut f_l);
+            unlinked.process_frame_inplace(&mut f_u);
+            if n >= settle {
+                sum_l_in_sq += (l_in as f64).powi(2);
+                sum_r_in_sq += (r_in as f64).powi(2);
+                sum_l_lk_sq += (f_l[0] as f64).powi(2);
+                sum_r_lk_sq += (f_l[1] as f64).powi(2);
+                sum_l_un_sq += (f_u[0] as f64).powi(2);
+                sum_r_un_sq += (f_u[1] as f64).powi(2);
+            }
+        }
+        let to_db = |out_sq: f64, in_sq: f64| -> f32 {
+            (10.0 * (out_sq / in_sq.max(1e-30)).log10()) as f32
+        };
+        let lk_l_db = to_db(sum_l_lk_sq, sum_l_in_sq);
+        let lk_r_db = to_db(sum_r_lk_sq, sum_r_in_sq);
+        let un_l_db = to_db(sum_l_un_sq, sum_l_in_sq);
+        let un_r_db = to_db(sum_r_un_sq, sum_r_in_sq);
+        // Linked: L and R should see the same dB change (the loud-L envelope
+        // drives both channels).
+        assert!(
+            (lk_l_db - lk_r_db).abs() < 1.0,
+            "linked stereo should give matching gain to L and R; \
+             L delta = {:.2} dB, R delta = {:.2} dB",
+            lk_l_db,
+            lk_r_db
+        );
+        // Unlinked: the loud L gets reduced; the quiet R sees almost no
+        // reduction. Difference should be material (>= 3 dB).
+        assert!(
+            (un_l_db - un_r_db).abs() > 3.0,
+            "unlinked stereo should diverge L vs R; L delta = {:.2} dB, \
+             R delta = {:.2} dB (linked was L={:.2}, R={:.2})",
+            un_l_db,
+            un_r_db,
+            lk_l_db,
+            lk_r_db
+        );
+    }
+
+    #[test]
+    fn compression_makeup_gain_compensates_threshold_drop() {
+        let mut s = default_master_settings();
+        s.advanced.compression_density = Some(0.5);
+        let c = ChainCoeffs::from_settings(44_100, &s);
+        assert!(
+            (c.comp_mid_makeup_db - 3.0).abs() < 0.1,
+            "mid makeup_db at density=0.5, ratio=2.0 should be 3.0 dB, got {}",
+            c.comp_mid_makeup_db
+        );
+        let sr = 44_100;
+        let freq = 1_000.0f32;
+        let amp = 0.1f32;
+        let mut chain = MasteringChain::new(sr, 2, &s);
+        let settle = (0.4 * sr as f32) as usize;
+        let measure = (0.2 * sr as f32) as usize;
+        let mut sum_in = 0.0f64;
+        let mut sum_out = 0.0f64;
+        for n in 0..(settle + measure) {
+            let x = amp * (n as f32 * 2.0 * std::f32::consts::PI * freq / sr as f32).sin();
+            let mut f = [x, x];
+            chain.process_frame_inplace(&mut f);
+            if n >= settle {
+                sum_in += (x as f64).powi(2);
+                sum_out += (f[0] as f64).powi(2);
+            }
+        }
+        let in_db = 10.0 * (sum_in / measure as f64).log10();
+        let out_db = 10.0 * (sum_out / measure as f64).log10();
+        let delta_db = (out_db - in_db) as f32;
+        assert!(
+            (delta_db - 3.0).abs() < 1.5,
+            "sub-threshold sine should see ~+3 dB makeup at density=0.5; got delta = {:.2} dB",
+            delta_db
+        );
+    }
+
+    #[test]
+    fn compression_clamps_density_into_range() {
+        let mut s_high = default_master_settings();
+        s_high.advanced.compression_density = Some(5.0);
+        let c_high = ChainCoeffs::from_settings(44_100, &s_high);
+        assert!(
+            (c_high.comp_mid_threshold_db - (-24.0)).abs() < 1e-3,
+            "density=5.0 should clamp to 1.0 (threshold = -24 dBFS); got {}",
+            c_high.comp_mid_threshold_db
+        );
+        let mut s_neg = default_master_settings();
+        s_neg.advanced.compression_density = Some(-1.0);
+        let c_neg = ChainCoeffs::from_settings(44_100, &s_neg);
+        assert!(
+            c_neg.comp_mid_threshold_db.abs() < 1e-3,
+            "density=-1.0 should clamp to 0.0 (threshold = 0 dBFS); got {}",
+            c_neg.comp_mid_threshold_db
         );
     }
 }

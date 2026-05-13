@@ -1,7 +1,11 @@
 use crate::types::*;
 
 #[tauri::command]
-pub async fn run_export_checks(report: ExportReport) -> CommandResult<Vec<QualityCheck>> {
+pub async fn run_export_checks(
+    report: ExportReport,
+    source_analysis: Option<AnalysisResult>,
+    settings: Option<MasteringSettings>,
+) -> CommandResult<Vec<QualityCheck>> {
     let mut checks = Vec::new();
 
     if report.measured_true_peak_dbtp > -0.1 {
@@ -69,6 +73,29 @@ pub async fn run_export_checks(report: ExportReport) -> CommandResult<Vec<Qualit
             code: "non_finite_metering".to_string(),
             message: "LUFS measurement is not finite. Re-analyze before exporting.".to_string(),
         });
+    }
+
+    // Phase 12.2 — already-compressed source advisory. Fires when the SOURCE
+    // material is dynamically squashed (DR < 6 LU) AND the user is asking for
+    // moderate-to-heavy compression density (> 0.3) AND they haven't manually
+    // overridden any per-band threshold (per-band overrides imply the user
+    // knows what they're doing and the macro isn't blindly driving). Advisory
+    // only — does not block export.
+    if let (Some(analysis), Some(s)) = (source_analysis.as_ref(), settings.as_ref()) {
+        let density = s.advanced.compression_density.unwrap_or(0.0);
+        let no_per_band_threshold_overrides = s.advanced.compression_low_threshold_db.is_none()
+            && s.advanced.compression_mid_threshold_db.is_none()
+            && s.advanced.compression_high_threshold_db.is_none();
+        if analysis.dynamic_range_lu < 6.0
+            && density > 0.3
+            && no_per_band_threshold_overrides
+        {
+            checks.push(QualityCheck {
+                level: QualityLevel::Warning,
+                code: "comp_density_on_compressed_source".to_string(),
+                message: "Source appears already compressed (DR < 6 LU). Heavy compression may pump.".to_string(),
+            });
+        }
     }
 
     if checks.is_empty() {

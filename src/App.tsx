@@ -335,6 +335,7 @@ function TrackMaster({ tm }: { tm: ReturnType<typeof useTrackMaster> }) {
         renderProgress={tm.renderProgress}
         peakDbfs={tm.transport.peakDbfs}
         isPlaying={tm.transport.isPlaying}
+        compressionGr={tm.transport.compressionGr}
       />
       <ExportSection
         canExport={!!tm.selectedAnalysis}
@@ -1186,6 +1187,7 @@ function StaleBar({
   renderProgress,
   peakDbfs,
   isPlaying,
+  compressionGr,
 }: {
   stale: boolean;
   isRendering: boolean;
@@ -1194,6 +1196,7 @@ function StaleBar({
   renderProgress: { fraction: number; kind: "preview" | "master" | "album" } | null;
   peakDbfs: number;
   isPlaying: boolean;
+  compressionGr: { low: number; mid: number; high: number };
 }) {
   const progressPct =
     renderProgress !== null
@@ -1224,6 +1227,9 @@ function StaleBar({
         </div>
       )}
       <ClippingIndicator peakDbfs={peakDbfs} isPlaying={isPlaying} />
+      <GrIndicator label="L" db={compressionGr.low} isPlaying={isPlaying} />
+      <GrIndicator label="M" db={compressionGr.mid} isPlaying={isPlaying} />
+      <GrIndicator label="H" db={compressionGr.high} isPlaying={isPlaying} />
       {/* Phase 12.1 live-update counter — increments every time the frontend
           sends api.updateChain to the backend. If you make adjustments and
           this counter doesn't change, the frontend isn't firing live updates
@@ -1303,6 +1309,44 @@ function ClippingIndicator({
   );
 }
 
+// Phase 12.2 — per-band gain-reduction readout chip. Mirrors ClippingIndicator's
+// shape: idle (not playing) → "—"; silent sentinel (-120 dB) → "—"; otherwise
+// shows the reduction in dB. Color bands: idle/silent muted; >= -3 dB green;
+// -3..-6 dB amber; < -6 dB red.
+function GrIndicator({
+  label,
+  db,
+  isPlaying,
+}: {
+  label: string;
+  db: number;
+  isPlaying: boolean;
+}) {
+  let state: "idle" | "ok" | "warn" | "hot";
+  let text: string;
+  if (!isPlaying || db <= -119.9) {
+    state = "idle";
+    text = `${label} —`;
+  } else if (db >= -3.0) {
+    state = "ok";
+    text = `${label} ${db.toFixed(1)}`;
+  } else if (db >= -6.0) {
+    state = "warn";
+    text = `${label} ${db.toFixed(1)}`;
+  } else {
+    state = "hot";
+    text = `${label} ${db.toFixed(1)}`;
+  }
+  return (
+    <span
+      className={`gr-indicator gr-${state}`}
+      title={`Compressor gain reduction (${label}): ${db.toFixed(2)} dB`}
+    >
+      {text}
+    </span>
+  );
+}
+
 function ExportSection({
   canExport,
   isExporting,
@@ -1343,7 +1387,7 @@ function AdvancedPanel({
   const a = settings.advanced;
   const update = (
     field: keyof MasteringSettings["advanced"],
-    value: number | null,
+    value: number | boolean | null,
   ) => {
     onAdvanced({ ...a, [field]: value });
   };
@@ -1399,7 +1443,7 @@ function AdvancedPanel({
           onChange={(v) => update("presence_air", v)}
         />
         <NumberField
-          label="Compression (coming soon)"
+          label="Compression density"
           value={a.compression_density}
           step={0.05}
           min={0}
@@ -1407,6 +1451,7 @@ function AdvancedPanel({
           format={(v) => v.toFixed(2)}
           onChange={(v) => update("compression_density", v)}
         />
+        <CompressionPerBandSubsection a={a} onUpdate={update} />
         <SelectField
           label="Bit depth"
           value={a.bit_depth}
@@ -1432,6 +1477,139 @@ function AdvancedPanel({
         />
       </div>
     </section>
+  );
+}
+
+function CompressionPerBandSubsection({
+  a,
+  onUpdate,
+}: {
+  a: MasteringSettings["advanced"];
+  onUpdate: (
+    field: keyof MasteringSettings["advanced"],
+    value: number | boolean | null,
+  ) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  return (
+    <details
+      className="compression-per-band"
+      open={open}
+      onToggle={(e) => setOpen((e.target as HTMLDetailsElement).open)}
+    >
+      <summary className="adv-label">Per-band compressor</summary>
+      <div className="compression-link">
+        <label>
+          <input
+            type="checkbox"
+            checked={a.compression_link_stereo !== false}
+            onChange={(e) =>
+              onUpdate("compression_link_stereo", e.target.checked ? null : false)
+            }
+          />
+          {" "}Link stereo (default on — drives both channels from a shared envelope)
+        </label>
+      </div>
+      <div className="compression-per-band-grid">
+        <CompressionBandColumn
+          label="Low"
+          threshold={a.compression_low_threshold_db}
+          ratio={a.compression_low_ratio}
+          attack={a.compression_low_attack_ms}
+          release={a.compression_low_release_ms}
+          onThreshold={(v) => onUpdate("compression_low_threshold_db", v)}
+          onRatio={(v) => onUpdate("compression_low_ratio", v)}
+          onAttack={(v) => onUpdate("compression_low_attack_ms", v)}
+          onRelease={(v) => onUpdate("compression_low_release_ms", v)}
+        />
+        <CompressionBandColumn
+          label="Mid"
+          threshold={a.compression_mid_threshold_db}
+          ratio={a.compression_mid_ratio}
+          attack={a.compression_mid_attack_ms}
+          release={a.compression_mid_release_ms}
+          onThreshold={(v) => onUpdate("compression_mid_threshold_db", v)}
+          onRatio={(v) => onUpdate("compression_mid_ratio", v)}
+          onAttack={(v) => onUpdate("compression_mid_attack_ms", v)}
+          onRelease={(v) => onUpdate("compression_mid_release_ms", v)}
+        />
+        <CompressionBandColumn
+          label="High"
+          threshold={a.compression_high_threshold_db}
+          ratio={a.compression_high_ratio}
+          attack={a.compression_high_attack_ms}
+          release={a.compression_high_release_ms}
+          onThreshold={(v) => onUpdate("compression_high_threshold_db", v)}
+          onRatio={(v) => onUpdate("compression_high_ratio", v)}
+          onAttack={(v) => onUpdate("compression_high_attack_ms", v)}
+          onRelease={(v) => onUpdate("compression_high_release_ms", v)}
+        />
+      </div>
+    </details>
+  );
+}
+
+function CompressionBandColumn({
+  label,
+  threshold,
+  ratio,
+  attack,
+  release,
+  onThreshold,
+  onRatio,
+  onAttack,
+  onRelease,
+}: {
+  label: string;
+  threshold: number | null;
+  ratio: number | null;
+  attack: number | null;
+  release: number | null;
+  onThreshold: (v: number | null) => void;
+  onRatio: (v: number | null) => void;
+  onAttack: (v: number | null) => void;
+  onRelease: (v: number | null) => void;
+}) {
+  return (
+    <div className="compression-band-column">
+      <div className="compression-band-label">{label}</div>
+      <NumberField
+        label="Threshold"
+        value={threshold}
+        step={0.5}
+        min={-60}
+        max={0}
+        format={(v) => `${v.toFixed(1)} dB`}
+        onChange={onThreshold}
+      />
+      <NumberField
+        label="Ratio"
+        value={ratio}
+        step={0.1}
+        min={1}
+        max={20}
+        format={(v) => `${v.toFixed(1)}:1`}
+        onChange={onRatio}
+      />
+      <NumberField
+        label="Attack"
+        value={attack}
+        step={1}
+        min={0.5}
+        max={200}
+        format={(v) => `${v.toFixed(1)} ms`}
+        onChange={onAttack}
+      />
+      <NumberField
+        label="Release"
+        value={release}
+        step={5}
+        min={5}
+        max={2000}
+        format={(v) => `${v.toFixed(0)} ms`}
+        onChange={onRelease}
+      />
+    </div>
   );
 }
 

@@ -106,8 +106,16 @@ export const api = {
       targetPixels: targetPixels ?? null,
     }),
 
-  runExportChecks: (report: ExportReport) =>
-    invoke<QualityCheck[]>("run_export_checks", { report }),
+  runExportChecks: (
+    report: ExportReport,
+    sourceAnalysis?: AnalysisResult | null,
+    settings?: MasteringSettings | null,
+  ) =>
+    invoke<QualityCheck[]>("run_export_checks", {
+      report,
+      sourceAnalysis: sourceAnalysis ?? null,
+      settings: settings ?? null,
+    }),
 
   openOutput: (outputPath: string) =>
     invoke<null>("open_output", { outputPath }),

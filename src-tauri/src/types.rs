@@ -139,6 +139,42 @@ pub struct AdvancedSettings {
     pub warmth: Option<f32>,
     pub presence_air: Option<f32>,
     pub compression_density: Option<f32>,
+    // Phase 12.2 — per-band compressor overrides. `None` => the macro slider
+    // (compression_density) drives that band's threshold; per-band ratio /
+    // attack / release fall back to fixed musical defaults (see
+    // `ChainCoeffs::from_settings`). `Some(v)` => override the macro for this
+    // band/parameter only. All `#[serde(default)]` so older sessions and
+    // older frontends parse cleanly.
+    #[serde(default)]
+    pub compression_low_threshold_db: Option<f32>,
+    #[serde(default)]
+    pub compression_low_ratio: Option<f32>,
+    #[serde(default)]
+    pub compression_low_attack_ms: Option<f32>,
+    #[serde(default)]
+    pub compression_low_release_ms: Option<f32>,
+    #[serde(default)]
+    pub compression_mid_threshold_db: Option<f32>,
+    #[serde(default)]
+    pub compression_mid_ratio: Option<f32>,
+    #[serde(default)]
+    pub compression_mid_attack_ms: Option<f32>,
+    #[serde(default)]
+    pub compression_mid_release_ms: Option<f32>,
+    #[serde(default)]
+    pub compression_high_threshold_db: Option<f32>,
+    #[serde(default)]
+    pub compression_high_ratio: Option<f32>,
+    #[serde(default)]
+    pub compression_high_attack_ms: Option<f32>,
+    #[serde(default)]
+    pub compression_high_release_ms: Option<f32>,
+    /// Phase 12.2 — when `Some(false)`, the multiband compressor runs
+    /// independent L/R envelope followers per band. Default (`None` or
+    /// `Some(true)`) links stereo: a single max-of-|L|,|R| envelope drives the
+    /// same gain reduction on both channels, the standard mastering choice.
+    #[serde(default)]
+    pub compression_link_stereo: Option<bool>,
     pub bit_depth: Option<u16>,
     pub target_sample_rate: Option<u32>,
 }
@@ -311,6 +347,17 @@ pub struct PlaybackTick {
     /// Defaulted so older sessions/frontends parse cleanly as "no info."
     #[serde(default = "default_silence_dbfs")]
     pub peak_dbfs: f32,
+    /// Phase 12.2 — gain reduction (in dB, negative) from the low band of the
+    /// multiband compressor, captured as the maximum reduction seen in the
+    /// last snapshot window. `-120.0` is the silence sentinel (no signal or
+    /// compressor inactive in the window). Defaulted so older sessions and
+    /// older frontends parse cleanly.
+    #[serde(default = "default_silence_dbfs")]
+    pub gr_low_db: f32,
+    #[serde(default = "default_silence_dbfs")]
+    pub gr_mid_db: f32,
+    #[serde(default = "default_silence_dbfs")]
+    pub gr_high_db: f32,
 }
 
 fn default_silence_dbfs() -> f32 {

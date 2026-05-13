@@ -455,6 +455,12 @@ pub struct PlaybackSnapshot {
     /// playback, idle, or pure silence). Computed inside the audio thread by
     /// swap-and-converting the shared peak atomic.
     pub peak_dbfs: f32,
+    /// Phase 12.2 — per-band compressor gain reduction (in dB, negative)
+    /// since the last snapshot tick. `SILENCE_DBFS` when the window had no
+    /// reduction or no signal.
+    pub gr_low_db: f32,
+    pub gr_mid_db: f32,
+    pub gr_high_db: f32,
 }
 
 impl Default for PlaybackSnapshot {
@@ -465,6 +471,9 @@ impl Default for PlaybackSnapshot {
             is_playing: false,
             is_loaded: false,
             peak_dbfs: SILENCE_DBFS,
+            gr_low_db: SILENCE_DBFS,
+            gr_mid_db: SILENCE_DBFS,
+            gr_high_db: SILENCE_DBFS,
         }
     }
 }
@@ -625,6 +634,14 @@ struct AudioThreadState {
     /// valid because we only ever store non-negative finite values, where
     /// IEEE 754 bit ordering matches numeric ordering.
     peak_linear: Arc<AtomicU32>,
+    /// Phase 12.2 — per-band GR snapshot slots. Mirror of `peak_linear`'s
+    /// pattern: `MasteringSource` (via the contained `MasteringChain`)
+    /// fetch_max's |reduction_db| * 100 as u32 per frame; the audio thread
+    /// swaps to 0 each tick and converts to negative dB. 0 = no reduction in
+    /// the window.
+    gr_low: Arc<AtomicU32>,
+    gr_mid: Arc<AtomicU32>,
+    gr_high: Arc<AtomicU32>,
 }
 
 #[derive(Clone)]
@@ -744,12 +761,28 @@ fn audio_thread(rx: mpsc::Receiver<AudioCommand>, snapshot: Arc<RwLock<PlaybackS
                 } else {
                     SILENCE_DBFS
                 };
+                // Phase 12.2 — per-band GR snapshot conversion. Atomics hold
+                // |reduction_db| * 100 as u32; 0 = no reduction. Convert to
+                // negative dB (reduction direction); 0 maps to SILENCE_DBFS
+                // so the UI's GR meter reads as idle when nothing is fighting
+                // the compressor.
+                let gr_u = |a: &Arc<AtomicU32>| a.swap(0, Ordering::Relaxed);
+                let to_gr_db = |u: u32| -> f32 {
+                    if u == 0 {
+                        SILENCE_DBFS
+                    } else {
+                        -(u as f32) / 100.0
+                    }
+                };
                 PlaybackSnapshot {
                     track_id: s.current_track.clone(),
                     position_sec: s.sink.get_pos().as_secs_f64(),
                     is_playing: !s.sink.is_paused() && !s.sink.empty(),
                     is_loaded: true,
                     peak_dbfs,
+                    gr_low_db: to_gr_db(gr_u(&s.gr_low)),
+                    gr_mid_db: to_gr_db(gr_u(&s.gr_mid)),
+                    gr_high_db: to_gr_db(gr_u(&s.gr_high)),
                 }
             }
             _ => PlaybackSnapshot::default(),
@@ -784,6 +817,9 @@ fn handle_play(
             live_sample_rate: 44_100,
             decoded_cache: None,
             peak_linear: Arc::new(AtomicU32::new(0)),
+            gr_low: Arc::new(AtomicU32::new(0)),
+            gr_mid: Arc::new(AtomicU32::new(0)),
+            gr_high: Arc::new(AtomicU32::new(0)),
         });
     }
     let s = state.as_mut().expect("state just inserted");
@@ -801,6 +837,9 @@ fn handle_play(
     // Source playback bypasses MasteringSource — clear the peak slot so the
     // meter doesn't keep showing whatever the prior master playback left.
     s.peak_linear.store(0, Ordering::Relaxed);
+    s.gr_low.store(0, Ordering::Relaxed);
+    s.gr_mid.store(0, Ordering::Relaxed);
+    s.gr_high.store(0, Ordering::Relaxed);
     Ok(())
 }
 
@@ -852,6 +891,9 @@ fn handle_play_master(
             live_sample_rate: pcm.sample_rate,
             decoded_cache: None,
             peak_linear: Arc::new(AtomicU32::new(0)),
+            gr_low: Arc::new(AtomicU32::new(0)),
+            gr_mid: Arc::new(AtomicU32::new(0)),
+            gr_high: Arc::new(AtomicU32::new(0)),
         });
     }
     let s = state.as_mut().expect("state just inserted");
@@ -869,9 +911,22 @@ fn handle_play_master(
     // this, a swap from a prior session would leak its tail peak into the
     // first tick of the new one.
     s.peak_linear.store(0, Ordering::Relaxed);
+    s.gr_low.store(0, Ordering::Relaxed);
+    s.gr_mid.store(0, Ordering::Relaxed);
+    s.gr_high.store(0, Ordering::Relaxed);
 
     let (coeffs_tx, coeffs_rx) = mpsc::channel::<crate::dsp::ChainCoeffs>();
-    let chain = crate::dsp::MasteringChain::new(pcm.sample_rate, pcm.channels as usize, settings);
+    let gr_slots = crate::dsp::GrSnapshotSlots {
+        low: s.gr_low.clone(),
+        mid: s.gr_mid.clone(),
+        high: s.gr_high.clone(),
+    };
+    let chain = crate::dsp::MasteringChain::new_with_gr_snapshots(
+        pcm.sample_rate,
+        pcm.channels as usize,
+        settings,
+        gr_slots,
+    );
     let mastering_source = MasteringSource::new(
         pcm.samples,
         pcm.channels,

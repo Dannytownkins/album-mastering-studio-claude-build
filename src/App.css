@@ -568,6 +568,96 @@ button.primary:disabled {
   }
 }
 
+/* Phase 12.2 — per-band gain-reduction readout chips. Mirror of
+   .clip-indicator dimensions so the meter row stays aligned, but with
+   narrower min-width since each chip carries less text. Color states map
+   to: idle (muted), ok (green, no/mild reduction), warn (amber, moderate),
+   hot (red, heavy). */
+.gr-indicator {
+  font-size: 0.7rem;
+  letter-spacing: 0.04em;
+  padding: 0.15rem 0.45rem;
+  border-radius: 999px;
+  border: 1px solid var(--border-strong);
+  background: var(--bg-2);
+  color: var(--text-2);
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  min-width: 4.5rem;
+  text-align: center;
+}
+
+.gr-indicator.gr-idle {
+  color: var(--text-2);
+  opacity: 0.7;
+}
+
+.gr-indicator.gr-ok {
+  color: #6cd08a;
+  border-color: rgba(108, 208, 138, 0.5);
+  background: rgba(108, 208, 138, 0.08);
+}
+
+.gr-indicator.gr-warn {
+  color: #f5c842;
+  border-color: rgba(245, 200, 66, 0.5);
+  background: rgba(245, 200, 66, 0.08);
+}
+
+.gr-indicator.gr-hot {
+  color: #fff;
+  background: #c0392b;
+  border-color: #e74c3c;
+}
+
+/* Phase 12.2 — per-band compressor subsection inside AdvancedPanel.
+   Collapsed by default; expanded reveals a 3-column grid (Low / Mid / High).
+   Tight typography so the four NumberFields per column still fit. */
+.compression-per-band {
+  grid-column: 1 / -1;
+  border-top: 1px dashed var(--border-1);
+  padding-top: 0.5rem;
+  margin-top: 0.5rem;
+}
+
+.compression-per-band > summary {
+  cursor: pointer;
+  user-select: none;
+  font-size: 0.78rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-2);
+  padding: 0.25rem 0;
+}
+
+.compression-link {
+  margin: 0.5rem 0;
+  font-size: 0.78rem;
+  color: var(--text-2);
+}
+
+.compression-per-band-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 0.75rem;
+  margin-top: 0.5rem;
+}
+
+.compression-band-column {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.compression-band-label {
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  color: var(--text-1);
+  text-transform: uppercase;
+}
+
 .analysis-summary {
   margin-top: 0.5rem;
   font-size: 0.78rem;
