@@ -395,6 +395,20 @@ select {
   margin: auto;
   text-align: center;
   max-width: 480px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.empty-state-glyph {
+  width: 64px;
+  height: 64px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin-bottom: 0.5rem;
+  filter: drop-shadow(0 0 16px rgba(77, 139, 255, 0.35));
 }
 
 .empty-state h1 {
