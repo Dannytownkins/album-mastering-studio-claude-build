@@ -20,12 +20,32 @@
   --radius-sm: 5px;
   --shadow-1: 0 6px 24px rgba(0, 0, 0, 0.3);
 
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Oxygen,
-    Ubuntu, sans-serif;
+  /* Bolder pass: bias toward modern UI families with strong numerics. The
+     stack falls through to system fonts on machines without Inter installed,
+     but keeps Inter / SF Pro / Segoe UI Variable in front so display-weight
+     headlines render with proper character. */
+  font-family:
+    "Inter Variable", "Inter",
+    "Segoe UI Variable Display", "SF Pro Display",
+    -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Oxygen, Ubuntu,
+    sans-serif;
+  font-variant-numeric: tabular-nums;
   color-scheme: dark;
   background: var(--bg-0);
   color: var(--text-0);
   font-size: 16px;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* Subtle workspace ambient — radial mesh of accent + warm hot-spot so the
+   workspace breathes instead of reading as flat black. Sits behind every
+   workspace card; cards keep their own backgrounds on top. */
+.workspace {
+  background:
+    radial-gradient(ellipse 80% 60% at 30% 0%, rgba(77, 139, 255, 0.06), transparent 60%),
+    radial-gradient(ellipse 60% 40% at 90% 100%, rgba(255, 184, 107, 0.04), transparent 60%),
+    var(--bg-0);
 }
 
 * {
@@ -571,9 +591,17 @@ button.primary:disabled {
 }
 
 .track-title {
-  font-size: 1.3rem;
-  font-weight: 600;
-  letter-spacing: -0.01em;
+  font-size: 2.1rem;
+  font-weight: 800;
+  letter-spacing: -0.025em;
+  line-height: 1;
+  margin: 0 0 0.15rem;
+  background: linear-gradient(180deg, var(--text-0) 0%, var(--text-1) 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  /* Old letter-spacing var swallowed below — keep declaration anyway for
+     legibility-anchor browsers that ignore the gradient text trick. */
   margin: 0 0 0.3rem;
 }
 
@@ -1896,11 +1924,11 @@ button.primary:disabled {
 }
 
 .panel-title {
-  font-size: 0.78rem;
-  letter-spacing: 0.08em;
+  font-size: 0.7rem;
+  letter-spacing: 0.16em;
   text-transform: uppercase;
-  color: var(--text-1);
-  font-weight: 600;
+  color: var(--text-2);
+  font-weight: 700;
 }
 
 .panel-hint {
@@ -2094,9 +2122,11 @@ button.primary:disabled {
 }
 
 .readout-label {
-  font-size: 0.68rem;
+  font-size: 0.62rem;
   color: var(--text-2);
-  letter-spacing: 0.02em;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  font-weight: 600;
 }
 
 .readout-value {
@@ -2107,10 +2137,12 @@ button.primary:disabled {
 }
 
 .readout-number {
-  font-size: 0.95rem;
-  font-weight: 600;
+  font-size: 1.25rem;
+  font-weight: 700;
   color: var(--text-0);
   font-variant-numeric: tabular-nums;
+  letter-spacing: -0.02em;
+  line-height: 1;
 }
 
 .readout-unit {
@@ -2195,9 +2227,11 @@ button.primary:disabled {
 }
 
 .level-label {
-  font-size: 0.68rem;
+  font-size: 0.62rem;
   color: var(--text-2);
-  letter-spacing: 0.02em;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  font-weight: 600;
 }
 
 .level-value {
@@ -2207,10 +2241,12 @@ button.primary:disabled {
 }
 
 .level-number {
-  font-size: 1rem;
-  font-weight: 600;
+  font-size: 1.35rem;
+  font-weight: 700;
   color: var(--text-0);
   font-variant-numeric: tabular-nums;
+  letter-spacing: -0.02em;
+  line-height: 1;
 }
 
 .level-unit {
