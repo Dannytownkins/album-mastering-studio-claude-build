@@ -894,6 +894,42 @@ button.primary:disabled {
   min-height: 180px;
 }
 
+/* Waveform main row: SVG + dB scale side-by-side. */
+.wf-main {
+  display: flex;
+  align-items: stretch;
+  gap: 0.4rem;
+  flex: 1;
+  min-height: 0;
+}
+
+.wf-main .wf {
+  flex: 1;
+}
+
+.wf-db-scale {
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  width: 1.7rem;
+  font-size: 0.62rem;
+  color: var(--text-2);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  padding: 0.25rem 0;
+  letter-spacing: 0.02em;
+}
+
+.wf-db-tick {
+  line-height: 1;
+  font-weight: 600;
+}
+
+.wf-db-tick-center {
+  color: var(--text-1);
+  font-weight: 700;
+}
+
 /* Mini overview waveform — sits below the main waveform with a thinner
    playhead and an optional region indicator. Click anywhere to seek. */
 .wf-overview {

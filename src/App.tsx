@@ -874,6 +874,7 @@ function WaveformView({
 
   return (
     <section className="wf-card">
+      <div className="wf-main">
       <svg
         className="wf"
         viewBox={`0 0 ${W} ${H}`}
@@ -911,6 +912,8 @@ function WaveformView({
           y2={H}
         />
       </svg>
+      <WaveformDbScale />
+      </div>
       <WaveformOverview
         channel={channel}
         currentTimeSec={currentTimeSec}
@@ -922,6 +925,31 @@ function WaveformView({
         Click to seek. Shift+drag to define a loop region. Shift+click clears it.
       </p>
     </section>
+  );
+}
+
+function WaveformDbScale() {
+  // Vertical dB scale at the right edge of the main waveform. The waveform
+  // canvas is centered around 0 dB (mid-line), so we render ticks at -6,
+  // -12, -18, -24 above AND below the centerline. Pure presentation — does
+  // not change layout of the waveform itself (uses absolute positioning).
+  const ticks = [0, -6, -12, -18, -24];
+  return (
+    <div className="wf-db-scale" aria-hidden>
+      {ticks.map((db, i) => (
+        <span
+          key={`top-${db}`}
+          className={`wf-db-tick${i === 0 ? " wf-db-tick-center" : ""}`}
+        >
+          {db === 0 ? "0" : db}
+        </span>
+      ))}
+      {ticks.slice(1).map((db) => (
+        <span key={`bot-${db}`} className="wf-db-tick">
+          {db}
+        </span>
+      ))}
+    </div>
   );
 }
 
