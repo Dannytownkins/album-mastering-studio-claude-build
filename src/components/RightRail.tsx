@@ -108,17 +108,12 @@ function MasterOutPanel({
         {isAnalyzing && <span className="panel-hint">analyzing…</span>}
       </header>
       <div className="lufs-meter">
-        <LufsScale />
         <div className="lufs-bars">
-          <LufsBar value={lufs} channel="L" />
-          <LufsBar value={lufs} channel="R" />
-          {lufsShort !== undefined && (
-            <>
-              <LufsBar value={lufsShort} channel="L" tone="short" />
-              <LufsBar value={lufsShort} channel="R" tone="short" />
-            </>
-          )}
+          <LufsBar value={lufs} peakHold={lufsShort} channel="L" />
+          <LufsBar value={lufs} peakHold={lufsShort} channel="R" />
         </div>
+        <LufsScale />
+        <TruePeakBar value={tp} />
       </div>
       <dl className="master-readouts">
         <Readout
@@ -161,24 +156,57 @@ function LufsScale() {
 
 function LufsBar({
   value,
+  peakHold,
   channel,
-  tone = "integrated",
 }: {
   value: number | undefined;
+  peakHold: number | undefined;
   channel: "L" | "R";
-  tone?: "integrated" | "short";
 }) {
-  // Map dBFS value into a 0..1 fill ratio against the meter scale.
-  // Values above LUFS_SCALE_MAX are pinned to 1.0; below LUFS_SCALE_MIN, 0.
+  // Map a dBFS value into 0..1 fill against the -36..-6 scale.
+  const ratio = (db: number): number => {
+    if (!Number.isFinite(db)) return 0;
+    const clamped = Math.max(LUFS_SCALE_MIN, Math.min(LUFS_SCALE_MAX, db));
+    return (clamped - LUFS_SCALE_MIN) / (LUFS_SCALE_MAX - LUFS_SCALE_MIN);
+  };
+  const fill = value !== undefined ? ratio(value) : 0;
+  const peakRatio = peakHold !== undefined ? ratio(peakHold) : null;
+  return (
+    <div className="lufs-bar">
+      <div className="lufs-bar-track" />
+      <div className="lufs-bar-fill" style={{ height: `${fill * 100}%` }} />
+      {peakRatio !== null && peakRatio > 0 && (
+        <div
+          className="lufs-peak-hold"
+          style={{ bottom: `calc(${peakRatio * 100}% - 1px)` }}
+          title="Short-term max"
+        />
+      )}
+      <span className="lufs-bar-label">{channel}</span>
+    </div>
+  );
+}
+
+function TruePeakBar({ value }: { value: number | undefined }) {
+  // True peak gets its own narrow bar on a 0..-36 dBTP scale (0 at top means
+  // clipping). The fill itself uses the warm-to-hot gradient because high
+  // true peak is bad; safe headroom reads as quiet/low fill.
+  const TP_MIN = -36;
+  const TP_MAX = 0;
   let fill = 0;
+  let tone: "ok" | "warn" | "hot" = "ok";
   if (value !== undefined && Number.isFinite(value)) {
-    const clamped = Math.max(LUFS_SCALE_MIN, Math.min(LUFS_SCALE_MAX, value));
-    fill = (clamped - LUFS_SCALE_MIN) / (LUFS_SCALE_MAX - LUFS_SCALE_MIN);
+    const clamped = Math.max(TP_MIN, Math.min(TP_MAX, value));
+    fill = (clamped - TP_MIN) / (TP_MAX - TP_MIN);
+    if (value > -0.1) tone = "hot";
+    else if (value > -1.0) tone = "warn";
   }
   return (
-    <div className={`lufs-bar lufs-bar-${tone}`}>
-      <div className="lufs-bar-fill" style={{ height: `${fill * 100}%` }} />
-      <span className="lufs-bar-label">{channel}</span>
+    <div className={`tp-bar tp-${tone}`}>
+      <div className="tp-bar-track" />
+      <div className="tp-bar-fill" style={{ height: `${fill * 100}%` }} />
+      <div className="tp-clip-line" title="-1 dBTP streaming ceiling" />
+      <span className="tp-bar-label">TP</span>
     </div>
   );
 }
