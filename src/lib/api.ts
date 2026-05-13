@@ -1,5 +1,5 @@
-import { invoke } from "@tauri-apps/api/core";
-import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+import { invoke, listen } from "./tauri-runtime";
+import type { UnlistenFn } from "@tauri-apps/api/event";
 import type {
   AbPreview,
   AnalysisResult,
