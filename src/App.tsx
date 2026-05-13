@@ -82,6 +82,10 @@ function App() {
         compressionGr={tm.transport.compressionGr}
         lufsMomentary={tm.transport.lufsMomentary}
         lufsIntegrated={tm.transport.lufsIntegrated}
+        effectiveWidth={
+          tm.selectedSettings.advanced.width ??
+          (tm.selectedSettings.preset.kind === "spatial" ? 1.3 : 1.0)
+        }
         advancedSlot={
           tm.selectedTrack ? (
             <AdvancedPanel
@@ -1206,6 +1210,21 @@ function Transport({
   );
 }
 
+// Per-preset accent color. Drives the tile's character glow so the imagery
+// feels integrated with the tile rather than pasted on. Matches the color
+// language of the generated 3D imagery.
+const PRESET_ACCENT: Record<Preset["kind"], string> = {
+  universal: "#4d8bff",
+  clarity: "#22d3ee",
+  tape: "#fbbf24",
+  spatial: "#a78bfa",
+  oomph: "#f87171",
+  warmth: "#fb923c",
+  punch: "#ef4444",
+  loud: "#60a5fa",
+  custom: "#9ca3af",
+};
+
 function PresetTiles({
   selected,
   onChange,
@@ -1221,11 +1240,13 @@ function PresetTiles({
       <div className="tile-row">
         {PRESET_OPTIONS.map((p) => {
           const active = isPresetActive(selected, p.value);
+          const accent = PRESET_ACCENT[p.value.kind];
           return (
             <button
               key={p.label}
               type="button"
               className={"tile " + (active ? "active" : "")}
+              style={{ ["--tile-accent" as never]: accent }}
               onClick={() => onChange(p.value)}
             >
               <PresetIcon kind={p.value.kind} className="tile-icon" />

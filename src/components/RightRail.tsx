@@ -26,6 +26,10 @@ type RightRailProps = {
   /// playback session. Drives the "Integrated LUFS" readout and the
   /// peak-hold line on the bars while playing.
   lufsIntegrated: number;
+  /// Effective stereo width the chain is using right now (0 = mono,
+  /// 1 = neutral, 2 = max widen). Driven by the user's Width slider with
+  /// the preset's default as fallback. Drives the STEREO WIDTH gauge.
+  effectiveWidth: number;
   // Slot for the AdvancedPanel content. Wrapped in a collapsible details/
   // summary container so it sits between the levels and quality check
   // panels (matches the reference layout).
@@ -54,6 +58,7 @@ export function RightRail({
   compressionGr,
   lufsMomentary,
   lufsIntegrated,
+  effectiveWidth,
   advancedSlot,
   canExport,
   isExporting,
@@ -69,6 +74,7 @@ export function RightRail({
         isPlaying={isPlaying}
         lufsMomentary={lufsMomentary}
         lufsIntegrated={lufsIntegrated}
+        effectiveWidth={effectiveWidth}
       />
       <LevelsPanel
         peakDbfs={peakDbfs}
@@ -111,6 +117,7 @@ function MasterOutPanel({
   isPlaying,
   lufsMomentary,
   lufsIntegrated,
+  effectiveWidth,
 }: {
   analysis: AnalysisResult | undefined;
   isAnalyzing: boolean;
@@ -118,10 +125,10 @@ function MasterOutPanel({
   isPlaying: boolean;
   lufsMomentary: number;
   lufsIntegrated: number;
+  effectiveWidth: number;
 }) {
   const tp = analysis?.true_peak_dbtp;
   const dr = analysis?.dynamic_range_lu;
-  const width = analysis?.stereo_width;
 
   // Bars drive off the LIVE BS.1770 momentary LUFS during playback.
   const liveMomentary = isPlaying && lufsMomentary > -120 ? lufsMomentary : undefined;
@@ -190,19 +197,18 @@ function MasterOutPanel({
           unit="LU"
         />
       </dl>
-      <StereoWidthGauge width={width} />
+      <StereoWidthGauge width={effectiveWidth} />
     </section>
   );
 }
 
-function StereoWidthGauge({ width }: { width: number | undefined }) {
-  // Map the chain's internal width (0 = mono, 1 = neutral, 2 = max widen)
-  // onto a -1..+1 display range so the gauge reads as "narrow → balanced →
-  // wide" — much more intuitive than a 0..2 scale.
-  const display =
-    width !== undefined && Number.isFinite(width) ? width - 1.0 : null;
-  const clamped =
-    display !== null ? Math.max(-1, Math.min(1, display)) : 0;
+function StereoWidthGauge({ width }: { width: number }) {
+  // The chain's internal width is 0 (mono) → 1 (neutral) → 2 (max widen).
+  // Display it on a -1..+1 scale where 0 = neutral. Driven by the live
+  // chain setting (user's Width slider or preset default), so dragging
+  // the Width control in Advanced moves the needle in real time.
+  const display = Number.isFinite(width) ? width - 1.0 : 0;
+  const clamped = Math.max(-1, Math.min(1, display));
 
   // Semi-circular gauge: arc from -135° (left) up through -90° (top) to
   // -45° (right). t in [0, 1] picks the angle along that arc.
@@ -239,15 +245,13 @@ function StereoWidthGauge({ width }: { width: number | undefined }) {
   const nx = cx + needleR * Math.cos(needleA);
   const ny = cy + needleR * Math.sin(needleA);
 
-  const valueDisplay = display !== null ? display.toFixed(2) : "—";
+  const valueDisplay = display.toFixed(2);
   const caption =
-    display === null
-      ? "—"
-      : clamped < -0.3
-        ? "Narrow"
-        : clamped > 0.3
-          ? "Wide"
-          : "Balanced";
+    clamped < -0.3
+      ? "Narrow"
+      : clamped > 0.3
+        ? "Wide"
+        : "Balanced";
 
   return (
     <section className="panel stereo-width-panel">
