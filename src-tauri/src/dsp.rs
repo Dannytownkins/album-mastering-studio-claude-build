@@ -265,31 +265,48 @@ impl ChainCoeffs {
         // first pass — Phase 12.1 listening on real material will calibrate.
         let preset_scale = 0.4 + 1.2 * intensity;
 
-        // (low_db, mid_db, high_db, gain_db, saturation_amount)
+        // (low_db, mid_db, high_db, gain_db, saturation_amount, default_width)
         // EQ values are the preset's signature curve before user EQ adds on.
         // Gain in dB is the preset's loudness push before Intensity scaling.
         // Saturation is a unitless drive parameter consumed by the tanh stage.
-        let (preset_low_db, preset_mid_db, preset_high_db, preset_gain_db, preset_sat) =
-            match settings.preset {
-                // Universal: well-rounded, mostly transparent, gentle air on top.
-                Preset::Universal => (0.0, 0.0, 0.5, 1.5, 0.0),
-                // Clarity: cut low mud, lift presence + air for vocal/detail.
-                Preset::Clarity => (-0.5, 1.0, 2.5, 1.5, 0.0),
-                // Tape: low-mid body, softened top, audible saturation glue.
-                Preset::Tape => (1.5, 0.0, -1.5, 1.0, 0.45),
-                // Spatial: cut mids, lift highs — open, V-ish for width feel.
-                Preset::Spatial => (0.0, -1.0, 1.5, 1.5, 0.0),
-                // Oomph: heavy low boost for bass-forward material.
-                Preset::Oomph => (2.5, -0.5, 0.0, 2.0, 0.15),
-                // Warmth: fuller body, softer top, moderate saturation.
-                Preset::Warmth => (1.5, 0.5, -2.0, 1.0, 0.30),
-                // Punch: mid emphasis for transient impact + presence.
-                Preset::Punch => (1.0, 2.0, 1.0, 2.0, 0.20),
-                // Loud: broadband density + gain push for streaming targets.
-                Preset::Loud => (0.5, 0.5, 0.5, 3.5, 0.10),
-                // Custom: neutral baseline — user controls drive everything.
-                Preset::Custom { .. } => (0.0, 0.0, 0.0, 1.5, 0.0),
-            };
+        // default_width is the preset's baseline M/S width (1.0 = neutral).
+        // The user's Advanced.width slider takes precedence when set; this is
+        // the "if you haven't touched it" default for each preset.
+        let (
+            preset_low_db,
+            preset_mid_db,
+            preset_high_db,
+            preset_gain_db,
+            preset_sat,
+            preset_width,
+        ) = match settings.preset {
+            // Universal: well-rounded, mostly transparent, gentle air on top.
+            Preset::Universal => (0.0, 0.0, 0.5, 1.5, 0.0, 1.0),
+            // Clarity: cut low mud, lift presence + air for vocal/detail.
+            Preset::Clarity => (-0.5, 1.0, 2.5, 1.5, 0.0, 1.0),
+            // Tape: low-mid body, softened top, audible saturation glue.
+            // Dan listening note 2026-05-12: Tape was substantially louder
+            // than other presets — saturation drives perceived loudness up,
+            // so trimmed sat 0.45 -> 0.25 (still audibly saturated, less
+            // aggressive). Gain push stays at 1.0 dB so intensity-scaling
+            // contracts keep firing on the input-gain ratio.
+            Preset::Tape => (1.5, 0.0, -1.5, 1.0, 0.25, 1.0),
+            // Spatial: cut mids, lift highs — open, V-ish for width feel.
+            // Dan listening note 2026-05-12: was very quiet and didn't widen
+            // enough — bumped gain 1.5 -> 2.5 dB and added a 1.3 default
+            // width so the preset reads as audibly wider out of the box.
+            Preset::Spatial => (0.0, -1.0, 1.5, 2.5, 0.0, 1.3),
+            // Oomph: heavy low boost for bass-forward material.
+            Preset::Oomph => (2.5, -0.5, 0.0, 2.0, 0.15, 1.0),
+            // Warmth: fuller body, softer top, moderate saturation.
+            Preset::Warmth => (1.5, 0.5, -2.0, 1.0, 0.30, 1.0),
+            // Punch: mid emphasis for transient impact + presence.
+            Preset::Punch => (1.0, 2.0, 1.0, 2.0, 0.20, 1.0),
+            // Loud: broadband density + gain push for streaming targets.
+            Preset::Loud => (0.5, 0.5, 0.5, 3.5, 0.10, 1.0),
+            // Custom: neutral baseline — user controls drive everything.
+            Preset::Custom { .. } => (0.0, 0.0, 0.0, 1.5, 0.0, 1.0),
+        };
 
         // Effective EQ = scaled preset EQ + user EQ.
         let effective_low_db = preset_low_db * preset_scale + settings.eq_low_db;
@@ -364,7 +381,7 @@ impl ChainCoeffs {
         let width_side_scale = settings
             .advanced
             .width
-            .unwrap_or(1.0)
+            .unwrap_or(preset_width)
             .clamp(0.0, 2.0);
 
         // ----- Phase 12.2: multiband compressor coefficients -----

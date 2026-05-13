@@ -331,6 +331,7 @@ function TrackMaster({ tm }: { tm: ReturnType<typeof useTrackMaster> }) {
       <StaleBar
         stale={tm.previewStale}
         isRendering={tm.isRendering}
+        isExporting={tm.isExporting}
         onUpdate={tm.updatePreview}
         liveUpdateStats={tm.liveUpdateStats}
         renderProgress={tm.renderProgress}
@@ -341,6 +342,7 @@ function TrackMaster({ tm }: { tm: ReturnType<typeof useTrackMaster> }) {
       <ExportSection
         canExport={!!tm.selectedAnalysis}
         isExporting={tm.isExporting}
+        isRendering={tm.isRendering}
         advancedOpen={tm.advancedOpen}
         onToggleAdvanced={tm.toggleAdvanced}
         onExport={tm.exportMaster}
@@ -1184,6 +1186,7 @@ function UndoRedoBar({
 function StaleBar({
   stale,
   isRendering,
+  isExporting,
   onUpdate,
   liveUpdateStats,
   renderProgress,
@@ -1193,6 +1196,7 @@ function StaleBar({
 }: {
   stale: boolean;
   isRendering: boolean;
+  isExporting: boolean;
   onUpdate: () => void;
   liveUpdateStats: { attempts: number; applied: number; lastAt: number | null };
   renderProgress: { fraction: number; kind: "preview" | "master" | "album" } | null;
@@ -1250,8 +1254,12 @@ function StaleBar({
         type="button"
         className="ghost-btn"
         onClick={onUpdate}
-        disabled={isRendering}
-        title="Render a temporary WAV with the current settings so you can audit it in another player or DAW. Not required for live audition — the Mastered button above plays through the chain in real time."
+        disabled={isRendering || isExporting}
+        title={
+          isExporting
+            ? "Disabled while an export is in progress — the two operations share render state."
+            : "Render a temporary WAV with the current settings so you can audit it in another player or DAW. Not required for live audition — the Mastered button above plays through the chain in real time."
+        }
       >
         {stale ? "Render audit WAV" : "Re-render audit WAV"}
       </button>
@@ -1352,12 +1360,14 @@ function GrIndicator({
 function ExportSection({
   canExport,
   isExporting,
+  isRendering,
   advancedOpen,
   onToggleAdvanced,
   onExport,
 }: {
   canExport: boolean;
   isExporting: boolean;
+  isRendering: boolean;
   advancedOpen: boolean;
   onToggleAdvanced: () => void;
   onExport: () => void;
@@ -1368,7 +1378,12 @@ function ExportSection({
         type="button"
         className="primary export-btn"
         onClick={onExport}
-        disabled={!canExport || isExporting}
+        disabled={!canExport || isExporting || isRendering}
+        title={
+          isRendering && !isExporting
+            ? "Disabled while a render-audit WAV is in progress — they share render state."
+            : undefined
+        }
       >
         {isExporting ? "Exporting…" : "Export Master"}
       </button>
