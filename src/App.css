@@ -57,6 +57,7 @@ body,
 #root {
   margin: 0;
   height: 100vh;
+  width: 100vw;
   overflow: hidden;
 }
 
@@ -176,14 +177,14 @@ select {
 
 .app {
   display: grid;
-  grid-template-columns: 240px 1fr 320px;
+  grid-template-columns: 260px 1fr 300px;
   flex: 1;
   min-height: 0;
   background: var(--bg-0);
   color: var(--text-0);
 }
 
-@media (max-width: 1280px) {
+@media (max-width: 1400px) {
   .app {
     grid-template-columns: 220px 1fr 280px;
   }
@@ -403,10 +404,10 @@ select {
 /* Workspace */
 .workspace {
   overflow-y: auto;
-  padding: 1.5rem 2rem 3rem;
+  padding: 1.1rem 1.5rem 1.5rem;
   display: flex;
   flex-direction: column;
-  gap: 1.25rem;
+  gap: 0.75rem;
   background: var(--bg-0);
 }
 
@@ -1101,24 +1102,25 @@ button.primary:disabled {
   font-size: 0.85rem;
 }
 
-/* Transport */
+/* Transport — doubled height, sits directly under the waveform. */
 .transport {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 1rem;
+  gap: 1.25rem;
   background: var(--bg-1);
   border: 1px solid var(--border);
   border-radius: var(--radius);
-  padding: 0.6rem 0.85rem;
+  padding: 1.4rem 1.25rem;
   flex-wrap: wrap;
+  min-height: 96px;
 }
 
 .transport-left,
 .transport-right {
   display: flex;
   align-items: center;
-  gap: 0.75rem;
+  gap: 1rem;
 }
 
 .play-btn {
@@ -1127,20 +1129,20 @@ button.primary:disabled {
   border: 1px solid var(--accent);
   padding: 0;
   border-radius: 50%;
-  font-size: 1.05rem;
-  width: 44px;
-  height: 44px;
+  font-size: 1.6rem;
+  width: 72px;
+  height: 72px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  box-shadow: var(--accent-glow-soft);
+  box-shadow: var(--accent-glow);
   transition: box-shadow 120ms, filter 120ms, transform 80ms;
   cursor: pointer;
 }
 
 .play-btn:hover {
   filter: brightness(1.08);
-  box-shadow: var(--accent-glow);
+  box-shadow: var(--accent-glow), 0 0 32px var(--accent-bright);
 }
 
 .play-btn:active {
@@ -1149,8 +1151,9 @@ button.primary:disabled {
 
 .time {
   font-variant-numeric: tabular-nums;
-  font-size: 0.85rem;
+  font-size: 1.1rem;
   color: var(--text-1);
+  letter-spacing: 0.02em;
 }
 
 .time .dim {
@@ -1226,8 +1229,8 @@ button.primary:disabled {
 .presets {
   display: flex;
   flex-direction: column;
-  gap: 0.6rem;
-  padding: 0.9rem 1rem;
+  gap: 0.4rem;
+  padding: 0.55rem 0.85rem 0.65rem;
   background: linear-gradient(180deg, rgba(31, 37, 51, 0.4) 0%, var(--bg-2) 100%);
   border: 1px solid var(--border);
   border-radius: 6px;
@@ -1242,19 +1245,36 @@ button.primary:disabled {
 
 .tile-row {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(96px, 1fr));
+  /* 8 preset tiles must fit one row at the 1600x940 design canvas. With
+     the right-rail scrollbar eating ~17px the working width drops below
+     the prior minmax(118px) threshold and Loud wraps to row 2. 100px
+     gives headroom even at the smallest design viewport (1280 wide). */
+  grid-template-columns: repeat(auto-fit, minmax(100px, 1fr));
   gap: 0.5rem;
 }
 
 .tile {
-  background: linear-gradient(180deg, rgba(31, 37, 51, 0.4) 0%, var(--bg-2) 100%);
+  /* Per-preset accent (set inline via --tile-accent) drives a faint
+     radial wash behind the imagery so each tile inherits its character
+     color — Universal tiles read as cool blue, Tape as amber, Spatial
+     as purple, etc. Keeps the imagery feeling integrated rather than
+     pasted on. */
+  background:
+    radial-gradient(
+      ellipse 80% 70% at 50% 35%,
+      color-mix(in srgb, var(--tile-accent, #4d8bff) 18%, transparent),
+      transparent 65%
+    ),
+    linear-gradient(180deg, rgba(31, 37, 51, 0.7) 0%, var(--bg-2) 100%);
   border: 1px solid var(--border);
-  border-radius: 6px;
-  padding: 0.6rem 0.55rem 0.65rem;
+  border-radius: 8px;
+  padding: 0.7rem 0.45rem 0.55rem;
   text-align: center;
   display: flex;
   flex-direction: column;
   align-items: center;
+  position: relative;
+  overflow: hidden;
   justify-content: center;
   gap: 0.3rem;
   color: var(--text-1);
@@ -1263,25 +1283,9 @@ button.primary:disabled {
   position: relative;
 }
 
-.tile:hover {
-  border-color: var(--border-strong);
-  background: var(--bg-2);
-}
-
-.tile.active {
-  border-color: var(--accent);
-  background: rgba(77, 139, 255, 0.12);
-  color: var(--text-0);
-  box-shadow: var(--accent-glow-soft), inset 0 1px 0 rgba(255, 255, 255, 0.04);
-}
-
 .tile-label {
   font-weight: 600;
   font-size: 0.85rem;
-}
-
-.tile.active .tile-label {
-  color: var(--accent);
 }
 
 .tile-blurb {
@@ -1304,46 +1308,113 @@ button.primary:disabled {
 
 .tile:hover {
   border-color: var(--border-strong);
-  background: linear-gradient(180deg, rgba(31, 37, 51, 0.6) 0%, var(--bg-3) 100%);
   transform: translateY(-1px);
 }
 
+/* Photoreal preset imagery — sits on top of the tile via screen blend
+   so the bright parts of the 3D render add light to the tile underneath
+   instead of looking like a sticker pasted on. The transparent areas of
+   the PNG let the tile's accent-radial gradient show through naturally. */
 .tile-icon {
-  width: 1.25rem;
-  height: 1.25rem;
-  color: var(--text-2);
+  width: 84px;
+  height: 84px;
+  object-fit: contain;
   margin-bottom: 0.35rem;
   flex-shrink: 0;
-}
-
-.tile.active .tile-icon {
-  color: var(--accent);
+  mix-blend-mode: screen;
+  filter: brightness(0.9) saturate(0.95);
+  transition: filter 150ms ease, transform 150ms ease;
+  pointer-events: none;
+  user-select: none;
+  position: relative;
+  z-index: 1;
 }
 
 .tile:hover .tile-icon {
-  color: var(--text-1);
+  filter: brightness(1.05) saturate(1.05);
+  transform: translateY(-1px) scale(1.03);
 }
 
-.tile.active:hover .tile-icon {
-  color: var(--accent);
+.tile.active .tile-icon {
+  filter: brightness(1.18) saturate(1.15)
+    drop-shadow(0 0 18px color-mix(in srgb, var(--tile-accent, #4d8bff) 60%, transparent));
+  transform: scale(1.05);
+}
+
+/* Deeper accent wash when the tile is hovered or active so the imagery
+   feels lit FROM the tile, not floating ABOVE it. */
+.tile:hover {
+  background:
+    radial-gradient(
+      ellipse 80% 70% at 50% 35%,
+      color-mix(in srgb, var(--tile-accent, #4d8bff) 28%, transparent),
+      transparent 65%
+    ),
+    linear-gradient(180deg, rgba(31, 37, 51, 0.7) 0%, var(--bg-2) 100%);
+}
+
+.tile.active {
+  background:
+    radial-gradient(
+      ellipse 90% 80% at 50% 38%,
+      color-mix(in srgb, var(--tile-accent, #4d8bff) 38%, transparent),
+      transparent 70%
+    ),
+    linear-gradient(180deg, rgba(31, 37, 51, 0.85) 0%, var(--bg-2) 100%);
+  border-color: var(--tile-accent, var(--accent));
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.06),
+    0 0 28px color-mix(in srgb, var(--tile-accent, #4d8bff) 35%, transparent);
+}
+
+.tile.active .tile-label {
+  color: var(--tile-accent, var(--accent));
 }
 
 /* User presets */
 .user-presets {
   display: flex;
   flex-direction: column;
-  gap: 0.5rem;
-  padding: 0.7rem 1rem;
+  gap: 0.4rem;
+  padding: 0.5rem 0.85rem;
   background: linear-gradient(180deg, rgba(31, 37, 51, 0.35) 0%, var(--bg-2) 100%);
   border: 1px solid var(--border);
   border-radius: 6px;
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.03);
 }
 
+/* Inline empty-state CTA — replaces the full card when there are no saved
+   presets, so we don't burn a row of vertical real-estate on a hint. */
+.user-presets-add-inline {
+  align-self: flex-start;
+  background: transparent;
+  border: 1px dashed var(--border-strong);
+  color: var(--text-2);
+  border-radius: 999px;
+  padding: 0.3rem 0.8rem;
+  font-size: 0.72rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  font-weight: 600;
+  cursor: pointer;
+  transition: color 120ms ease, border-color 120ms ease, background 120ms ease;
+}
+
+.user-presets-add-inline:hover {
+  color: var(--text-0);
+  border-color: var(--accent);
+  background: rgba(77, 139, 255, 0.08);
+}
+
 .user-preset-row {
   display: flex;
   flex-wrap: wrap;
+  align-items: center;
   gap: 0.4rem;
+}
+
+.user-preset-row-label {
+  margin-right: 0.25rem;
 }
 
 .user-preset-empty {
@@ -1424,15 +1495,17 @@ button.primary:disabled {
   border-color: var(--accent);
 }
 
-/* Macros */
+/* Macros — outer card is just a backdrop now; the .knobs-row inside
+   carries the actual visual treatment and grid layout. Kept paddings
+   minimal so the row reads as one tight strip, not a card-in-card. */
 .macros {
   display: flex;
   flex-direction: column;
-  gap: 0.5rem;
-  background: var(--bg-1);
-  border: 1px solid var(--border);
+  gap: 0.35rem;
+  background: transparent;
+  border: none;
   border-radius: var(--radius);
-  padding: 0.85rem 1rem;
+  padding: 0;
 }
 
 .slider-row {
@@ -1967,20 +2040,20 @@ button.primary:disabled {
   background: var(--bg-1);
   border-left: 1px solid var(--border);
   overflow-y: auto;
-  padding: 1rem 1rem 2rem;
+  padding: 0.7rem 0.85rem 0.85rem;
   display: flex;
   flex-direction: column;
-  gap: 1rem;
+  gap: 0.55rem;
 }
 
 .panel {
   background: linear-gradient(180deg, rgba(31, 37, 51, 0.6) 0%, var(--bg-2) 100%);
   border: 1px solid var(--border);
   border-radius: 8px;
-  padding: 0.85rem 0.95rem;
+  padding: 0.55rem 0.75rem 0.6rem;
   display: flex;
   flex-direction: column;
-  gap: 0.65rem;
+  gap: 0.4rem;
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
 }
 
@@ -2040,8 +2113,8 @@ button.primary:disabled {
   display: flex;
   gap: 0.55rem;
   align-items: stretch;
-  height: 190px;
-  padding: 0.25rem 0;
+  height: 130px;
+  padding: 0.2rem 0 0;
 }
 
 /* MASTER OUT is the hero of the right rail — give it a bit more inner
@@ -2224,37 +2297,96 @@ button.primary:disabled {
   letter-spacing: 0.06em;
 }
 
+/* Stat tile grid under the meter — matches the reference's bordered
+   "LUFS / dBTP / dB / LU" tiles. 2x2 grid of bordered cells with the
+   value big and the unit subtle. */
 .master-readouts {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 0.55rem 0.85rem;
-  margin: 0;
+  gap: 0.45rem;
+  margin: 0.4rem 0 0;
 }
 
 .readout {
   display: flex;
   flex-direction: column;
-  gap: 0.1rem;
+  align-items: center;
+  gap: 0.15rem;
+  padding: 0.5rem 0.4rem 0.55rem;
+  background: linear-gradient(180deg, rgba(31, 37, 51, 0.55) 0%, var(--bg-2) 100%);
+  border: 1px solid var(--border);
+  border-radius: 6px;
   min-width: 0;
-}
-
-.readout-label {
-  font-size: 0.62rem;
-  color: var(--text-2);
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  font-weight: 600;
+  text-align: center;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.03);
 }
 
 .readout-value {
   display: flex;
   align-items: baseline;
-  gap: 0.2rem;
+  justify-content: center;
+  gap: 0.18rem;
   margin: 0;
+  order: 1;
 }
 
 .readout-number {
-  font-size: 1.25rem;
+  font-size: 1.55rem;
+  font-weight: 700;
+  color: var(--text-0);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.025em;
+  line-height: 1;
+}
+
+.readout-unit {
+  font-size: 0.62rem;
+  color: var(--text-2);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  font-weight: 700;
+}
+
+.readout-label {
+  font-size: 0.6rem;
+  color: var(--text-2);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  font-weight: 600;
+  order: 2;
+}
+
+/* STEREO WIDTH gauge — packed tight, value tucked under the arc. */
+.stereo-width-panel {
+  padding-bottom: 0.4rem;
+}
+
+.stereo-gauge-vis {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0;
+  padding: 0;
+  max-width: 200px;
+  margin: 0 auto;
+}
+
+.stereo-gauge-vis svg {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
+.stereo-gauge-readout {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0;
+  margin-top: -2.4rem; /* tuck under the arc */
+}
+
+.stereo-gauge-value {
+  font-size: 1.2rem;
   font-weight: 700;
   color: var(--text-0);
   font-variant-numeric: tabular-nums;
@@ -2262,9 +2394,13 @@ button.primary:disabled {
   line-height: 1;
 }
 
-.readout-unit {
-  font-size: 0.7rem;
+.stereo-gauge-caption {
+  font-size: 0.55rem;
   color: var(--text-2);
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  font-weight: 600;
+  margin-top: 0.15rem;
 }
 
 /* QUALITY SUMMARY card */
@@ -2420,7 +2556,7 @@ button.primary:disabled {
    the readout cells fixed, but enforce a min height on the body so
    small empty states don't shrink the card height either. */
 .panel.levels {
-  min-height: 170px;
+  min-height: 110px;
 }
 
 /* QUALITY CHECK */
@@ -2497,12 +2633,12 @@ button.primary:disabled {
    bottom of the right rail. */
 .right-rail-export {
   width: 100%;
-  padding: 1rem 1rem;
-  font-size: 1rem;
+  padding: 0.75rem 1rem;
+  font-size: 0.95rem;
   letter-spacing: 0.04em;
   font-weight: 700;
   text-transform: uppercase;
-  margin-top: 0.35rem;
+  margin-top: 0.15rem;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -2821,7 +2957,7 @@ button.primary:disabled {
 /* Phase 12.2 P3 — Signal-chain visualization. */
 
 .signal-chain {
-  padding: 0.85rem 1rem 0.95rem;
+  padding: 0.55rem 0.95rem 1.5rem;
   background:
     radial-gradient(circle at 20% 0%, rgba(77, 139, 255, 0.12) 0%, transparent 55%),
     linear-gradient(180deg, rgba(31, 37, 51, 0.55) 0%, var(--bg-2) 100%);
@@ -2829,15 +2965,16 @@ button.primary:disabled {
   border-radius: 8px;
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
   position: relative;
-  overflow: hidden;
+  /* overflow: visible so per-stage labels (SOURCE / EQ / WARMTH / …) that
+     extend below the disc baseline aren't clipped by the panel border. */
 }
 
 .signal-chain::before {
   content: "SIGNAL CHAIN";
   position: absolute;
-  top: 0.5rem;
+  top: 0.4rem;
   left: 1rem;
-  font-size: 0.62rem;
+  font-size: 0.58rem;
   letter-spacing: 0.16em;
   color: var(--text-2);
   font-weight: 700;
@@ -2847,7 +2984,7 @@ button.primary:disabled {
   display: flex;
   align-items: center;
   gap: 0;
-  margin-top: 0.85rem;
+  margin-top: 0.55rem;
   justify-content: space-between;
 }
 
@@ -2855,10 +2992,10 @@ button.primary:disabled {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 0.25rem;
+  gap: 0.15rem;
   text-align: center;
   flex: 0 0 auto;
-  min-width: 64px;
+  min-width: 52px;
 }
 
 .chain-stage-disc {
@@ -2871,6 +3008,10 @@ button.primary:disabled {
   background: var(--bg-3);
   border: 1px solid var(--border-strong);
   color: var(--text-2);
+  /* Kill inherited line-height so inline SVGs don't sit on a phantom text
+     baseline — without this, align-items: center still leaves a few px of
+     vertical drift because the flex item's hypothetical line-box has height. */
+  line-height: 0;
   transition: color 120ms ease, background 120ms ease, transform 120ms ease;
 }
 
@@ -2878,6 +3019,12 @@ button.primary:disabled {
   color: var(--accent-bright);
   background: linear-gradient(180deg, rgba(77, 139, 255, 0.18) 0%, rgba(42, 107, 242, 0.08) 100%);
   border-color: rgba(111, 163, 255, 0.5);
+}
+
+/* SVG icons must render as block-level inside the disc so they don't pick
+   up the inline baseline offset that flex centering can't fully override. */
+.chain-stage-disc svg {
+  display: block;
 }
 
 .chain-stage:hover .chain-stage-disc {
@@ -2918,8 +3065,10 @@ button.primary:disabled {
   background: var(--border);
   border-radius: 999px;
   margin: 0 0.35rem;
-  margin-bottom: 32px;
-  /* Pulse when both ends are active so the data "flows" visibly. */
+  /* Offset to align with the disc center — the column has the disc on top
+     and label/detail below; total column height ~ disc(38) + label + detail.
+     The link should sit at the vertical center of the DISC, not the column. */
+  margin-bottom: 28px;
   position: relative;
   overflow: hidden;
 }
@@ -2938,13 +3087,17 @@ button.primary:disabled {
 
 /* Phase 12.2 P2 — Intensity + Tone Shape as knobs. */
 
+/* Macros row: one tight horizontal strip — Intensity (big) | Tone Shape
+   (3 small) | Loudness Target (small dropdown stack). Reference image
+   packs these inline; previously we let the middle column stretch and
+   strand the loudness block on the right with a big empty band. */
 .knobs-row {
   display: grid;
-  grid-template-columns: minmax(160px, 0.9fr) minmax(280px, 1.8fr) minmax(160px, 0.9fr);
-  gap: 1.4rem;
-  align-items: stretch;
-  padding: 1rem 1.1rem;
-  background: linear-gradient(180deg, rgba(31, 37, 51, 0.5) 0%, var(--bg-2) 100%);
+  grid-template-columns: auto minmax(240px, 1fr) minmax(170px, auto);
+  gap: 1.5rem;
+  align-items: center;
+  padding: 0.85rem 1.1rem;
+  background: linear-gradient(180deg, rgba(31, 37, 51, 0.55) 0%, var(--bg-2) 100%);
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.03);
   border: 1px solid var(--border);
   border-radius: 6px;
@@ -2955,29 +3108,38 @@ button.primary:disabled {
 .loudness-target-block {
   display: flex;
   flex-direction: column;
-  gap: 0.6rem;
+  gap: 0.45rem;
   align-items: center;
+  min-width: 0;
+}
+
+.loudness-target-block {
+  align-self: stretch;
+  justify-content: center;
 }
 
 .loudness-readout {
   display: flex;
   align-items: baseline;
-  gap: 0.25rem;
-  margin-top: 0.4rem;
+  gap: 0.3rem;
+  margin: 0;
 }
 
 .loudness-number {
-  font-size: 2.2rem;
-  font-weight: 600;
+  font-size: 1.55rem;
+  font-weight: 700;
   color: var(--text-0);
   font-variant-numeric: tabular-nums;
   line-height: 1;
+  letter-spacing: -0.02em;
 }
 
 .loudness-unit {
-  font-size: 0.78rem;
+  font-size: 0.7rem;
   color: var(--text-2);
-  letter-spacing: 0.04em;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  font-weight: 600;
 }
 
 .loudness-profile-select {
@@ -2988,6 +3150,7 @@ button.primary:disabled {
   padding: 0.35rem 0.6rem;
   font-size: 0.78rem;
   width: 100%;
+  max-width: 220px;
   cursor: pointer;
 }
 
@@ -3030,33 +3193,38 @@ button.primary:disabled {
 .knob-vis svg {
   display: block;
   outline: none;
-}
-
-.knob-vis svg {
-  filter: drop-shadow(0 0 4px rgba(77, 139, 255, 0.18));
-  transition: filter 100ms ease, transform 80ms ease;
+  transition: transform 80ms ease;
 }
 
 .knob-vis svg:hover {
-  filter: drop-shadow(0 0 10px rgba(111, 163, 255, 0.5));
-  transform: scale(1.03);
+  transform: scale(1.025);
 }
 
 .knob-vis svg.is-dragging,
 .knob-vis svg:active {
-  filter: drop-shadow(0 0 14px rgba(111, 163, 255, 0.75));
-  transform: scale(1.05);
+  transform: scale(1.04);
 }
 
-/* Outer ring on hover — gives a clear "this is a control" affordance
-   regardless of the cursor reaching the knob. */
+/* Halo behind the knob — placed on .knob-vis so it sits BEHIND the SVG
+   socket and reads as ambient illumination of the bezel rather than a UI
+   focus ring. Driven entirely by hover/drag state on the knob root. */
 .knob-vis {
   border-radius: 50%;
-  transition: box-shadow 100ms ease;
+  position: relative;
+  transition: box-shadow 160ms ease;
 }
 
 .knob:hover .knob-vis {
-  box-shadow: 0 0 0 2px rgba(77, 139, 255, 0.25);
+  box-shadow:
+    0 0 22px color-mix(in srgb, var(--knob-tone, #4d8bff) 35%, transparent),
+    0 0 60px color-mix(in srgb, var(--knob-tone, #4d8bff) 14%, transparent);
+}
+
+.knob:active .knob-vis,
+.knob .knob-vis:has(svg.is-dragging) {
+  box-shadow:
+    0 0 28px color-mix(in srgb, var(--knob-tone, #4d8bff) 60%, transparent),
+    0 0 80px color-mix(in srgb, var(--knob-tone, #4d8bff) 22%, transparent);
 }
 
 .knob-fallback {

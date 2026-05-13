@@ -82,6 +82,10 @@ function App() {
         compressionGr={tm.transport.compressionGr}
         lufsMomentary={tm.transport.lufsMomentary}
         lufsIntegrated={tm.transport.lufsIntegrated}
+        effectiveWidth={
+          tm.selectedSettings.advanced.width ??
+          (tm.selectedSettings.preset.kind === "spatial" ? 1.3 : 1.0)
+        }
         advancedSlot={
           tm.selectedTrack ? (
             <AdvancedPanel
@@ -525,7 +529,6 @@ function TrackMaster({ tm }: { tm: ReturnType<typeof useTrackMaster> }) {
         onSetRegion={tm.setRegion}
         onClearRegion={tm.clearRegion}
       />
-      <SignalChain settings={tm.selectedSettings} />
       <Transport
         isPlaying={tm.transport.isPlaying}
         playbackKind={tm.transport.playbackKind}
@@ -543,6 +546,7 @@ function TrackMaster({ tm }: { tm: ReturnType<typeof useTrackMaster> }) {
         selected={tm.selectedSettings.preset}
         onChange={tm.setPreset}
       />
+      <SignalChain settings={tm.selectedSettings} />
       <UserPresetSection
         presets={tm.userPresets}
         savingPreset={tm.savingPreset}
@@ -1206,6 +1210,21 @@ function Transport({
   );
 }
 
+// Per-preset accent color. Drives the tile's character glow so the imagery
+// feels integrated with the tile rather than pasted on. Matches the color
+// language of the generated 3D imagery.
+const PRESET_ACCENT: Record<Preset["kind"], string> = {
+  universal: "#4d8bff",
+  clarity: "#22d3ee",
+  tape: "#fbbf24",
+  spatial: "#a78bfa",
+  oomph: "#f87171",
+  warmth: "#fb923c",
+  punch: "#ef4444",
+  loud: "#60a5fa",
+  custom: "#9ca3af",
+};
+
 function PresetTiles({
   selected,
   onChange,
@@ -1221,11 +1240,13 @@ function PresetTiles({
       <div className="tile-row">
         {PRESET_OPTIONS.map((p) => {
           const active = isPresetActive(selected, p.value);
+          const accent = PRESET_ACCENT[p.value.kind];
           return (
             <button
               key={p.label}
               type="button"
               className={"tile " + (active ? "active" : "")}
+              style={{ ["--tile-accent" as never]: accent }}
               onClick={() => onChange(p.value)}
             >
               <PresetIcon kind={p.value.kind} className="tile-icon" />
@@ -1253,24 +1274,34 @@ function UserPresetSection({
   onApply: (preset: UserPreset) => void;
 }) {
   const [name, setName] = useState("");
+  const [isExpanded, setIsExpanded] = useState(false);
 
   const handleSave = () => {
     if (!name.trim()) return;
     onSave(name);
     setName("");
+    setIsExpanded(false);
   };
+
+  // Empty state collapses to a single inline "+ Save current as preset"
+  // button so we don't burn a full row of vertical space on nothing.
+  if (presets.length === 0 && !isExpanded) {
+    return (
+      <button
+        type="button"
+        className="user-presets-add-inline"
+        onClick={() => setIsExpanded(true)}
+        title="Save the current settings as a named preset"
+      >
+        + Save current as preset
+      </button>
+    );
+  }
 
   return (
     <section className="user-presets">
-      <div className="section-head">
-        <span className="section-label">My presets</span>
-      </div>
       <div className="user-preset-row">
-        {presets.length === 0 && (
-          <span className="user-preset-empty">
-            Save the current settings as a preset to reuse later.
-          </span>
-        )}
+        <span className="section-label user-preset-row-label">MY PRESETS</span>
         {presets.map((p) => (
           <div key={p.id} className="user-preset-chip">
             <button
@@ -1293,31 +1324,44 @@ function UserPresetSection({
             </button>
           </div>
         ))}
-      </div>
-      <form
-        className="user-preset-save"
-        onSubmit={(e) => {
-          e.preventDefault();
-          handleSave();
-        }}
-      >
-        <input
-          type="text"
-          className="user-preset-name"
-          placeholder="Save current as…"
-          value={name}
-          onChange={(e) => setName(e.target.value)}
-          maxLength={64}
-          disabled={savingPreset}
-        />
-        <button
-          type="submit"
-          className="ghost-btn"
-          disabled={savingPreset || !name.trim()}
+        <form
+          className="user-preset-save"
+          onSubmit={(e) => {
+            e.preventDefault();
+            handleSave();
+          }}
         >
-          {savingPreset ? "Saving…" : "Save preset"}
-        </button>
-      </form>
+          <input
+            type="text"
+            className="user-preset-name"
+            placeholder="Save current as…"
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            maxLength={64}
+            disabled={savingPreset}
+            autoFocus={isExpanded}
+          />
+          <button
+            type="submit"
+            className="ghost-btn"
+            disabled={savingPreset || !name.trim()}
+          >
+            {savingPreset ? "Saving…" : "Save"}
+          </button>
+          {presets.length === 0 && (
+            <button
+              type="button"
+              className="ghost-btn"
+              onClick={() => {
+                setName("");
+                setIsExpanded(false);
+              }}
+            >
+              Cancel
+            </button>
+          )}
+        </form>
+      </div>
     </section>
   );
 }
@@ -1362,6 +1406,7 @@ function Macros({
           <Knob
             label="Low"
             size="md"
+            tone="cyan"
             value={settings.eq_low_db}
             min={-12}
             max={12}
@@ -1373,6 +1418,7 @@ function Macros({
           <Knob
             label="Mid"
             size="md"
+            tone="green"
             value={settings.eq_mid_db}
             min={-12}
             max={12}
@@ -1384,6 +1430,7 @@ function Macros({
           <Knob
             label="High"
             size="md"
+            tone="purple"
             value={settings.eq_high_db}
             min={-12}
             max={12}

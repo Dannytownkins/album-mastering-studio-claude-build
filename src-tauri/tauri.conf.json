@@ -14,10 +14,10 @@
       {
         "label": "main",
         "title": "Album Mastering Studio",
-        "width": 1280,
-        "height": 800,
-        "minWidth": 960,
-        "minHeight": 600
+        "width": 1600,
+        "height": 940,
+        "minWidth": 1280,
+        "minHeight": 780
       }
     ],
     "security": {

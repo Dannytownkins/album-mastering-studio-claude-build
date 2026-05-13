@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { open, save } from "@tauri-apps/plugin-dialog";
-import { getCurrentWebview } from "@tauri-apps/api/webview";
+import { open, save, getCurrentWebview } from "../lib/tauri-runtime";
 import { api, onPlaybackTick, onRenderProgress } from "../lib/api";
 import type {
   AdvancedSettings,
