@@ -854,7 +854,10 @@ button.primary:disabled {
   border: 1px solid var(--border);
   border-radius: var(--radius);
   padding: 0.5rem;
-  height: 240px;
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  min-height: 240px;
   position: relative;
 }
 
@@ -883,6 +886,48 @@ button.primary:disabled {
 .wf-region {
   fill: var(--accent);
   fill-opacity: 0.18;
+  pointer-events: none;
+}
+
+.wf {
+  flex: 1;
+  min-height: 180px;
+}
+
+/* Mini overview waveform — sits below the main waveform with a thinner
+   playhead and an optional region indicator. Click anywhere to seek. */
+.wf-overview {
+  width: 100%;
+  height: 48px;
+  color: var(--text-2);
+  background: var(--bg-2);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  cursor: pointer;
+  display: block;
+  flex-shrink: 0;
+}
+
+.wf-overview rect {
+  fill: currentColor;
+  shape-rendering: crispEdges;
+}
+
+.wf-overview:hover {
+  color: var(--text-1);
+}
+
+.wf-overview-playhead {
+  stroke: var(--accent-bright);
+  stroke-width: 1;
+  vector-effect: non-scaling-stroke;
+  pointer-events: none;
+  filter: drop-shadow(0 0 3px rgba(111, 163, 255, 0.6));
+}
+
+.wf-overview-region {
+  fill: var(--accent);
+  fill-opacity: 0.15;
   pointer-events: none;
 }
 

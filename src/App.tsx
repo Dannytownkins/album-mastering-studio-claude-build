@@ -915,10 +915,101 @@ function WaveformView({
           y2={H}
         />
       </svg>
+      <WaveformOverview
+        channel={channel}
+        currentTimeSec={currentTimeSec}
+        durationSec={durationSec}
+        region={displayRegion}
+        onSeek={onSeek}
+      />
       <p className="wf-hint">
         Click to seek. Shift+drag to define a loop region. Shift+click clears it.
       </p>
     </section>
+  );
+}
+
+function WaveformOverview({
+  channel,
+  currentTimeSec,
+  durationSec,
+  region,
+  onSeek,
+}: {
+  channel: number[];
+  currentTimeSec: number;
+  durationSec: number;
+  region: LoopRegion | null;
+  onSeek: (positionSec: number) => void;
+}) {
+  // Compact 48 px-high overview rendered below the main waveform. Click-to-
+  // seek only — no shift-drag region edit here, the main waveform handles
+  // that. Adds a "viewport" rectangle showing what's currently in the
+  // main waveform's visible window; for v1 the main waveform shows the
+  // whole track, so the viewport equals the visible region (or the loop
+  // region if set).
+  const W = 1000;
+  const H = 48;
+  const playheadX =
+    durationSec > 0
+      ? Math.max(0, Math.min(W, (currentTimeSec / durationSec) * W))
+      : 0;
+  const regionRect = region && durationSec > 0
+    ? (() => {
+        const startX = Math.max(
+          0,
+          Math.min(W, (Math.min(region.start_sec, region.end_sec) / durationSec) * W),
+        );
+        const endX = Math.max(
+          0,
+          Math.min(W, (Math.max(region.start_sec, region.end_sec) / durationSec) * W),
+        );
+        return { startX, endX };
+      })()
+    : null;
+  const handlePointer = (e: ReactPointerEvent<SVGSVGElement>) => {
+    if (durationSec <= 0) return;
+    const rect = e.currentTarget.getBoundingClientRect();
+    if (rect.width <= 0) return;
+    const ratio = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+    onSeek(ratio * durationSec);
+  };
+  return (
+    <svg
+      className="wf-overview"
+      viewBox={`0 0 ${W} ${H}`}
+      preserveAspectRatio="none"
+      onPointerDown={handlePointer}
+      role="slider"
+      aria-label="Waveform overview — click to seek"
+      aria-valuemin={0}
+      aria-valuemax={durationSec}
+      aria-valuenow={currentTimeSec}
+    >
+      {channel.map((v, i) => {
+        const x = (i / channel.length) * W;
+        const barW = (W / channel.length) * 0.85;
+        const barH = v * (H * 0.92);
+        const y = (H - barH) / 2;
+        return <rect key={i} x={x} y={y} width={barW} height={barH} rx={0.5} />;
+      })}
+      {regionRect && (
+        <rect
+          className="wf-overview-region"
+          x={regionRect.startX}
+          y={0}
+          width={Math.max(1, regionRect.endX - regionRect.startX)}
+          height={H}
+        />
+      )}
+      <line
+        className="wf-overview-playhead"
+        x1={playheadX}
+        y1={0}
+        x2={playheadX}
+        y2={H}
+      />
+    </svg>
   );
 }
 
