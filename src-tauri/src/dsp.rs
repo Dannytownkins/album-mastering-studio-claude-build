@@ -124,6 +124,73 @@ impl BiquadCoeffs {
         }
     }
 
+    /// ITU-R BS.1770-4 K-weighting pre-filter, Stage 1.
+    ///
+    /// High-shelf with analog parameters f0 = 1681.9744509555319 Hz,
+    /// G = 3.999843853973347 dB, Q = 0.7071752369554196. These are NOT
+    /// freely chosen — they are the constants specified by the standard,
+    /// and at 48 kHz they produce the published reference coefficients
+    /// (BS.1770-4 Annex 1) which downstream loudness meters compare against
+    /// for conformance.
+    ///
+    /// Computed in f64 then narrowed to f32 so the result matches the
+    /// published reference at the standard sample rates to within f32
+    /// epsilon (~1e-7).
+    pub fn k_weighting_pre(sample_rate: u32) -> Self {
+        let fs = sample_rate as f64;
+        let f0 = 1681.9744509555319_f64;
+        let g = 3.999843853973347_f64;
+        let q = 0.7071752369554196_f64;
+        let k = (std::f64::consts::PI * f0 / fs).tan();
+        let vh = 10.0_f64.powf(g / 20.0);
+        let vb = vh.powf(0.4996667741545416);
+        let denom = 1.0 + k / q + k * k;
+        let b0 = (vh + vb * k / q + k * k) / denom;
+        let b1 = 2.0 * (k * k - vh) / denom;
+        let b2 = (vh - vb * k / q + k * k) / denom;
+        let a1 = 2.0 * (k * k - 1.0) / denom;
+        let a2 = (1.0 - k / q + k * k) / denom;
+        Self {
+            b0: b0 as f32,
+            b1: b1 as f32,
+            b2: b2 as f32,
+            a1: a1 as f32,
+            a2: a2 as f32,
+        }
+    }
+
+    /// ITU-R BS.1770-4 K-weighting pre-filter, Stage 2 — the Revised
+    /// Low-frequency B-curve (RLB) high-pass.
+    ///
+    /// Analog parameters f0 = 38.13547087602444 Hz, Q = 0.5003270373253953.
+    /// The Q is NOT 0.7071 (the common mistake when implementing this
+    /// filter); the BS.1770-specific Q gives the published response.
+    ///
+    /// Per the standard the b-coefficients are kept as the analog prototype
+    /// (1, -2, 1) without being scaled by 1/a0 like the a-coefficients are.
+    /// This introduces a ~+0.04 dB asymptotic gain at Nyquist relative to
+    /// a naïvely-normalized RBJ HP, and is baked into the BS.1770 LUFS
+    /// calibration offset of -0.691 dB. Reproducing the standard requires
+    /// preserving this asymmetry.
+    pub fn k_weighting_rlb(sample_rate: u32) -> Self {
+        let fs = sample_rate as f64;
+        let f0 = 38.13547087602444_f64;
+        let q = 0.5003270373253953_f64;
+        let k = (std::f64::consts::PI * f0 / fs).tan();
+        let denom = 1.0 + k / q + k * k;
+        // a coefficients are normalized (a0 implicit = 1); b coefficients
+        // intentionally aren't — see doc comment above.
+        let a1 = 2.0 * (k * k - 1.0) / denom;
+        let a2 = (1.0 - k / q + k * k) / denom;
+        Self {
+            b0: 1.0,
+            b1: -2.0,
+            b2: 1.0,
+            a1: a1 as f32,
+            a2: a2 as f32,
+        }
+    }
+
     pub fn peaking(sample_rate: f32, freq_hz: f32, q: f32, gain_db: f32) -> Self {
         if gain_db.abs() < 1.0e-4 {
             return Self::identity();
@@ -867,99 +934,112 @@ fn alpha_from_time_ms(sample_rate: f32, time_ms: f32) -> f32 {
 }
 
 // ============================================================================
-// Phase 12.2 P3 — BS.1770 momentary LUFS meter.
+// BS.1770-4 momentary LUFS meter — conformant.
 //
-// K-weighting prefilter: a 1500 Hz high-shelf (+4 dB, RBJ shelving) followed
-// by a 38 Hz high-pass. We share the existing BiquadCoeffs / BiquadState
-// infrastructure. Following the prefilter, the meter maintains a 400 ms
-// sliding window of mean-squared energy across channels and converts to LUFS
-// per the BS.1770 formula: LUFS = -0.691 + 10·log10(mean_squared).
+// Two-stage K-weighting prefilter (exact ITU-R BS.1770-4 coefficients via
+// BiquadCoeffs::k_weighting_pre / k_weighting_rlb) followed by a true
+// rectangular 400 ms sliding mean-square window. Output is converted to
+// LUFS via M = -0.691 + 10·log10(sum_of_channel_energies).
 //
-// Stereo channel weights are 1.0 / 1.0 (no surround compensation).  Energy
-// gating (-70 LUFS absolute / -10 LU relative) is skipped — that's needed
-// for INTEGRATED loudness measurements over a whole track, not for a live
-// momentary readout which by definition shows whatever is playing right now.
+// Stereo channel weights are 1.0 / 1.0 (no surround compensation). Energy
+// gating (-70 LUFS absolute / -10 LU relative) is skipped — that's defined
+// only for INTEGRATED loudness, not the momentary readout which by definition
+// shows whatever is playing right now.
+//
+// Phase A1 of the Codex port plan: this replaces the previous one-pole IIR
+// approximation and the 1500 Hz / slope-0.4 / Q-0.7071 K-weighting with the
+// BS.1770-4 reference filters and a literal ring-buffer window.
 // ============================================================================
 
-const LUFS_PREFILTER_HIGHSHELF_HZ: f32 = 1500.0;
-const LUFS_PREFILTER_HIGHSHELF_GAIN_DB: f32 = 4.0;
-const LUFS_PREFILTER_HIGHSHELF_SLOPE: f32 = 0.4;
-const LUFS_PREFILTER_HP_HZ: f32 = 38.0;
-const LUFS_MOMENTARY_WINDOW_MS: f32 = 400.0;
+const LUFS_MOMENTARY_WINDOW_MS: f64 = 400.0;
 const LUFS_BS1770_OFFSET: f32 = -0.691;
 
 #[derive(Debug, Clone)]
 pub struct MomentaryLufs {
-    /// K-weighting prefilter: high-shelf then high-pass, per channel.
+    /// BS.1770-4 K-weighting prefilter: Stage 1 = high-shelf @ 1681.97 Hz
+    /// (+4 dB, Q≈0.7071), Stage 2 = RLB high-pass @ 38.14 Hz (Q≈0.5003).
     hs_coeffs: BiquadCoeffs,
     hp_coeffs: BiquadCoeffs,
     hs_state: [BiquadState; 2],
     hp_state: [BiquadState; 2],
-    /// Single-pole sliding mean-squared accumulator. We approximate the
-    /// 400 ms rectangular window with a one-pole exponential decay tuned
-    /// so the time constant matches — same numeric behavior for live UI
-    /// purposes without keeping a 17k-sample ring buffer per channel.
-    mean_sq: f64,
-    alpha: f32,
-    primed_samples: u32,
+    /// Ring buffer of per-sample summed channel-energy (l_k² + r_k²) over
+    /// the most recent 400 ms. Sized at construction to
+    /// `400 ms × sample_rate`. Running sum is maintained incrementally
+    /// (add new, subtract displaced) so the per-frame cost is O(1) rather
+    /// than O(window_size).
+    ring: Vec<f64>,
+    ring_pos: usize,
+    ring_sum: f64,
+    /// `false` until the ring has wrapped once. Before that, the sum is
+    /// over fewer than `ring.len()` samples and `lufs()` returns -120.0.
+    ring_filled: bool,
 }
 
 impl MomentaryLufs {
     pub fn new(sample_rate: u32) -> Self {
-        let sr = sample_rate as f32;
-        let hs_coeffs = BiquadCoeffs::high_shelf(
-            sr,
-            LUFS_PREFILTER_HIGHSHELF_HZ,
-            LUFS_PREFILTER_HIGHSHELF_GAIN_DB,
-            LUFS_PREFILTER_HIGHSHELF_SLOPE,
-        );
-        let hp_coeffs = BiquadCoeffs::butter_hp(sr, LUFS_PREFILTER_HP_HZ, 0.7071);
-        // alpha tuned so the 1-pole time-constant matches the 400 ms window.
-        let alpha = (-1.0_f32 / (LUFS_MOMENTARY_WINDOW_MS * 0.001 * sr)).exp();
+        let window_samples =
+            ((LUFS_MOMENTARY_WINDOW_MS * 0.001 * sample_rate as f64).round() as usize).max(1);
         Self {
-            hs_coeffs,
-            hp_coeffs,
+            hs_coeffs: BiquadCoeffs::k_weighting_pre(sample_rate),
+            hp_coeffs: BiquadCoeffs::k_weighting_rlb(sample_rate),
             hs_state: [BiquadState::default(); 2],
             hp_state: [BiquadState::default(); 2],
-            mean_sq: 0.0,
-            alpha,
-            primed_samples: 0,
+            ring: vec![0.0; window_samples],
+            ring_pos: 0,
+            ring_sum: 0.0,
+            ring_filled: false,
         }
     }
 
     /// Feed one stereo frame (left, right) and return the current momentary
-    /// LUFS estimate. For mono input pass the same value for both channels.
+    /// LUFS readout. For mono input pass the same sample for both channels;
+    /// the BS.1770 sum-of-channels convention then produces a +3 LU
+    /// stereo-vs-mono offset, which is by design of the standard.
     #[inline]
     pub fn process_frame(&mut self, left: f32, right: f32) -> f32 {
         let l_hs = self.hs_state[0].process(&self.hs_coeffs, left);
         let l_hp = self.hp_state[0].process(&self.hp_coeffs, l_hs);
         let r_hs = self.hs_state[1].process(&self.hs_coeffs, right);
         let r_hp = self.hp_state[1].process(&self.hp_coeffs, r_hs);
-        // Sum-of-channels mean-square energy per BS.1770 (channel weights 1.0).
         let energy = (l_hp as f64) * (l_hp as f64) + (r_hp as f64) * (r_hp as f64);
-        let a = self.alpha as f64;
-        self.mean_sq = a * self.mean_sq + (1.0 - a) * energy;
-        if self.primed_samples < 100_000 {
-            self.primed_samples = self.primed_samples.saturating_add(1);
+        // Sliding-sum bookkeeping: replace the oldest slot, fix up the
+        // running sum, clamp negatives that arise from f64 cancellation
+        // drift over very long sessions.
+        let displaced = self.ring[self.ring_pos];
+        self.ring[self.ring_pos] = energy;
+        self.ring_sum = (self.ring_sum - displaced + energy).max(0.0);
+        self.ring_pos += 1;
+        if self.ring_pos >= self.ring.len() {
+            self.ring_pos = 0;
+            self.ring_filled = true;
         }
         self.lufs()
     }
 
-    /// Current LUFS readout. Returns -120.0 while the meter is still
-    /// settling (first ~10 ms of audio) so the UI doesn't flash a junk
-    /// number at the start of playback.
+    /// Current momentary LUFS readout. Returns `-120.0` until the 400 ms
+    /// ring has filled (i.e. fewer than 400 ms of audio have been fed),
+    /// so the UI doesn't flash a junk number at the start of playback.
     pub fn lufs(&self) -> f32 {
-        if self.primed_samples < 480 || self.mean_sq <= 1.0e-12 {
+        if !self.ring_filled {
             return -120.0;
         }
-        (LUFS_BS1770_OFFSET as f64 + 10.0 * self.mean_sq.log10()) as f32
+        let n = self.ring.len() as f64;
+        let mean = self.ring_sum / n;
+        if mean <= 1.0e-12 {
+            return -120.0;
+        }
+        (LUFS_BS1770_OFFSET as f64 + 10.0 * mean.log10()) as f32
     }
 
     pub fn reset(&mut self) {
         self.hs_state = [BiquadState::default(); 2];
         self.hp_state = [BiquadState::default(); 2];
-        self.mean_sq = 0.0;
-        self.primed_samples = 0;
+        for v in self.ring.iter_mut() {
+            *v = 0.0;
+        }
+        self.ring_pos = 0;
+        self.ring_sum = 0.0;
+        self.ring_filled = false;
     }
 }
 
@@ -1016,13 +1096,13 @@ pub struct IntegratedLufs {
 impl IntegratedLufs {
     pub fn new(sample_rate: u32) -> Self {
         let sr = sample_rate as f32;
-        let hs_coeffs = BiquadCoeffs::high_shelf(
-            sr,
-            LUFS_PREFILTER_HIGHSHELF_HZ,
-            LUFS_PREFILTER_HIGHSHELF_GAIN_DB,
-            LUFS_PREFILTER_HIGHSHELF_SLOPE,
-        );
-        let hp_coeffs = BiquadCoeffs::butter_hp(sr, LUFS_PREFILTER_HP_HZ, 0.7071);
+        // Phase A1 of the port plan moved the momentary meter onto the
+        // BS.1770-4 reference K-weighting builders. The integrated meter
+        // is conceptually the same K-weighting prefilter followed by a
+        // block-energy aggregator with gating — so it inherits the same
+        // reference filters here for consistency.
+        let hs_coeffs = BiquadCoeffs::k_weighting_pre(sample_rate);
+        let hp_coeffs = BiquadCoeffs::k_weighting_rlb(sample_rate);
         let block_size =
             ((LUFS_INTEGRATED_BLOCK_MS * 0.001 * sr).round() as usize).max(1);
         let block_step =
@@ -2336,6 +2416,171 @@ mod tests {
         assert!(
             (after_reset - loud_lufs) < -8.0,
             "post-reset reading should reflect the new (quieter) material; got after_reset = {after_reset}, prior loud = {loud_lufs}"
+        );
+    }
+
+    // ========================================================================
+    // Phase A1: BS.1770-4 K-weighting + momentary LUFS conformance tests.
+    // ========================================================================
+
+    /// At 48 kHz the K-weighting Stage 1 (high-shelf) coefficients must match
+    /// the published ITU-R BS.1770-4 Annex 1 reference within 1e-6. f32
+    /// epsilon at this magnitude is ~1.2e-7, so the f64-computed coefficients
+    /// narrowed to f32 storage easily land inside the tolerance.
+    #[test]
+    fn k_weighting_pre_matches_bs1770_reference_at_48k() {
+        let c = BiquadCoeffs::k_weighting_pre(48_000);
+        assert!(
+            (c.b0 - 1.535_124_85_f32).abs() < 1.0e-6,
+            "b0: expected ~1.53512486, got {}",
+            c.b0
+        );
+        assert!(
+            (c.b1 - (-2.691_696_2_f32)).abs() < 1.0e-6,
+            "b1: expected ~-2.69169619, got {}",
+            c.b1
+        );
+        assert!(
+            (c.b2 - 1.198_392_8_f32).abs() < 1.0e-6,
+            "b2: expected ~1.19839281, got {}",
+            c.b2
+        );
+        assert!(
+            (c.a1 - (-1.690_659_3_f32)).abs() < 1.0e-6,
+            "a1: expected ~-1.69065929, got {}",
+            c.a1
+        );
+        assert!(
+            (c.a2 - 0.732_480_8_f32).abs() < 1.0e-6,
+            "a2: expected ~0.73248077, got {}",
+            c.a2
+        );
+    }
+
+    /// At 48 kHz the K-weighting Stage 2 (RLB high-pass) coefficients must
+    /// match the published ITU-R BS.1770-4 Annex 1 reference within 1e-6.
+    /// Note that the b values are kept un-normalized per the standard
+    /// (b0 = 1, b1 = -2, b2 = 1), which adds a ~+0.04 dB asymptotic gain at
+    /// Nyquist relative to a naïvely-normalized HP biquad.
+    #[test]
+    fn k_weighting_rlb_matches_bs1770_reference_at_48k() {
+        let c = BiquadCoeffs::k_weighting_rlb(48_000);
+        assert!((c.b0 - 1.0_f32).abs() < 1.0e-6, "b0 expected 1.0, got {}", c.b0);
+        assert!((c.b1 - (-2.0_f32)).abs() < 1.0e-6, "b1 expected -2.0, got {}", c.b1);
+        assert!((c.b2 - 1.0_f32).abs() < 1.0e-6, "b2 expected 1.0, got {}", c.b2);
+        assert!(
+            (c.a1 - (-1.990_047_5_f32)).abs() < 1.0e-6,
+            "a1: expected ~-1.99004745, got {}",
+            c.a1
+        );
+        assert!(
+            (c.a2 - 0.990_072_3_f32).abs() < 1.0e-6,
+            "a2: expected ~0.99007225, got {}",
+            c.a2
+        );
+    }
+
+    /// Momentary meter must hold the silence sentinel until the rectangular
+    /// 400 ms window has filled. Feed 200 ms of -20 dBFS audio (well above
+    /// silence floor); meter should still report -120 because the ring isn't
+    /// yet wrapped.
+    #[test]
+    fn momentary_lufs_returns_sentinel_before_window_fills() {
+        let sr = 48_000;
+        let mut meter = MomentaryLufs::new(sr);
+        let n = (sr as f32 * 0.2) as u32;
+        let amp = 0.1_f32; // -20 dBFS peak
+        let omega = 2.0 * std::f32::consts::PI * 1000.0 / sr as f32;
+        for i in 0..n {
+            let s = amp * (omega * i as f32).sin();
+            meter.process_frame(s, s);
+        }
+        assert!(
+            meter.lufs() <= -119.0,
+            "should still be at sentinel after 200 ms, got {}",
+            meter.lufs()
+        );
+    }
+
+    /// Pink noise at -23 dBFS RMS routed to a single channel must read
+    /// -23 LUFS ± 0.5 LU once the 400 ms window has filled. This is the
+    /// BS.1770 calibration anchor — the entire K-weighting + LUFS-offset
+    /// derivation is constructed so that this signal lands at exactly
+    /// -23 LUFS for an ideal pink generator.
+    ///
+    /// We use Paul Kellet's IIR pink approximation, which has ~±0.2 dB
+    /// spectral deviation from an ideal 1/f curve across the audio band;
+    /// the K-weighting net gain on Kellet-pink is therefore not exactly
+    /// the calibrated +0.691 dB, hence the ±0.5 LU window.
+    #[test]
+    fn momentary_lufs_pink_noise_at_minus_23_dbfs_reads_minus_23_within_half_lu() {
+        let sr = 48_000_u32;
+        let n_samples = (sr as f32 * 1.0) as usize; // 1 s — well past the 400 ms window
+        // Deterministic LCG → Paul Kellet pinking IIR.
+        let mut state: u32 = 0xCAFE_BABE;
+        let mut b0p = 0.0_f32;
+        let mut b1p = 0.0_f32;
+        let mut b2p = 0.0_f32;
+        let mut b3p = 0.0_f32;
+        let mut b4p = 0.0_f32;
+        let mut b5p = 0.0_f32;
+        let mut b6p;
+        let mut pink = Vec::with_capacity(n_samples);
+        for _ in 0..n_samples {
+            state = state.wrapping_mul(1103515245).wrapping_add(12345);
+            let w = ((state >> 16) & 0x7FFF) as f32 / 32768.0 - 0.5; // ~±0.5 uniform
+            b0p = 0.99886 * b0p + w * 0.0555179;
+            b1p = 0.99332 * b1p + w * 0.0750759;
+            b2p = 0.96900 * b2p + w * 0.1538520;
+            b3p = 0.86650 * b3p + w * 0.3104856;
+            b4p = 0.55000 * b4p + w * 0.5329522;
+            b5p = -0.7616 * b5p - w * 0.0168980;
+            let p = b0p + b1p + b2p + b3p + b4p + b5p + w * 0.5362;
+            b6p = w * 0.115926;
+            // b6p is used as part of the next iteration's output but Kellet's
+            // canonical form folds it into the current p; we approximate by
+            // adding the current `b6p` carry. Mirror the standard.
+            pink.push(p + b6p);
+        }
+        // Calibrate pink to -23 dBFS RMS.
+        let measured_rms: f32 = (pink.iter().map(|&x| x * x).sum::<f32>()
+            / n_samples as f32)
+            .sqrt();
+        let target_rms = 10.0_f32.powf(-23.0 / 20.0);
+        let scale = target_rms / measured_rms;
+        // Feed to the LEFT channel only so the BS.1770 sum-of-channels
+        // produces the mono-pink anchor reading (-23 LUFS); routing the
+        // same signal to both channels would add +3 LU per the standard.
+        let mut meter = MomentaryLufs::new(sr);
+        for &p in &pink {
+            meter.process_frame(p * scale, 0.0);
+        }
+        let reading = meter.lufs();
+        assert!(
+            (reading - (-23.0)).abs() < 0.5,
+            "pink at -23 dBFS RMS (L-channel only) should read -23 LUFS ± 0.5 LU, got {reading}"
+        );
+    }
+
+    /// Reset clears the ring; lufs() returns sentinel until the window
+    /// re-fills.
+    #[test]
+    fn momentary_lufs_reset_returns_to_sentinel() {
+        let sr = 48_000;
+        let mut meter = MomentaryLufs::new(sr);
+        let n = (sr as f32 * 0.5) as u32;
+        let amp = 0.1_f32;
+        let omega = 2.0 * std::f32::consts::PI * 1000.0 / sr as f32;
+        for i in 0..n {
+            let s = amp * (omega * i as f32).sin();
+            meter.process_frame(s, s);
+        }
+        assert!(meter.lufs() > -119.0, "should have a reading before reset");
+        meter.reset();
+        assert!(
+            meter.lufs() <= -119.0,
+            "reset must return to sentinel, got {}",
+            meter.lufs()
         );
     }
 }
