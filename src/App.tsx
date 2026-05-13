@@ -10,6 +10,7 @@ import { useTrackMaster } from "./hooks/useTrackMaster";
 import { PresetIcon } from "./components/PresetIcon";
 import { RightRail } from "./components/RightRail";
 import { Knob, intensityLabel } from "./components/Knob";
+import { SignalChain } from "./components/SignalChain";
 import type {
   AnalysisResult,
   ImportedTrack,
@@ -489,6 +490,7 @@ function TrackMaster({ tm }: { tm: ReturnType<typeof useTrackMaster> }) {
         onSetRegion={tm.setRegion}
         onClearRegion={tm.clearRegion}
       />
+      <SignalChain settings={tm.selectedSettings} />
       <Transport
         isPlaying={tm.transport.isPlaying}
         playbackKind={tm.transport.playbackKind}

@@ -2633,6 +2633,124 @@ button.primary:disabled {
   padding: 0.14rem 0.3rem;
 }
 
+/* Phase 12.2 P3 — Signal-chain visualization. */
+
+.signal-chain {
+  padding: 0.85rem 1rem 0.95rem;
+  background:
+    radial-gradient(circle at 20% 0%, rgba(77, 139, 255, 0.12) 0%, transparent 55%),
+    linear-gradient(180deg, rgba(31, 37, 51, 0.55) 0%, var(--bg-2) 100%);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
+  position: relative;
+  overflow: hidden;
+}
+
+.signal-chain::before {
+  content: "SIGNAL CHAIN";
+  position: absolute;
+  top: 0.5rem;
+  left: 1rem;
+  font-size: 0.62rem;
+  letter-spacing: 0.16em;
+  color: var(--text-2);
+  font-weight: 700;
+}
+
+.signal-chain-track {
+  display: flex;
+  align-items: center;
+  gap: 0;
+  margin-top: 0.85rem;
+  justify-content: space-between;
+}
+
+.chain-stage {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.25rem;
+  text-align: center;
+  flex: 0 0 auto;
+  min-width: 64px;
+}
+
+.chain-stage-disc {
+  width: 38px;
+  height: 38px;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--bg-3);
+  border: 1px solid var(--border-strong);
+  color: var(--text-2);
+  transition: color 120ms ease, background 120ms ease, transform 120ms ease;
+}
+
+.chain-stage.is-active .chain-stage-disc {
+  color: var(--accent-bright);
+  background: linear-gradient(180deg, rgba(77, 139, 255, 0.18) 0%, rgba(42, 107, 242, 0.08) 100%);
+  border-color: rgba(111, 163, 255, 0.5);
+}
+
+.chain-stage:hover .chain-stage-disc {
+  transform: scale(1.06);
+}
+
+.chain-stage-label {
+  font-size: 0.66rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-2);
+  font-weight: 700;
+}
+
+.chain-stage.is-active .chain-stage-label {
+  color: var(--text-0);
+}
+
+.chain-stage-detail {
+  font-size: 0.6rem;
+  color: var(--text-2);
+  font-variant-numeric: tabular-nums;
+  max-width: 86px;
+  line-height: 1.15;
+  /* Hide overflow on narrow widths — full text is in the title tooltip. */
+  text-overflow: ellipsis;
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+.chain-stage.is-active .chain-stage-detail {
+  color: var(--text-1);
+}
+
+.chain-link {
+  flex: 1 1 12px;
+  height: 2px;
+  background: var(--border);
+  border-radius: 999px;
+  margin: 0 0.35rem;
+  margin-bottom: 32px;
+  /* Pulse when both ends are active so the data "flows" visibly. */
+  position: relative;
+  overflow: hidden;
+}
+
+.chain-link.is-hot {
+  background: linear-gradient(90deg, transparent, rgba(111, 163, 255, 0.6), transparent);
+  background-size: 200% 100%;
+  animation: chain-flow 2.6s linear infinite;
+  box-shadow: 0 0 6px rgba(77, 139, 255, 0.3);
+}
+
+@keyframes chain-flow {
+  0% { background-position: 100% 0; }
+  100% { background-position: -100% 0; }
+}
+
 /* Phase 12.2 P2 — Intensity + Tone Shape as knobs. */
 
 .knobs-row {
