@@ -1833,3 +1833,35 @@ Next recommended slice:
 
 → Typography pass per the /goal queue: `docs/superpowers/plans/2026-05-12-typography-pass.md`. Pure-CSS slice with a hard STOP gate for Dan's eyes-on smoke before commit.
 
+## 2026-05-12 — Phase 12.2 P1: typography pass
+
+Goal:
+
+Close the first P1 polish slice after the Phase 12.2 wired-controls campaign. Dan's note from the listening session: "UI overall could use larger text overall." Pure-CSS slice — no JS, no schema, no logic. Plan at `docs/superpowers/plans/2026-05-12-typography-pass.md`.
+
+What changed:
+
+Frontend (`src/App.css`):
+
+- **Base bump.** `:root` `font-size: 14px` → `16px`. Because almost every selector in `App.css` uses `rem` units, this single change proportionally enlarges the entire UI by ~14% (16/14 ≈ 1.143×).
+- **Floor-lift on 16 micro-labels.** Selectors at `0.65rem` / `0.7rem` / `0.72rem` lifted to `0.78rem` so the smallest UI text lands at ~12.5 px after the base bump instead of ~10.4 px. Lifted: `.mode-pill`, `.mode-toggle button`, `.section-label`, `.track-badge`, `.live-update-badge`, `.clip-indicator`, `.analysis-summary > summary`, `.tag`, `.wf-hint`, `.tile-blurb`, `.user-preset-kind`, `.adv-label`, `.micro-btn`, `.check-level`, plus the two Phase-12.2 compression-density additions (`.gr-indicator`, `.compression-band-label`).
+- **Intentionally kept at current values:** track-list left-rail text (would force the index column wider), headings (already prominent, ride the base bump), inputs and buttons that `inherit` from `:root` (ride the base bump for free).
+
+Frontend (`src/App.tsx`):
+
+- No changes. Confirmed zero inline `fontSize` declarations at plan-execute time.
+
+Verification:
+
+- `npm run build`: clean. Bundle 257.02 KB raw / 78.34 KB gzipped (flat — pure CSS text edits).
+- **Dan eyes-on smoke** (`npm run tauri dev`): Dan confirmed "Ship it" on first pass across empty state, loaded track, Advanced panel + per-band compressor, preset row, and export receipt.
+
+What failed or remains partial:
+
+- **No automated typography regression test.** Vitest infra still deferred (HANDOFF infra #13).
+- **No responsive breakpoints added.** Dan runs the app at a single resolution on a single monitor; if the app is ever opened on a small laptop screen, the 16 px base may need a media-query backstop. Out of scope for this slice.
+
+Next recommended slice:
+
+SVG preset icons (HANDOFF P1 #7). Plan path: `docs/superpowers/plans/2026-05-12-svg-preset-icons.md`.
+

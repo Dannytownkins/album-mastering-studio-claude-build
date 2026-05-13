@@ -21,7 +21,7 @@
   color-scheme: dark;
   background: var(--bg-0);
   color: var(--text-0);
-  font-size: 14px;
+  font-size: 16px;
 }
 
 * {
@@ -81,7 +81,7 @@ select {
 }
 
 .mode-pill {
-  font-size: 0.65rem;
+  font-size: 0.78rem;
   text-transform: uppercase;
   letter-spacing: 0.1em;
   color: var(--text-2);
@@ -106,7 +106,7 @@ select {
   color: var(--text-2);
   border: none;
   padding: 0.35rem 0.5rem;
-  font-size: 0.7rem;
+  font-size: 0.78rem;
   letter-spacing: 0.04em;
 }
 
@@ -129,7 +129,7 @@ select {
 }
 
 .section-label {
-  font-size: 0.65rem;
+  font-size: 0.78rem;
   text-transform: uppercase;
   letter-spacing: 0.12em;
   color: var(--text-2);
@@ -453,7 +453,7 @@ button.primary:disabled {
 }
 
 .track-badge {
-  font-size: 0.7rem;
+  font-size: 0.78rem;
   text-transform: uppercase;
   letter-spacing: 0.1em;
   padding: 0.3rem 0.6rem;
@@ -507,7 +507,7 @@ button.primary:disabled {
 }
 
 .live-update-badge {
-  font-size: 0.7rem;
+  font-size: 0.78rem;
   letter-spacing: 0.04em;
   padding: 0.15rem 0.5rem;
   border-radius: 999px;
@@ -524,7 +524,7 @@ button.primary:disabled {
    slider drags without DevTools or an export round-trip. Tabular-nums keeps
    the dB readout from shifting horizontally as the value jitters. */
 .clip-indicator {
-  font-size: 0.7rem;
+  font-size: 0.78rem;
   letter-spacing: 0.04em;
   padding: 0.15rem 0.55rem;
   border-radius: 999px;
@@ -574,7 +574,7 @@ button.primary:disabled {
    to: idle (muted), ok (green, no/mild reduction), warn (amber, moderate),
    hot (red, heavy). */
 .gr-indicator {
-  font-size: 0.7rem;
+  font-size: 0.78rem;
   letter-spacing: 0.04em;
   padding: 0.15rem 0.45rem;
   border-radius: 999px;
@@ -651,7 +651,7 @@ button.primary:disabled {
 }
 
 .compression-band-label {
-  font-size: 0.7rem;
+  font-size: 0.78rem;
   font-weight: 700;
   letter-spacing: 0.06em;
   color: var(--text-1);
@@ -673,7 +673,7 @@ button.primary:disabled {
   border-radius: 3px;
   background: var(--bg-2);
   color: var(--text-1);
-  font-size: 0.72rem;
+  font-size: 0.78rem;
   letter-spacing: 0.03em;
 }
 
@@ -701,7 +701,7 @@ button.primary:disabled {
 }
 
 .tag {
-  font-size: 0.72rem;
+  font-size: 0.78rem;
   padding: 0.2rem 0.55rem;
   border-radius: 999px;
   border: 1px solid var(--border-strong);
@@ -766,7 +766,7 @@ button.primary:disabled {
 
 .wf-hint {
   margin: 0.3rem 0 0;
-  font-size: 0.7rem;
+  font-size: 0.78rem;
   color: var(--text-2);
   text-align: center;
   letter-spacing: 0.02em;
@@ -938,7 +938,7 @@ button.primary:disabled {
 }
 
 .tile-blurb {
-  font-size: 0.7rem;
+  font-size: 0.78rem;
   color: var(--text-2);
   line-height: 1.3;
 }
@@ -990,7 +990,7 @@ button.primary:disabled {
 
 .user-preset-kind {
   color: var(--text-2);
-  font-size: 0.7rem;
+  font-size: 0.78rem;
   letter-spacing: 0.04em;
 }
 
@@ -1239,7 +1239,7 @@ button.primary:disabled {
 }
 
 .adv-label {
-  font-size: 0.7rem;
+  font-size: 0.78rem;
   color: var(--text-2);
   text-transform: uppercase;
   letter-spacing: 0.06em;
@@ -1281,7 +1281,7 @@ button.primary:disabled {
   border: 1px solid var(--border-strong);
   padding: 0.15rem 0.4rem;
   border-radius: 3px;
-  font-size: 0.7rem;
+  font-size: 0.78rem;
 }
 
 .micro-btn:hover {
@@ -1455,7 +1455,7 @@ button.primary:disabled {
 }
 
 .check-level {
-  font-size: 0.7rem;
+  font-size: 0.78rem;
   text-transform: uppercase;
   letter-spacing: 0.1em;
   color: var(--text-2);
