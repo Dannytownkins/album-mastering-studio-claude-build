@@ -620,11 +620,13 @@ button.primary:disabled {
   border: 1px solid var(--border-strong);
   border-radius: 999px;
   overflow: hidden;
+  box-shadow: inset 0 1px 0 rgba(0, 0, 0, 0.4);
 }
 
 .render-progress-fill {
   height: 100%;
-  background: var(--accent);
+  background: linear-gradient(90deg, var(--accent-deep), var(--accent-bright));
+  box-shadow: 0 0 8px rgba(77, 139, 255, 0.45);
   transition: width 100ms linear;
 }
 
@@ -1387,12 +1389,14 @@ button.primary:disabled {
 .stale-bar {
   display: flex;
   align-items: center;
-  gap: 0.65rem;
+  gap: 0.55rem;
   padding: 0.5rem 0.85rem;
-  background: var(--bg-1);
+  background: linear-gradient(180deg, rgba(31, 37, 51, 0.5) 0%, var(--bg-1) 100%);
   border: 1px solid var(--border);
-  border-radius: var(--radius);
+  border-radius: 6px;
   font-size: 0.8rem;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.03);
+  flex-wrap: wrap;
 }
 
 .stale-dot {
@@ -1415,7 +1419,17 @@ button.primary:disabled {
 
 .stale-dot.live {
   background: #6cd08a;
-  box-shadow: 0 0 0 3px rgba(108, 208, 138, 0.2);
+  box-shadow: 0 0 0 3px rgba(108, 208, 138, 0.2), 0 0 6px rgba(108, 208, 138, 0.55);
+  animation: live-pulse 2s ease-in-out infinite;
+}
+
+@keyframes live-pulse {
+  0%, 100% {
+    box-shadow: 0 0 0 3px rgba(108, 208, 138, 0.2), 0 0 6px rgba(108, 208, 138, 0.55);
+  }
+  50% {
+    box-shadow: 0 0 0 4px rgba(108, 208, 138, 0.3), 0 0 10px rgba(108, 208, 138, 0.7);
+  }
 }
 
 @keyframes stale-pulse {
