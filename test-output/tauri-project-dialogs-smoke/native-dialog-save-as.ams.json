@@ -1,0 +1,103 @@
+{
+  "schema_version": 1,
+  "mode": "track",
+  "tracks": [
+    {
+      "id": "01-dialog-fixture",
+      "path": "test-output/tauri-project-dialogs-smoke/inputs/01_dialog_fixture.wav",
+      "display_name": "01 Dialog Fixture",
+      "source_format": "wav",
+      "duration_seconds": 3.0,
+      "sample_rate": 44100,
+      "channels": 2
+    },
+    {
+      "id": "02-dialog-fixture",
+      "path": "test-output/tauri-project-dialogs-smoke/inputs/02_dialog_fixture.wav",
+      "display_name": "02 Dialog Fixture",
+      "source_format": "wav",
+      "duration_seconds": 3.0,
+      "sample_rate": 44100,
+      "channels": 2
+    }
+  ],
+  "track_order": [
+    "01-dialog-fixture",
+    "02-dialog-fixture"
+  ],
+  "track_settings": {
+    "01-dialog-fixture": {
+      "preset": {
+        "kind": "universal"
+      },
+      "intensity": 0.5,
+      "eq_low_db": 0.0,
+      "eq_mid_db": 0.0,
+      "eq_high_db": 0.0,
+      "volume_match": false,
+      "input_gain_db": 0.0,
+      "output_gain_db": 0.0,
+      "advanced": {
+        "lufs_offset_db": null,
+        "ceiling_dbtp": null,
+        "width": null,
+        "warmth": null,
+        "presence_air": null,
+        "compression_density": null,
+        "compression_low_threshold_db": null,
+        "compression_low_ratio": null,
+        "compression_low_attack_ms": null,
+        "compression_low_release_ms": null,
+        "compression_mid_threshold_db": null,
+        "compression_mid_ratio": null,
+        "compression_mid_attack_ms": null,
+        "compression_mid_release_ms": null,
+        "compression_high_threshold_db": null,
+        "compression_high_ratio": null,
+        "compression_high_attack_ms": null,
+        "compression_high_release_ms": null,
+        "compression_link_stereo": null,
+        "bit_depth": null,
+        "target_sample_rate": null
+      }
+    },
+    "02-dialog-fixture": {
+      "preset": {
+        "kind": "universal"
+      },
+      "intensity": 0.5,
+      "eq_low_db": 0.0,
+      "eq_mid_db": 0.0,
+      "eq_high_db": 0.0,
+      "volume_match": false,
+      "input_gain_db": 0.0,
+      "output_gain_db": 0.0,
+      "advanced": {
+        "lufs_offset_db": null,
+        "ceiling_dbtp": null,
+        "width": null,
+        "warmth": null,
+        "presence_air": null,
+        "compression_density": null,
+        "compression_low_threshold_db": null,
+        "compression_low_ratio": null,
+        "compression_low_attack_ms": null,
+        "compression_low_release_ms": null,
+        "compression_mid_threshold_db": null,
+        "compression_mid_ratio": null,
+        "compression_mid_attack_ms": null,
+        "compression_mid_release_ms": null,
+        "compression_high_threshold_db": null,
+        "compression_high_ratio": null,
+        "compression_high_attack_ms": null,
+        "compression_high_release_ms": null,
+        "compression_link_stereo": null,
+        "bit_depth": null,
+        "target_sample_rate": null
+      }
+    }
+  },
+  "album_intent": null,
+  "track_override_album": [],
+  "last_saved_iso": "2026-05-13T00:00:00Z"
+}

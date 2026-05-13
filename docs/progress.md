@@ -1919,3 +1919,72 @@ Phase 12.2 P1 polish (typography + SVG preset icons) is **complete** with this c
 - Brainstorm something else (e.g., the rendered-LUFS export-receipt gap from the evening handoff).
 - `PHASE 12 CONFIRMED — proceed to 13` (Dan writes the sentinel by hand if satisfied).
 
+## 2026-05-13 — Phase 12.2 listening pass + bolder layout overhaul + live LUFS
+
+Goal:
+
+Act on Dan's first listening-pass notes (Tape too loud, Spatial too quiet, missing signal-chain flow, year-2000 visual feel), then continue iterating until the dev binary felt close to the reference screenshots. Substantial chunk of work — ~30 commits across one extended /goal-style session.
+
+What changed:
+
+Listening / DSP:
+
+- **Tape preset rebalance** — saturation 0.45 → 0.25 (sat is the dominant perceived-loudness driver). Gain stays at 1.0 dB so the intensity-scaling contract test still fires.
+- **Spatial preset rebalance** — gain 1.5 → 2.5 dB; new `preset_width = 1.3` default so M/S widening engages without touching Advanced.
+- **`preset_width` added to the 6-tuple per-preset signature** in `dsp.rs::ChainCoeffs::from_settings`. `width_side_scale` now falls back to `preset_width` (1.0 for everyone but Spatial) when the user hasn't set the Advanced width slider.
+- **Live BS.1770 momentary LUFS** — new `MomentaryLufs` struct in `dsp.rs` with K-weighted prefilter (RBJ high-shelf @ 1500 Hz +4 dB → Butterworth HP @ 38 Hz) and a 400 ms one-pole sliding mean-square. `MasteringSource` feeds the post-output frame into the meter and writes `lufs×100` to a shared `AtomicI32` slot in `AudioThreadState`. Snapshot tick reads it (no swap; we want the current value), converts back to f32, ships in `PlaybackSnapshot` → `PlaybackTick.lufs_momentary`. Frontend MASTER OUT bars now drive off live momentary LUFS while playing, with the integrated analysis value as a peak-hold line.
+- **End-of-track restart** — `togglePlay` + `seek` detect `currentTimeSec >= duration - 0.5 && !isPlaying` and re-prep via `playWithKind`. Old behavior was a silent no-op `resumePlayback()` on an empty sink.
+
+Layout overhaul (`docs/HANDOFF_2026-05-13_session.md` has the full commit-by-commit list):
+
+- Three-column shell (sidebar / workspace / right-rail) with the Track / Album mode toggle hoisted to a centered top header strip and a 36 px bottom status bar showing live Peak / Loudness / Processing.
+- Right rail rebuilt: MASTER OUT meter (hero, 190 px), LEVELS (live), AdvancedPanel slot, QUALITY CHECK, Export Master CTA.
+- Workspace controls converted: Intensity + Tone Shape EQ → custom SVG knobs (grab cursor, hover halo, drag-vertical, double-click reset). Loudness Target block with delivery-profile picker. Signal-chain strip above the transport, eight stages with intensity-scaled glow and animated flow on hot links.
+- Visual polish: bolder typography (track title 1.3 → 2.1 rem 800 with gradient fill, tabular numerals throughout), Inter-first font stack, workspace radial-mesh background, gradient + glow on active states (top tabs, primary buttons, preset tiles, knob arcs, status pills), big Import Audio CTA at sidebar foot, prominent uppercase Export Master with download glyph, dB scale on the right edge of the main waveform, mini waveform overview below it.
+
+Listening-pass round 2 bugs (Dan caught these on the first dev-window pass):
+
+- **`MASTER OUT` bars never moved past ~30 % fill.** Root cause: `.lufs-bars` had `align-items: flex-end` but the bars themselves had no explicit height, so each was only ~10 px tall (size of the L/R label). Fill percentage was relative to 10 px, not the meter's 190 px. Fixed by stretching the column + giving `.lufs-bar` and `.tp-bar` an explicit `height: 100%`.
+- **Advanced Input / Output gain "Auto" sliders looked broken** because the slice that folded them into AdvancedPanel coerced `value === 0 ? null : value`, putting them into the `null === Auto` disabled-slider path. Replaced with a dedicated `GainField` (always-on, double-click resets to 0 dB).
+- **All other Advanced "Auto" sliders required clicking "Set" to engage.** Now drag-to-engage; double-click reverts; clearing the numeric input resets to Auto.
+- **LEVELS panel jittered as live status hint text changed length.** Reserved `min-height: 2.1em` on the hint and `min-height: 170 px` on the panel itself.
+- **Render-audit + Export Master could fire concurrently.** Mutual cross-disable on both buttons.
+
+Save As / Open Project:
+
+- New `project::load_project` Tauri command (mirror of `save_project` with the same path-traversal guard).
+- Frontend `saveProjectAs` / `openProjectFromDisk` flows wired via `@tauri-apps/plugin-dialog` (`save` + `open` with `.ams.json` / `.json` filters).
+- Open Project restores tracks / settings / mode / album_intent / override-set, then re-analyzes + re-decodes waveforms so the user lands in a working state.
+- Two new icon tiles in the top header right (folder = open, disk = save).
+- `produce_dialog_smoke` binary in `src-tauri/src/bin/` materializes a representative `.ams.json` at `test-output/tauri-project-dialogs-smoke/native-dialog-save-as.ams.json` (3025 bytes; ProjectState shape with all 13 P0/P1 compression `Option<f32>` fields included as null).  `.gitignore` patched to re-include that one file so a fresh Claude session has a tangible artifact without rerunning the binary.
+
+Memory adds (user-scoped, outside the repo):
+
+- `feedback_no_check_in_chatter` — after Dan says "dive in autonomously" or similar, chain commits; don't `AskUserQuestion` every 2-3 slices.
+
+Verification:
+
+- `cargo test --lib`: 32/32 pass.
+- `cargo test` (full): last full pre-LUFS run was 71/71; post-LUFS the lib subset re-verified — the contracts suite includes a ~2-3 min real-fixture path that wasn't re-run end-to-end this session and should be re-run on the new machine.
+- `npm run build`: clean. 287.93 KB raw / 87.20 KB gzipped at HEAD (`18e9040`).
+- `cargo run --bin produce_dialog_smoke`: writes 3025 bytes; round-trips through `write_session_atomic`.
+- Dan visually approved typography + SVG icons earlier in the session. Did NOT approve Phase 12 yet — the closeout listening pass and `PHASE 12 CONFIRMED` sentinel are open.
+
+Real-audio fixture used: closed-form math + synthetic sines for the new DSP tests. Live LUFS metering was code-reviewed and unit-test gated, not yet validated against a known-LUFS reference fixture (BS.1770 reference 1k sine).
+
+What failed or remains partial:
+
+- **Phase 12 not confirmed.**  Dan moved to a new machine before completing the listening pass on the rebalanced presets. The sentinel `PHASE 12 CONFIRMED — proceed to 13` is pending Dan's manual write into this file after enough A/B listening on real material.
+- **Knob ranges may need tuning.** Tone Shape EQ runs ±12 dB now (was ±6 dB pre-overhaul); the change came with the Knob component swap and hasn't been listened to enough to settle.
+- **No integrated-LUFS (whole-listen) live readout.**  Momentary only.  Would need a per-session integrator + relative gating; ~120 lines of Rust.
+- **No frontend tests** for the right rail / signal chain / Save-As flow. Vitest infra still deferred (HANDOFF infra #13).
+- **Dev-binary spurious "exit 1" alerts.** When Dan closes the tauri window, the CLI reports `0xffffffff` which can mislead a Claude into a retry loop. Documented in the handoff so future sessions don't churn on it.
+- **Did NOT touch the Codex parallel repo.** A path Dan referenced (`…/album-mastering-studio/test-output/tauri-project-dialogs-smoke/native-dialog-save-as.ams.json`) doesn't exist on disk there; the equivalent file is now in our own `test-output/` mirror, materialized via the smoke binary.
+
+Next recommended slice:
+
+- Dan listens to the rebalance, writes notes into a new `docs/followups/2026-05-13-dan-listening-notes.md` (file doesn't exist yet; just create it) or appends to this file.
+- If listening lands well: write `PHASE 12 CONFIRMED — proceed to 13`.
+- Otherwise: act on the notes — preset rebalances, knob ranges, or further visual polish.
+- Standalone work that doesn't need Dan in the loop: integrated-LUFS streaming, knob-range audit (compare to a few mastering plugins), more dramatic visual polish on the workspace stack.
+

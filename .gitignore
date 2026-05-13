@@ -36,6 +36,15 @@ test-output/
 *.ogg
 *.opus
 
+# Re-include the dialog-smoke fixture artifact so a fresh Claude session
+# has a tangible .ams.json to compare against without rerunning the
+# `cargo run --bin produce_dialog_smoke` binary first.  The binary
+# regenerates this file deterministically; tracking it keeps the schema
+# reviewable in PR diffs.
+!test-output/
+!test-output/tauri-project-dialogs-smoke/
+!test-output/tauri-project-dialogs-smoke/native-dialog-save-as.ams.json
+
 # Local/editor
 .env
 .env.*
