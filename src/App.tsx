@@ -79,6 +79,8 @@ function App() {
             <AdvancedPanel
               settings={tm.selectedSettings}
               onAdvanced={tm.setAdvanced}
+              onInputGain={tm.setInputGain}
+              onOutputGain={tm.setOutputGain}
             />
           ) : undefined
         }
@@ -469,12 +471,6 @@ function TrackMaster({ tm }: { tm: ReturnType<typeof useTrackMaster> }) {
         onPlaybackKindChange={tm.setPlaybackKind}
         onLoopToggle={tm.toggleLoop}
         onVolumeMatchChange={tm.setVolumeMatch}
-      />
-      <IOGainBar
-        inputGainDb={tm.selectedSettings.input_gain_db}
-        outputGainDb={tm.selectedSettings.output_gain_db}
-        onInputGain={tm.setInputGain}
-        onOutputGain={tm.setOutputGain}
       />
       <PresetTiles
         selected={tm.selectedSettings.preset}
@@ -1217,43 +1213,6 @@ function isPresetActive(a: Preset, b: Preset): boolean {
   return a.kind === b.kind;
 }
 
-function IOGainBar({
-  inputGainDb,
-  outputGainDb,
-  onInputGain,
-  onOutputGain,
-}: {
-  inputGainDb: number;
-  outputGainDb: number;
-  onInputGain: (db: number) => void;
-  onOutputGain: (db: number) => void;
-}) {
-  return (
-    <section className="io-gain">
-      <Slider
-        label="Input gain"
-        value={inputGainDb}
-        min={-24}
-        max={24}
-        step={0.1}
-        format={(v) => `${v > 0 ? "+" : ""}${v.toFixed(1)} dB`}
-        onChange={onInputGain}
-        defaultValue={0}
-      />
-      <Slider
-        label="Output gain"
-        value={outputGainDb}
-        min={-24}
-        max={24}
-        step={0.1}
-        format={(v) => `${v > 0 ? "+" : ""}${v.toFixed(1)} dB`}
-        onChange={onOutputGain}
-        defaultValue={0}
-      />
-    </section>
-  );
-}
-
 function Macros({
   settings,
   onIntensity,
@@ -1384,108 +1343,6 @@ function LoudnessTarget({
           <option value="custom">Custom ({display} LUFS)</option>
         )}
       </select>
-    </div>
-  );
-}
-
-function Slider({
-  label,
-  value,
-  min,
-  max,
-  step,
-  format,
-  onChange,
-  defaultValue,
-}: {
-  label: string;
-  value: number;
-  min: number;
-  max: number;
-  step: number;
-  format: (v: number) => string;
-  onChange: (v: number) => void;
-  /// Optional value to snap to on double-click. Phase 12.1 Dan feedback —
-  /// dbl-click should return the slider to its neutral / default position
-  /// (intensity to 0.5, EQ bands to 0 dB, etc.). When omitted, double-click
-  /// is a no-op so callers that don't have a natural default opt out cleanly.
-  defaultValue?: number;
-}) {
-  const handleReset = () => {
-    if (defaultValue !== undefined && defaultValue !== value) {
-      onChange(defaultValue);
-    }
-  };
-  // Phase 12.1: editable numeric input mirrors the slider. We keep a local
-  // string while editing so the user can type "1." or "-" mid-edit without
-  // the parent state forcing a re-format. On commit (blur / Enter), parse
-  // and clamp. Escape cancels. Sync local state to value when value changes
-  // externally and the input is NOT focused.
-  const [draft, setDraft] = useState<string | null>(null);
-  const inputRef = useRef<HTMLInputElement | null>(null);
-  useEffect(() => {
-    if (
-      draft !== null &&
-      inputRef.current &&
-      document.activeElement !== inputRef.current
-    ) {
-      setDraft(null);
-    }
-  }, [value, draft]);
-  const commitDraft = (raw: string) => {
-    const parsed = parseFloat(raw);
-    if (!Number.isFinite(parsed)) {
-      setDraft(null);
-      return;
-    }
-    const clamped = Math.max(min, Math.min(max, parsed));
-    if (clamped !== value) onChange(clamped);
-    setDraft(null);
-  };
-  return (
-    <div className="slider-row">
-      <label className="slider-label">{label}</label>
-      <input
-        type="range"
-        min={min}
-        max={max}
-        step={step}
-        value={value}
-        onChange={(e) => onChange(parseFloat(e.target.value))}
-        onDoubleClick={handleReset}
-        className="slider-input"
-        title={
-          defaultValue !== undefined
-            ? `Double-click to reset to ${format(defaultValue)}`
-            : undefined
-        }
-      />
-      <input
-        ref={inputRef}
-        type="number"
-        className="slider-number"
-        min={min}
-        max={max}
-        step={step}
-        value={draft !== null ? draft : value}
-        onChange={(e) => setDraft(e.target.value)}
-        onBlur={(e) => commitDraft(e.target.value)}
-        onKeyDown={(e) => {
-          if (e.key === "Enter") {
-            commitDraft((e.target as HTMLInputElement).value);
-            (e.target as HTMLInputElement).blur();
-          } else if (e.key === "Escape") {
-            setDraft(null);
-            (e.target as HTMLInputElement).blur();
-          }
-        }}
-        onDoubleClick={handleReset}
-        title={
-          defaultValue !== undefined
-            ? `Type a value or double-click to reset to ${format(defaultValue)}`
-            : "Type a value to set precisely"
-        }
-      />
     </div>
   );
 }
@@ -1703,9 +1560,13 @@ function GrIndicator({
 function AdvancedPanel({
   settings,
   onAdvanced,
+  onInputGain,
+  onOutputGain,
 }: {
   settings: MasteringSettings;
   onAdvanced: (adv: MasteringSettings["advanced"]) => void;
+  onInputGain: (db: number) => void;
+  onOutputGain: (db: number) => void;
 }) {
   const a = settings.advanced;
   const update = (
@@ -1720,6 +1581,24 @@ function AdvancedPanel({
         <span className="section-label">Advanced</span>
       </div>
       <div className="advanced-grid">
+        <NumberField
+          label="Input gain"
+          value={settings.input_gain_db === 0 ? null : settings.input_gain_db}
+          step={0.1}
+          min={-24}
+          max={24}
+          format={(v) => `${v > 0 ? "+" : ""}${v.toFixed(1)} dB`}
+          onChange={(v) => onInputGain(v ?? 0)}
+        />
+        <NumberField
+          label="Output gain"
+          value={settings.output_gain_db === 0 ? null : settings.output_gain_db}
+          step={0.1}
+          min={-24}
+          max={24}
+          format={(v) => `${v > 0 ? "+" : ""}${v.toFixed(1)} dB`}
+          onChange={(v) => onOutputGain(v ?? 0)}
+        />
         <NumberField
           label="LUFS target"
           value={a.lufs_offset_db}
