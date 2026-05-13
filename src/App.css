@@ -1245,8 +1245,12 @@ button.primary:disabled {
 
 .tile-row {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(118px, 1fr));
-  gap: 0.55rem;
+  /* 8 preset tiles must fit one row at the 1600x940 design canvas. With
+     the right-rail scrollbar eating ~17px the working width drops below
+     the prior minmax(118px) threshold and Loud wraps to row 2. 100px
+     gives headroom even at the smallest design viewport (1280 wide). */
+  grid-template-columns: repeat(auto-fit, minmax(100px, 1fr));
+  gap: 0.5rem;
 }
 
 .tile {
