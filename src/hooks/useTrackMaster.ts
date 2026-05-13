@@ -105,6 +105,9 @@ export function useTrackMaster() {
     compressionGr: { low: -120, mid: -120, high: -120 },
     // Phase 12.2 P3 — live BS.1770 momentary LUFS. -120 = silence sentinel.
     lufsMomentary: -120,
+    // Phase 12.2 P3+ — live BS.1770-4 integrated LUFS over the current
+    // playback session.  Resets when a new playback starts.
+    lufsIntegrated: -120,
   });
   const [advancedOpen, setAdvancedOpen] = useState(false);
   const [lastExportReceipt, setLastExportReceipt] = useState<ExportReceipt | null>(null);
@@ -167,6 +170,7 @@ export function useTrackMaster() {
           high: tick.gr_high_db,
         },
         lufsMomentary: tick.lufs_momentary,
+        lufsIntegrated: tick.lufs_integrated,
       }));
     }).then((fn) => {
       unlistenTick = fn;

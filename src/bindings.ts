@@ -216,6 +216,10 @@ export interface PlaybackTick {
   /// Phase 12.2 P3 — live BS.1770 momentary LUFS (400 ms K-weighted
   /// sliding window). `-120` is the silence sentinel.
   lufs_momentary: number;
+  /// Phase 12.2 P3+ — live BS.1770-4 integrated LUFS over the current
+  /// playback session. Updates every 100 ms; resets when a new playback
+  /// starts. `-120` is the silence sentinel.
+  lufs_integrated: number;
 }
 
 export interface LoopRegion {

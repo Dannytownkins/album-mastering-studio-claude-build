@@ -20,8 +20,12 @@ type RightRailProps = {
   isPlaying: boolean;
   compressionGr: { low: number; mid: number; high: number };
   /// Phase 12.2 P3 — live BS.1770 momentary LUFS (K-weighted 400 ms window).
-  /// Drives the MASTER OUT bars and the live integrated readout.
+  /// Drives the MASTER OUT bars.
   lufsMomentary: number;
+  /// Phase 12.2 P3+ — live BS.1770-4 integrated LUFS over the current
+  /// playback session. Drives the "Integrated LUFS" readout and the
+  /// peak-hold line on the bars while playing.
+  lufsIntegrated: number;
   // Slot for the AdvancedPanel content. Wrapped in a collapsible details/
   // summary container so it sits between the levels and quality check
   // panels (matches the reference layout).
@@ -49,6 +53,7 @@ export function RightRail({
   isPlaying,
   compressionGr,
   lufsMomentary,
+  lufsIntegrated,
   advancedSlot,
   canExport,
   isExporting,
@@ -63,6 +68,7 @@ export function RightRail({
         peakDbfs={peakDbfs}
         isPlaying={isPlaying}
         lufsMomentary={lufsMomentary}
+        lufsIntegrated={lufsIntegrated}
       />
       <LevelsPanel
         peakDbfs={peakDbfs}
@@ -104,36 +110,49 @@ function MasterOutPanel({
   peakDbfs,
   isPlaying,
   lufsMomentary,
+  lufsIntegrated,
 }: {
   analysis: AnalysisResult | undefined;
   isAnalyzing: boolean;
   peakDbfs: number;
   isPlaying: boolean;
   lufsMomentary: number;
+  lufsIntegrated: number;
 }) {
   const tp = analysis?.true_peak_dbtp;
   const dr = analysis?.dynamic_range_lu;
   const width = analysis?.stereo_width;
 
-  // Bars now drive off the LIVE BS.1770 momentary LUFS from the audio
-  // thread.  Falls back to the most recent analyzed integrated LUFS when
-  // not playing so the meter still tells the user "this is where it
+  // Bars drive off the LIVE BS.1770 momentary LUFS during playback.
+  const liveMomentary = isPlaying && lufsMomentary > -120 ? lufsMomentary : undefined;
+  // Peak-hold line on the bars: during playback we show the LIVE integrated
+  // value so Dan can watch the bar dance around the integrated aggregate as
+  // playback progresses through the track. When paused, it shows the last
+  // analyzed integrated value so the line still says "this is where it
   // landed last time."
-  const liveLufs = isPlaying && lufsMomentary > -120 ? lufsMomentary : undefined;
-  const integrated = analysis?.lufs_integrated;
+  const analyzedIntegrated = analysis?.lufs_integrated;
+  const liveIntegrated =
+    isPlaying && lufsIntegrated > -120 ? lufsIntegrated : undefined;
+  const peakHoldIntegrated = liveIntegrated ?? analyzedIntegrated;
   // Live TP estimate: use the same live peak (dBFS ≈ dBTP for our chain;
   // not strictly true-peak in the BS.1770 sense, but in the right ballpark
   // for a live indicator).
   const liveTp = isPlaying && peakDbfs > -120 ? peakDbfs : undefined;
-  // Headline number: live LUFS while playing, integrated when paused.
-  const headlineLufs = liveLufs ?? integrated;
+
+  // Readouts. Momentary is silent when not playing; integrated falls back
+  // to the analyzed value so the user always sees a meaningful number.
+  const momentaryDisplay =
+    liveMomentary !== undefined ? liveMomentary.toFixed(1) : "—";
+  const integratedDisplay =
+    peakHoldIntegrated !== undefined ? peakHoldIntegrated.toFixed(1) : "—";
+  const integratedLabel = isPlaying ? "Integrated LUFS (live)" : "Integrated LUFS";
 
   return (
     <section className="panel master-out">
       <header className="panel-head">
         <span className="panel-title">MASTER OUT</span>
         {isPlaying ? (
-          <span className="panel-live-pill" title="Bars are metering the live post-output peak in real time.">
+          <span className="panel-live-pill" title="Momentary bars + live integrated readout are metering the playback in real time.">
             <span className="panel-live-dot" aria-hidden /> LIVE
           </span>
         ) : isAnalyzing ? (
@@ -144,16 +163,21 @@ function MasterOutPanel({
       </header>
       <div className="lufs-meter">
         <div className="lufs-bars">
-          <LufsBar value={liveLufs} peakHold={integrated} channel="L" />
-          <LufsBar value={liveLufs} peakHold={integrated} channel="R" />
+          <LufsBar value={liveMomentary} peakHold={peakHoldIntegrated} channel="L" />
+          <LufsBar value={liveMomentary} peakHold={peakHoldIntegrated} channel="R" />
         </div>
         <LufsScale />
         <TruePeakBar value={liveTp ?? tp} />
       </div>
       <dl className="master-readouts">
         <Readout
-          label={isPlaying ? "Momentary LUFS" : "Integrated LUFS"}
-          value={headlineLufs !== undefined ? headlineLufs.toFixed(1) : "—"}
+          label="Momentary LUFS"
+          value={momentaryDisplay}
+          unit=""
+        />
+        <Readout
+          label={integratedLabel}
+          value={integratedDisplay}
           unit=""
         />
         <Readout

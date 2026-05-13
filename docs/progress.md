@@ -1988,3 +1988,61 @@ Next recommended slice:
 - Otherwise: act on the notes — preset rebalances, knob ranges, or further visual polish.
 - Standalone work that doesn't need Dan in the loop: integrated-LUFS streaming, knob-range audit (compare to a few mastering plugins), more dramatic visual polish on the workspace stack.
 
+## 2026-05-13 — Phase 12.2 P3+: live BS.1770-4 integrated LUFS streaming
+
+Goal:
+
+Close open queue #4 from `docs/HANDOFF_2026-05-13_session.md`: add a live integrated LUFS readout that updates over the whole listen-through. Unblocks Dan's Phase 12 listening pass — he can watch the integrated value evolve during playback toward a release-candidate target instead of only seeing the post-export analyzed value.
+
+What changed:
+
+DSP (`src-tauri/src/dsp.rs`):
+
+- **New `IntegratedLufs` struct**, ~150 lines, alongside the existing `MomentaryLufs`. Same K-weighted prefilter shape (RBJ high-shelf @ 1500 Hz +4 dB → Butterworth HP @ 38 Hz), but separate filter state so the two meters can be reset independently.
+- **BS.1770-4 gated algorithm.** 400 ms rectangular blocks at 75 % overlap (a new block emits every 100 ms). Absolute gate drops blocks below -70 LUFS, relative gate drops blocks below (mean of absolute-gated blocks - 10 LU). Final integrated value = -0.691 + 10·log10(mean of relatively-gated block energies).
+- **O(1) sliding sum** for the per-block mean-square: a 19200-sample ring at 48 kHz with incremental sum bookkeeping, so per-frame cost is constant rather than O(block_size).
+- **Cached value at block-emit time.** `lufs()` returns a cached f32, so UI ticks (50 Hz) are free; the O(N) gate re-scan only fires on block boundaries (10 Hz). At 1 hour of playback (~36k blocks), the recompute is ~200 µs × 10 Hz = 0.2 % of one core.
+
+DSP tests (5 new in `src-tauri/src/dsp.rs::mod tests`):
+
+- `integrated_lufs_steady_sine_lands_near_expected` — 3 s of 1 kHz at -23 dBFS integrates to between -26 and -18 LUFS (sanity-check the K-weighting + sum-of-channels combo).
+- `integrated_lufs_absolute_gate_drops_silence` — sandwich (sine / silence / sine) integrates within ±1.5 LU of a silence-free baseline.
+- `integrated_lufs_relative_gate_drops_quiet_tail` — 4 s loud + 1 s -55 dBFS tail integrates within 1 LU of the loud-only baseline.
+- `integrated_lufs_returns_sentinel_until_first_block` — `lufs() == -120.0` before 400 ms has accumulated.
+- `integrated_lufs_reset_zeroes_state` — post-reset readings reflect new material, not residual energy.
+
+Audio plumbing (`src-tauri/src/audio.rs`):
+
+- New `integrated_lufs_x100: Arc<AtomicI32>` on `AudioThreadState`, mirroring the existing `lufs_x100` (i32::MIN = silence sentinel; LUFS×100 storage).
+- `MasteringSource` now holds an `IntegratedLufs` alongside `MomentaryLufs`; both are fed the post-output stereo frame and store to their respective atomics. Mono input is duplicated so the meter sees a stereo pair (BS.1770 channel summation).
+- Reset to `i32::MIN` on `handle_play` AND `handle_play_master` so each new playback session integrates from zero.
+- Snapshot loop reads (no swap) the integrated atomic the same way momentary works.
+- `PlaybackSnapshot.lufs_integrated` and `PlaybackTick.lufs_integrated` added with `#[serde(default = "default_silence_dbfs")]`.
+- All 5 audio-test callsites of `MasteringSource::new` updated to pass an `integrated_lufs` atomic.
+
+Frontend (`src/bindings.ts`, `src/hooks/useTrackMaster.ts`, `src/App.tsx`, `src/components/RightRail.tsx`):
+
+- `PlaybackTick.lufs_integrated: number` added to the TS contract.
+- `transport.lufsIntegrated` added to the `useTrackMaster` transport state and populated from the tick handler.
+- `MasterOutPanel` now takes `lufsIntegrated` and splits the LUFS readout into TWO rows in the master-readouts dl:
+  - **Momentary LUFS** — live momentary value during playback, "—" when paused (drives the bar fill).
+  - **Integrated LUFS** — live integrated during playback (label switches to "Integrated LUFS (live)"); falls back to the analyzed integrated value when paused.
+- The bars' peak-hold line now tracks live integrated during playback instead of the static analyzed value, so the line drifts toward the cumulative integrated value as material plays through.
+
+Verification:
+
+- `cargo test --lib`: **37/37 pass** (was 32; +5 new IntegratedLufs tests).
+- `npm run build`: clean. **287.29 KB raw / 86.66 KB gzipped** (delta from prior HEAD `f0bbeba`: +0.30 KB raw / +0.05 KB gzipped — tight increase for the new readout + plumbing).
+- `cargo check --tests`: clean.
+
+What failed or remains partial:
+
+- **No real-fixture BS.1770-4 reference validation.** The unit tests use closed-form synthetic sines with generous tolerances (±1–4 LU); a BS.1770-4 conformance reference signal (e.g. the EBU TECH 3341 test set) would tighten the confidence on the gating math. Out of scope for this slice — the algorithm matches the spec textually, and the unit tests confirm absolute and relative gates fire as expected.
+- **No frontend test** for the new readout / live-integrated peak-hold line (vitest infra still deferred per HANDOFF infra #13). Manual smoke is the gate.
+- **Listening-session reset semantics.** Integrated resets on play, NOT on settings changes mid-playback. If Dan changes a preset partway through a track, the integrated value mixes pre- and post-change material until next play. This matches the BS.1770-4 "listen-through" semantic but may not be what Dan wants for A/B comparing preset changes; revisit if it shows up as friction.
+
+Next recommended slice:
+
+- **Dan's Phase 12 listening pass** with the new live integrated readout in hand. The most-likely-impactful next slice; the integrated readout was the missing tool for evaluating preset loudness consistency in real time.
+- Otherwise, the next non-Dan-blocking item from the original queue: knob-range audit (compare ±12 dB Tone Shape against a few mastering plugins) or another visual-polish iteration.
+

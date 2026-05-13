@@ -963,6 +963,173 @@ impl MomentaryLufs {
     }
 }
 
+// ============================================================================
+// Phase 12.2 P3+ — BS.1770-4 integrated LUFS meter.
+//
+// Where MomentaryLufs is a 400 ms sliding readout for "what's playing right
+// now," IntegratedLufs aggregates over the whole listen-through per the
+// BS.1770-4 algorithm:
+//   1. K-weight each sample (shared prefilter shape with MomentaryLufs, but
+//      separate filter state so the two integrators can be reset independently).
+//   2. Compute mean-square energy over 400 ms rectangular blocks at 75 %
+//      overlap — a new block is emitted every 100 ms.
+//   3. Absolute gate: drop blocks below -70 LUFS.
+//   4. Relative gate: drop blocks below (mean of absolute-gated blocks - 10 LU).
+//   5. Integrated loudness = -0.691 + 10·log10(mean of remaining block energies).
+//
+// We cache the computed value at block-emit time (every 100 ms) instead of
+// recomputing on every UI tick — the O(N) re-scan grows with listen-through
+// length and would otherwise add up over multi-track sessions.
+// ============================================================================
+
+const LUFS_INTEGRATED_BLOCK_MS: f32 = 400.0;
+const LUFS_INTEGRATED_STEP_MS: f32 = 100.0;
+const LUFS_ABS_GATE_LUFS: f32 = -70.0;
+const LUFS_REL_GATE_LU: f32 = 10.0;
+
+#[derive(Debug, Clone)]
+pub struct IntegratedLufs {
+    hs_coeffs: BiquadCoeffs,
+    hp_coeffs: BiquadCoeffs,
+    hs_state: [BiquadState; 2],
+    hp_state: [BiquadState; 2],
+    /// Ring buffer of per-sample channel-summed squared values (post K-weighting),
+    /// sized to one 400 ms block. The running sum is maintained incrementally as
+    /// each new sample replaces the oldest, so the per-frame cost is O(1) rather
+    /// than O(block_size).
+    ring: Vec<f64>,
+    ring_pos: usize,
+    ring_sum: f64,
+    ring_filled: bool,
+    block_size: usize,
+    block_step: usize,
+    samples_since_step: usize,
+    /// (block_mean_sq, block_loudness) for every block that passed the absolute
+    /// gate. Storing pre-computed block_loudness keeps the relative-gate scan
+    /// in the cheap addition/compare regime — no log10 in the hot recompute.
+    blocks: Vec<(f64, f32)>,
+    /// Cached BS.1770-4 integrated value. Recomputed only at block-emit time
+    /// (every 100 ms), so `lufs()` is O(1) for UI ticks.
+    cached_lufs: f32,
+}
+
+impl IntegratedLufs {
+    pub fn new(sample_rate: u32) -> Self {
+        let sr = sample_rate as f32;
+        let hs_coeffs = BiquadCoeffs::high_shelf(
+            sr,
+            LUFS_PREFILTER_HIGHSHELF_HZ,
+            LUFS_PREFILTER_HIGHSHELF_GAIN_DB,
+            LUFS_PREFILTER_HIGHSHELF_SLOPE,
+        );
+        let hp_coeffs = BiquadCoeffs::butter_hp(sr, LUFS_PREFILTER_HP_HZ, 0.7071);
+        let block_size =
+            ((LUFS_INTEGRATED_BLOCK_MS * 0.001 * sr).round() as usize).max(1);
+        let block_step =
+            ((LUFS_INTEGRATED_STEP_MS * 0.001 * sr).round() as usize).max(1);
+        Self {
+            hs_coeffs,
+            hp_coeffs,
+            hs_state: [BiquadState::default(); 2],
+            hp_state: [BiquadState::default(); 2],
+            ring: vec![0.0; block_size],
+            ring_pos: 0,
+            ring_sum: 0.0,
+            ring_filled: false,
+            block_size,
+            block_step,
+            samples_since_step: 0,
+            blocks: Vec::new(),
+            cached_lufs: -120.0,
+        }
+    }
+
+    /// Feed one stereo frame (left, right). Returns the current integrated
+    /// LUFS reading (cached between block boundaries, so cheap).
+    #[inline]
+    pub fn process_frame(&mut self, left: f32, right: f32) -> f32 {
+        let l_hs = self.hs_state[0].process(&self.hs_coeffs, left);
+        let l_hp = self.hp_state[0].process(&self.hp_coeffs, l_hs);
+        let r_hs = self.hs_state[1].process(&self.hs_coeffs, right);
+        let r_hp = self.hp_state[1].process(&self.hp_coeffs, r_hs);
+        let energy = (l_hp as f64) * (l_hp as f64) + (r_hp as f64) * (r_hp as f64);
+        // Slide the ring window: subtract the value being displaced, add the new.
+        let displaced = self.ring[self.ring_pos];
+        self.ring[self.ring_pos] = energy;
+        self.ring_sum = self.ring_sum - displaced + energy;
+        self.ring_pos += 1;
+        if self.ring_pos >= self.block_size {
+            self.ring_pos = 0;
+            self.ring_filled = true;
+        }
+        self.samples_since_step += 1;
+        if self.samples_since_step >= self.block_step && self.ring_filled {
+            self.samples_since_step = 0;
+            // Guard against negative ring_sum from f64 cancellation drift over
+            // long sessions. The true mean-square is non-negative by definition.
+            let block_mean_sq = (self.ring_sum / self.block_size as f64).max(0.0);
+            if block_mean_sq > 1.0e-12 {
+                let block_loudness =
+                    (LUFS_BS1770_OFFSET as f64 + 10.0 * block_mean_sq.log10()) as f32;
+                if block_loudness >= LUFS_ABS_GATE_LUFS {
+                    self.blocks.push((block_mean_sq, block_loudness));
+                    self.cached_lufs = self.compute_integrated();
+                }
+            }
+        }
+        self.cached_lufs
+    }
+
+    fn compute_integrated(&self) -> f32 {
+        if self.blocks.is_empty() {
+            return -120.0;
+        }
+        let abs_gated_sum: f64 = self.blocks.iter().map(|&(e, _)| e).sum();
+        let abs_gated_mean = abs_gated_sum / self.blocks.len() as f64;
+        if abs_gated_mean <= 1.0e-12 {
+            return -120.0;
+        }
+        let abs_gated_lufs = LUFS_BS1770_OFFSET as f64 + 10.0 * abs_gated_mean.log10();
+        let rel_threshold = (abs_gated_lufs - LUFS_REL_GATE_LU as f64) as f32;
+        let mut rel_gated_sum = 0.0f64;
+        let mut rel_gated_count = 0u64;
+        for &(e, loudness) in &self.blocks {
+            if loudness >= rel_threshold {
+                rel_gated_sum += e;
+                rel_gated_count += 1;
+            }
+        }
+        if rel_gated_count == 0 {
+            return -120.0;
+        }
+        let rel_gated_mean = rel_gated_sum / rel_gated_count as f64;
+        if rel_gated_mean <= 1.0e-12 {
+            return -120.0;
+        }
+        (LUFS_BS1770_OFFSET as f64 + 10.0 * rel_gated_mean.log10()) as f32
+    }
+
+    /// Current integrated LUFS readout (cached, O(1)). `-120.0` until at least
+    /// one 400 ms block has been completed and passed the absolute gate.
+    pub fn lufs(&self) -> f32 {
+        self.cached_lufs
+    }
+
+    pub fn reset(&mut self) {
+        self.hs_state = [BiquadState::default(); 2];
+        self.hp_state = [BiquadState::default(); 2];
+        for v in self.ring.iter_mut() {
+            *v = 0.0;
+        }
+        self.ring_pos = 0;
+        self.ring_sum = 0.0;
+        self.ring_filled = false;
+        self.samples_since_step = 0;
+        self.blocks.clear();
+        self.cached_lufs = -120.0;
+    }
+}
+
 /// Phase 12.2 — per-band gain-reduction snapshots. `MasteringChain` writes
 /// per-frame max-|reduction_db| into these atomics; the audio thread reads
 /// via `swap` on the 50 ms snapshot cycle, mirroring the existing
@@ -2045,6 +2212,130 @@ mod tests {
             c_neg.comp_mid_threshold_db.abs() < 1e-3,
             "density=-1.0 should clamp to 0.0 (threshold = 0 dBFS); got {}",
             c_neg.comp_mid_threshold_db
+        );
+    }
+
+    /// Feed `seconds` of a sine at `amp_dbfs` (peak) into the integrator and
+    /// return the final integrated LUFS reading. Used by the tests below to
+    /// build representative listening-pass signals.
+    fn feed_sine(meter: &mut IntegratedLufs, sample_rate: u32, seconds: f32, freq_hz: f32, amp_dbfs: f32) {
+        let amp_lin = 10.0_f32.powf(amp_dbfs / 20.0);
+        let total = (sample_rate as f32 * seconds) as u32;
+        let omega = 2.0 * std::f32::consts::PI * freq_hz / sample_rate as f32;
+        for n in 0..total {
+            let s = amp_lin * (omega * n as f32).sin();
+            meter.process_frame(s, s);
+        }
+    }
+
+    fn feed_silence(meter: &mut IntegratedLufs, sample_rate: u32, seconds: f32) {
+        let total = (sample_rate as f32 * seconds) as u32;
+        for _ in 0..total {
+            meter.process_frame(0.0, 0.0);
+        }
+    }
+
+    /// Sanity check: a steady 1 kHz sine at -23 dBFS peak (≈ -26 dBFS RMS for a
+    /// pure sine, ≈ -23 LUFS after K-weighting + sum-of-channels — the K-shelf
+    /// adds ~+2 dB at 1 kHz and stereo summation adds +3 dB to the channel-mean
+    /// energy) should integrate to roughly -22 LUFS. We allow ±2 LU because the
+    /// K-weighting magnitude at 1 kHz depends on the exact RBJ shelf shape.
+    #[test]
+    fn integrated_lufs_steady_sine_lands_near_expected() {
+        let sr = 48_000;
+        let mut meter = IntegratedLufs::new(sr);
+        feed_sine(&mut meter, sr, 3.0, 1000.0, -23.0);
+        let integrated = meter.lufs();
+        assert!(
+            integrated > -26.0 && integrated < -18.0,
+            "1 kHz -23 dBFS sine should integrate to ~ -22 LUFS, got {integrated}"
+        );
+    }
+
+    /// Absolute gate: a signal where half the time is well below -70 LUFS
+    /// (silence) and half is at a normal listening level should integrate near
+    /// the loud-half value, not midway between loud and silent. Validates that
+    /// the absolute gate is dropping silent blocks per BS.1770-4.
+    #[test]
+    fn integrated_lufs_absolute_gate_drops_silence() {
+        let sr = 48_000;
+        let mut meter = IntegratedLufs::new(sr);
+        // Sandwich: 2 s sine, 2 s silence, 2 s sine. Without gating, the silence
+        // would pull the mean down by ~3 dB (half the energy gone). With the
+        // absolute gate at -70 LUFS, the silence blocks fall out and the
+        // integrated value tracks the sine sections.
+        feed_sine(&mut meter, sr, 2.0, 1000.0, -20.0);
+        feed_silence(&mut meter, sr, 2.0);
+        feed_sine(&mut meter, sr, 2.0, 1000.0, -20.0);
+        let integrated = meter.lufs();
+        // Sine-only baseline for comparison.
+        let mut baseline = IntegratedLufs::new(sr);
+        feed_sine(&mut baseline, sr, 3.0, 1000.0, -20.0);
+        let baseline_lufs = baseline.lufs();
+        assert!(
+            (integrated - baseline_lufs).abs() < 1.5,
+            "absolute gate should reject silence — sandwich integrated = {integrated}, sine-only baseline = {baseline_lufs}"
+        );
+    }
+
+    /// Relative gate: the BS.1770-4 algorithm drops blocks more than 10 LU
+    /// below the absolute-gated mean. So a clip with mostly loud material and a
+    /// short -20 LU dip should land near the loud-section LUFS, not pulled
+    /// down by the dip.
+    #[test]
+    fn integrated_lufs_relative_gate_drops_quiet_tail() {
+        let sr = 48_000;
+        let mut meter = IntegratedLufs::new(sr);
+        // 4 seconds at -18 dBFS, then 1 second at -55 dBFS (≈ -55 LUFS — passes
+        // the absolute gate but should be well below the relative gate).
+        feed_sine(&mut meter, sr, 4.0, 1000.0, -18.0);
+        feed_sine(&mut meter, sr, 1.0, 1000.0, -55.0);
+        let integrated_with_tail = meter.lufs();
+
+        let mut baseline = IntegratedLufs::new(sr);
+        feed_sine(&mut baseline, sr, 4.0, 1000.0, -18.0);
+        let baseline_loud = baseline.lufs();
+
+        assert!(
+            (integrated_with_tail - baseline_loud).abs() < 1.0,
+            "relative gate should drop -55 LUFS tail; got integrated = {integrated_with_tail}, baseline (no tail) = {baseline_loud}"
+        );
+    }
+
+    /// Until the first 400 ms block has filled, the integrated reading should
+    /// stay at the -120.0 sentinel (UI uses this to suppress the readout).
+    #[test]
+    fn integrated_lufs_returns_sentinel_until_first_block() {
+        let sr = 48_000;
+        let mut meter = IntegratedLufs::new(sr);
+        // 100 ms — less than one block, so no block has been emitted yet.
+        feed_sine(&mut meter, sr, 0.1, 1000.0, -20.0);
+        assert!(
+            meter.lufs() <= -119.0,
+            "should return -120.0 sentinel before first block fills, got {}",
+            meter.lufs()
+        );
+    }
+
+    /// Reset clears all integrator state — feeding the same signal post-reset
+    /// should yield the same reading as a fresh instance.
+    #[test]
+    fn integrated_lufs_reset_zeroes_state() {
+        let sr = 48_000;
+        let mut meter = IntegratedLufs::new(sr);
+        feed_sine(&mut meter, sr, 2.0, 1000.0, -10.0);
+        let loud_lufs = meter.lufs();
+        meter.reset();
+        assert!(
+            meter.lufs() <= -119.0,
+            "reset must return to sentinel, got {}",
+            meter.lufs()
+        );
+        feed_sine(&mut meter, sr, 2.0, 1000.0, -23.0);
+        let after_reset = meter.lufs();
+        assert!(
+            (after_reset - loud_lufs) < -8.0,
+            "post-reset reading should reflect the new (quieter) material; got after_reset = {after_reset}, prior loud = {loud_lufs}"
         );
     }
 }

@@ -466,6 +466,10 @@ pub struct PlaybackSnapshot {
     /// 400 ms sliding mean-square. `SILENCE_DBFS` while the meter is
     /// still priming or when input is silent.
     pub lufs_momentary: f32,
+    /// Phase 12.2 P3+ — BS.1770-4 integrated LUFS over the current playback
+    /// session. Updates every 100 ms as new 400 ms blocks complete. Resets
+    /// to `SILENCE_DBFS` on each new `prepare_master_playback`.
+    pub lufs_integrated: f32,
 }
 
 impl Default for PlaybackSnapshot {
@@ -480,6 +484,7 @@ impl Default for PlaybackSnapshot {
             gr_mid_db: SILENCE_DBFS,
             gr_high_db: SILENCE_DBFS,
             lufs_momentary: SILENCE_DBFS,
+            lufs_integrated: SILENCE_DBFS,
         }
     }
 }
@@ -653,6 +658,11 @@ struct AudioThreadState {
     /// MasteringSource overwrites per frame; the audio thread reads (no swap
     /// — we want the current value, not a since-last-tick aggregate).
     lufs_x100: Arc<AtomicI32>,
+    /// Phase 12.2 P3+ — live BS.1770-4 integrated LUFS over the current
+    /// listen-through. Same storage convention as `lufs_x100`.  Resets to
+    /// `i32::MIN` on each `handle_play` / `handle_play_master` so each new
+    /// playback session integrates from zero.
+    integrated_lufs_x100: Arc<AtomicI32>,
 }
 
 #[derive(Clone)]
@@ -785,12 +795,16 @@ fn audio_thread(rx: mpsc::Receiver<AudioCommand>, snapshot: Arc<RwLock<PlaybackS
                         -(u as f32) / 100.0
                     }
                 };
-                let lufs_raw = s.lufs_x100.load(Ordering::Relaxed);
-                let lufs_momentary = if lufs_raw == i32::MIN {
-                    SILENCE_DBFS
-                } else {
-                    (lufs_raw as f32) / 100.0
+                let to_lufs = |raw: i32| -> f32 {
+                    if raw == i32::MIN {
+                        SILENCE_DBFS
+                    } else {
+                        (raw as f32) / 100.0
+                    }
                 };
+                let lufs_momentary = to_lufs(s.lufs_x100.load(Ordering::Relaxed));
+                let lufs_integrated =
+                    to_lufs(s.integrated_lufs_x100.load(Ordering::Relaxed));
                 PlaybackSnapshot {
                     track_id: s.current_track.clone(),
                     position_sec: s.sink.get_pos().as_secs_f64(),
@@ -801,6 +815,7 @@ fn audio_thread(rx: mpsc::Receiver<AudioCommand>, snapshot: Arc<RwLock<PlaybackS
                     gr_mid_db: to_gr_db(gr_u(&s.gr_mid)),
                     gr_high_db: to_gr_db(gr_u(&s.gr_high)),
                     lufs_momentary,
+                    lufs_integrated,
                 }
             }
             _ => PlaybackSnapshot::default(),
@@ -839,6 +854,7 @@ fn handle_play(
             gr_mid: Arc::new(AtomicU32::new(0)),
             gr_high: Arc::new(AtomicU32::new(0)),
             lufs_x100: Arc::new(AtomicI32::new(i32::MIN)),
+            integrated_lufs_x100: Arc::new(AtomicI32::new(i32::MIN)),
         });
     }
     let s = state.as_mut().expect("state just inserted");
@@ -860,6 +876,7 @@ fn handle_play(
     s.gr_mid.store(0, Ordering::Relaxed);
     s.gr_high.store(0, Ordering::Relaxed);
     s.lufs_x100.store(i32::MIN, Ordering::Relaxed);
+    s.integrated_lufs_x100.store(i32::MIN, Ordering::Relaxed);
     Ok(())
 }
 
@@ -915,6 +932,7 @@ fn handle_play_master(
             gr_mid: Arc::new(AtomicU32::new(0)),
             gr_high: Arc::new(AtomicU32::new(0)),
             lufs_x100: Arc::new(AtomicI32::new(i32::MIN)),
+            integrated_lufs_x100: Arc::new(AtomicI32::new(i32::MIN)),
         });
     }
     let s = state.as_mut().expect("state just inserted");
@@ -936,6 +954,7 @@ fn handle_play_master(
     s.gr_mid.store(0, Ordering::Relaxed);
     s.gr_high.store(0, Ordering::Relaxed);
     s.lufs_x100.store(i32::MIN, Ordering::Relaxed);
+    s.integrated_lufs_x100.store(i32::MIN, Ordering::Relaxed);
 
     let (coeffs_tx, coeffs_rx) = mpsc::channel::<crate::dsp::ChainCoeffs>();
     let gr_slots = crate::dsp::GrSnapshotSlots {
@@ -957,6 +976,7 @@ fn handle_play_master(
         coeffs_rx,
         s.peak_linear.clone(),
         s.lufs_x100.clone(),
+        s.integrated_lufs_x100.clone(),
     );
 
     let new_sink = rodio::Sink::try_new(&s.handle).map_err(|e| e.to_string())?;
@@ -1012,6 +1032,12 @@ struct MasteringSource {
     /// Shared atomic slot for the audio thread to read the latest LUFS value.
     /// Stored as LUFS×100 in an i32. `i32::MIN` = silent / pre-prime.
     lufs_x100: Arc<AtomicI32>,
+    /// BS.1770-4 integrated LUFS meter — aggregates the whole listen-through
+    /// with absolute (-70 LUFS) and relative (-10 LU from ungated mean) gates.
+    integrated_lufs_meter: crate::dsp::IntegratedLufs,
+    /// Shared atomic slot for the integrated readout. Same storage convention
+    /// as `lufs_x100`.
+    integrated_lufs_x100: Arc<AtomicI32>,
 }
 
 impl MasteringSource {
@@ -1023,6 +1049,7 @@ impl MasteringSource {
         coeffs_rx: mpsc::Receiver<crate::dsp::ChainCoeffs>,
         peak_linear: Arc<AtomicU32>,
         lufs_x100: Arc<AtomicI32>,
+        integrated_lufs_x100: Arc<AtomicI32>,
     ) -> Self {
         let channels_usize = channels.max(1) as usize;
         Self {
@@ -1045,6 +1072,8 @@ impl MasteringSource {
             peak_linear,
             lufs_meter: crate::dsp::MomentaryLufs::new(sample_rate),
             lufs_x100,
+            integrated_lufs_meter: crate::dsp::IntegratedLufs::new(sample_rate),
+            integrated_lufs_x100,
         }
     }
 }
@@ -1140,19 +1169,25 @@ impl Iterator for MasteringSource {
             self.peak_linear
                 .fetch_max(frame_peak.to_bits(), Ordering::Relaxed);
 
-            // Live BS.1770 LUFS meter — feed the post-output stereo frame
-            // into the K-weighted 400 ms momentary loudness window. Mono
-            // input gets duplicated so the meter still sees a stereo pair
+            // Live BS.1770 LUFS meters — feed the post-output stereo frame
+            // into both the momentary (400 ms K-weighted window) and the
+            // integrated (whole-listen-through with BS.1770-4 gating) meters.
+            // Mono input gets duplicated so the meters see a stereo pair
             // (matches BS.1770's stereo channel summation).
             let l = self.frame_main.first().copied().unwrap_or(0.0);
             let r = if channels >= 2 { self.frame_main[1] } else { l };
-            let lufs = self.lufs_meter.process_frame(l, r);
-            let lufs_x100 = if lufs.is_finite() && lufs > -120.0 {
-                (lufs * 100.0) as i32
-            } else {
-                i32::MIN
+            let to_x100 = |lufs: f32| -> i32 {
+                if lufs.is_finite() && lufs > -120.0 {
+                    (lufs * 100.0) as i32
+                } else {
+                    i32::MIN
+                }
             };
-            self.lufs_x100.store(lufs_x100, Ordering::Relaxed);
+            let momentary = self.lufs_meter.process_frame(l, r);
+            self.lufs_x100.store(to_x100(momentary), Ordering::Relaxed);
+            let integrated = self.integrated_lufs_meter.process_frame(l, r);
+            self.integrated_lufs_x100
+                .store(to_x100(integrated), Ordering::Relaxed);
 
             self.frame_out_pos = 0;
         }
@@ -1273,6 +1308,7 @@ mod tests {
         let (coeffs_tx, coeffs_rx) = mpsc::channel::<ChainCoeffs>();
         let peak = Arc::new(AtomicU32::new(0));
         let lufs = Arc::new(AtomicI32::new(i32::MIN));
+        let integrated_lufs = Arc::new(AtomicI32::new(i32::MIN));
         let mut source = MasteringSource::new(
             samples,
             channels,
@@ -1281,6 +1317,7 @@ mod tests {
             coeffs_rx,
             peak,
             lufs,
+            integrated_lufs,
         );
 
         // Drain the first half at the initial chain.
@@ -1436,6 +1473,7 @@ mod tests {
         let (_ref_tx, ref_rx) = mpsc::channel::<ChainCoeffs>();
         let ref_peak = Arc::new(AtomicU32::new(0));
         let ref_lufs = Arc::new(AtomicI32::new(i32::MIN));
+        let ref_integrated_lufs = Arc::new(AtomicI32::new(i32::MIN));
         let mut ref_source = MasteringSource::new(
             samples_a,
             channels,
@@ -1444,6 +1482,7 @@ mod tests {
             ref_rx,
             ref_peak,
             ref_lufs,
+            ref_integrated_lufs,
         );
         let ref_output: Vec<f32> = (0..total_frames * channels as usize)
             .filter_map(|_| ref_source.next())
@@ -1455,6 +1494,7 @@ mod tests {
         let (live_tx, live_rx) = mpsc::channel::<ChainCoeffs>();
         let live_peak = Arc::new(AtomicU32::new(0));
         let live_lufs = Arc::new(AtomicI32::new(i32::MIN));
+        let live_integrated_lufs = Arc::new(AtomicI32::new(i32::MIN));
         let mut live_source = MasteringSource::new(
             samples_b,
             channels,
@@ -1463,6 +1503,7 @@ mod tests {
             live_rx,
             live_peak,
             live_lufs,
+            live_integrated_lufs,
         );
         let half = total_frames * channels as usize / 2;
         let mut live_output: Vec<f32> = Vec::with_capacity(total_frames * channels as usize);
@@ -1530,6 +1571,7 @@ mod tests {
         let (_tx, rx) = mpsc::channel::<ChainCoeffs>();
         let peak = Arc::new(AtomicU32::new(0));
         let lufs = Arc::new(AtomicI32::new(i32::MIN));
+        let integrated_lufs = Arc::new(AtomicI32::new(i32::MIN));
         let mut source = MasteringSource::new(
             samples,
             channels,
@@ -1538,6 +1580,7 @@ mod tests {
             rx,
             peak.clone(),
             lufs,
+            integrated_lufs,
         );
 
         for _ in 0..(total_frames * channels as usize) {
@@ -1576,6 +1619,7 @@ mod tests {
         let (_tx, rx) = mpsc::channel::<ChainCoeffs>();
         let peak = Arc::new(AtomicU32::new(0));
         let lufs = Arc::new(AtomicI32::new(i32::MIN));
+        let integrated_lufs = Arc::new(AtomicI32::new(i32::MIN));
         let mut source = MasteringSource::new(
             samples,
             channels,
@@ -1584,6 +1628,7 @@ mod tests {
             rx,
             peak.clone(),
             lufs,
+            integrated_lufs,
         );
 
         for _ in 0..(total_frames * channels as usize) {
@@ -1621,6 +1666,7 @@ mod tests {
         let (_tx, rx) = mpsc::channel::<ChainCoeffs>();
         let peak = Arc::new(AtomicU32::new(0));
         let lufs = Arc::new(AtomicI32::new(i32::MIN));
+        let integrated_lufs = Arc::new(AtomicI32::new(i32::MIN));
         let mut source = MasteringSource::new(
             samples,
             channels,
@@ -1629,6 +1675,7 @@ mod tests {
             rx,
             peak.clone(),
             lufs,
+            integrated_lufs,
         );
 
         for _ in 0..(total_frames * channels as usize) {

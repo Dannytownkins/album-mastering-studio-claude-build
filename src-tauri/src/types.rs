@@ -362,6 +362,13 @@ pub struct PlaybackTick {
     /// sliding window). `-120.0` is the silence sentinel.
     #[serde(default = "default_silence_dbfs")]
     pub lufs_momentary: f32,
+    /// Phase 12.2 P3+ — live BS.1770-4 integrated LUFS over the current
+    /// playback session. Updates every 100 ms as new 400 ms blocks complete
+    /// and pass the absolute (-70 LUFS) and relative (-10 LU) gates. Resets
+    /// when a new playback starts. `-120.0` is the silence sentinel.
+    /// Defaulted so older sessions/frontends parse cleanly as "no info."
+    #[serde(default = "default_silence_dbfs")]
+    pub lufs_integrated: f32,
 }
 
 fn default_silence_dbfs() -> f32 {

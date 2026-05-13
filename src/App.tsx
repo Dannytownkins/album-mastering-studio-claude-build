@@ -81,6 +81,7 @@ function App() {
         isPlaying={tm.transport.isPlaying}
         compressionGr={tm.transport.compressionGr}
         lufsMomentary={tm.transport.lufsMomentary}
+        lufsIntegrated={tm.transport.lufsIntegrated}
         advancedSlot={
           tm.selectedTrack ? (
             <AdvancedPanel
