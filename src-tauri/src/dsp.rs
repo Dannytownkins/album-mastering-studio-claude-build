@@ -1976,6 +1976,7 @@ mod tests {
             input_gain_db: 0.0,
             output_gain_db: 0.0,
             delivery_profile: DeliveryProfile::Custom,
+            album: None,
             advanced: AdvancedSettings::default(),
         };
         let c = ChainCoeffs::from_settings(44_100, &settings);
@@ -2002,6 +2003,7 @@ mod tests {
             input_gain_db: 0.0,
             output_gain_db: 0.0,
             delivery_profile: DeliveryProfile::Custom,
+            album: None,
             advanced: AdvancedSettings {
                 width: Some(5.0),
                 ..AdvancedSettings::default()
@@ -2041,6 +2043,7 @@ mod tests {
             input_gain_db: 0.0,
             output_gain_db: 0.0,
             delivery_profile: DeliveryProfile::Custom,
+            album: None,
             advanced: AdvancedSettings {
                 width: Some(0.0),
                 ..AdvancedSettings::default()
@@ -2085,6 +2088,7 @@ mod tests {
             input_gain_db: 0.0,
             output_gain_db: 0.0,
             delivery_profile: DeliveryProfile::Custom,
+            album: None,
             advanced: AdvancedSettings {
                 width: Some(1.0),
                 ..AdvancedSettings::default()
@@ -2128,6 +2132,7 @@ mod tests {
             input_gain_db: 0.0,
             output_gain_db: 0.0,
             delivery_profile: DeliveryProfile::Custom,
+            album: None,
             advanced: AdvancedSettings::default(),
         };
         let c = ChainCoeffs::from_settings(44_100, &settings);
@@ -2154,6 +2159,7 @@ mod tests {
             input_gain_db: 0.0,
             output_gain_db: 0.0,
             delivery_profile: DeliveryProfile::Custom,
+            album: None,
             advanced: AdvancedSettings {
                 warmth: Some(1.0),
                 ..AdvancedSettings::default()
@@ -2192,6 +2198,7 @@ mod tests {
             input_gain_db: 0.0,
             output_gain_db: 0.0,
             delivery_profile: DeliveryProfile::Custom,
+            album: None,
             advanced: AdvancedSettings {
                 warmth: Some(w),
                 ..AdvancedSettings::default()
@@ -2225,6 +2232,7 @@ mod tests {
             input_gain_db: 0.0,
             output_gain_db: 0.0,
             delivery_profile: DeliveryProfile::Custom,
+            album: None,
             advanced: AdvancedSettings::default(),
         };
         let c = ChainCoeffs::from_settings(44_100, &settings);
@@ -2252,6 +2260,7 @@ mod tests {
             input_gain_db: 0.0,
             output_gain_db: 0.0,
             delivery_profile: DeliveryProfile::Custom,
+            album: None,
             advanced: AdvancedSettings {
                 presence_air: Some(1.0),
                 ..AdvancedSettings::default()
@@ -2292,6 +2301,7 @@ mod tests {
             input_gain_db: 0.0,
             output_gain_db: 0.0,
             delivery_profile: DeliveryProfile::Custom,
+            album: None,
             advanced: AdvancedSettings::default(),
         }
     }
@@ -2930,6 +2940,116 @@ mod tests {
         let json = serde_json::to_string(&s).expect("serialize");
         let parsed: MasteringSettings = serde_json::from_str(&json).expect("deserialize");
         assert_eq!(parsed.delivery_profile, DeliveryProfile::VinylPremaster);
+    }
+
+    // ========================================================================
+    // Phase B Step 1: AlbumPlan serde round-trip.
+    // ========================================================================
+
+    /// AlbumPlan with 4 tracks + 3 transitions (Direct, Gap 1.5 s, Direct)
+    /// must serialize and deserialize back to the same shape.
+    #[test]
+    fn album_plan_serde_round_trip() {
+        let plan = AlbumPlan {
+            title: "Test Album".to_string(),
+            arc: AlbumArc::Preset {
+                preset: AlbumArcKind::Cinematic,
+            },
+            tracks: vec![
+                AlbumTrackEntry {
+                    track_id: TrackId("t1".to_string()),
+                    position: 1,
+                    role: TrackRole::Opener,
+                    role_locked: false,
+                    arc_lufs_offset_db: -2.1,
+                    intensity_scale: 1.0,
+                },
+                AlbumTrackEntry {
+                    track_id: TrackId("t2".to_string()),
+                    position: 2,
+                    role: TrackRole::AlbumTrack,
+                    role_locked: true,
+                    arc_lufs_offset_db: 0.0,
+                    intensity_scale: 0.95,
+                },
+                AlbumTrackEntry {
+                    track_id: TrackId("t3".to_string()),
+                    position: 3,
+                    role: TrackRole::Single,
+                    role_locked: false,
+                    arc_lufs_offset_db: 1.8,
+                    intensity_scale: 1.1,
+                },
+                AlbumTrackEntry {
+                    track_id: TrackId("t4".to_string()),
+                    position: 4,
+                    role: TrackRole::Closer,
+                    role_locked: false,
+                    arc_lufs_offset_db: -1.4,
+                    intensity_scale: 0.85,
+                },
+            ],
+            transitions: vec![
+                TransitionSpec::direct(),
+                TransitionSpec::gap(1.5),
+                TransitionSpec::direct(),
+            ],
+            intensity: 1.0,
+        };
+        let json = serde_json::to_string(&plan).expect("serialize");
+        let parsed: AlbumPlan = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(parsed.title, plan.title);
+        assert_eq!(parsed.tracks.len(), 4);
+        assert_eq!(parsed.tracks[0].role, TrackRole::Opener);
+        assert_eq!(parsed.tracks[1].role_locked, true);
+        assert_eq!(parsed.tracks[2].arc_lufs_offset_db, 1.8);
+        assert_eq!(parsed.transitions.len(), 3);
+        assert!(matches!(
+            parsed.transitions[1].kind,
+            TransitionKind::Gap
+        ));
+        assert_eq!(parsed.transitions[1].duration_seconds, 1.5);
+        match parsed.arc {
+            AlbumArc::Preset { preset } => assert_eq!(preset, AlbumArcKind::Cinematic),
+            AlbumArc::Custom { .. } => panic!("expected Preset arc, got Custom"),
+        }
+    }
+
+    /// MasteringSettings with an album plan round-trips through .ams.json.
+    /// Verifies the `Option<AlbumPlan>` field doesn't break the existing
+    /// settings shape.
+    #[test]
+    fn mastering_settings_with_album_plan_round_trip() {
+        let mut s = default_master_settings();
+        s.album = Some(AlbumPlan::default());
+        let json = serde_json::to_string(&s).expect("serialize");
+        let parsed: MasteringSettings =
+            serde_json::from_str(&json).expect("deserialize");
+        assert!(parsed.album.is_some());
+        let album = parsed.album.unwrap();
+        assert_eq!(album.intensity, 1.0);
+        assert_eq!(album.tracks.len(), 0);
+        match album.arc {
+            AlbumArc::Preset { preset } => assert_eq!(preset, AlbumArcKind::Cinematic),
+            AlbumArc::Custom { .. } => panic!("expected default Preset"),
+        }
+    }
+
+    /// Older `.ams.json` projects with no `album` field load with `None`.
+    #[test]
+    fn mastering_settings_album_field_defaults_to_none() {
+        let json = r#"{
+            "preset": {"kind": "universal"},
+            "intensity": 0.5,
+            "eq_low_db": 0.0,
+            "eq_mid_db": 0.0,
+            "eq_high_db": 0.0,
+            "volume_match": false,
+            "advanced": {}
+        }"#;
+        let parsed: MasteringSettings =
+            serde_json::from_str(json).expect("deserialize");
+        assert!(parsed.album.is_none());
     }
 
     /// Backward compatibility: an older .ams.json that lacks the field

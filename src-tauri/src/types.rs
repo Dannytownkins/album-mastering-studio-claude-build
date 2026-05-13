@@ -277,6 +277,153 @@ impl DeliveryProfile {
     }
 }
 
+// ============================================================================
+// Phase B — Album Master mode types. See docs/ALBUM_MASTER_PLAN.md for the
+// full spec. Each non-`Custom` AlbumArc variant carries one of the four
+// 6-point intensity curves ported from Codex's `arc.py::ARC_PRESETS`. The
+// runtime cosine-eased resample to actual track count lives in
+// `engine.rs::arc_planner`.
+// ============================================================================
+
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+pub enum AlbumArcKind {
+    /// Codex curve (0.32, 0.52, 0.78, 1.00, 0.70, 0.46). Invitation →
+    /// climb → peak → release → afterglow.
+    Cinematic,
+    /// Codex curve (0.78, 0.66, 0.55, 0.43, 0.34, 0.28). Bright → dim →
+    /// private.
+    Afterhours,
+    /// Codex curve (0.46, 0.62, 0.78, 0.96, 1.00, 0.74). DJ-set energy ramp.
+    ClubPeak,
+    /// Codex curve (0.58, 0.34, 0.86, 0.48, 1.00, 0.39). Deliberately
+    /// unstable.
+    FeverDream,
+}
+
+impl AlbumArcKind {
+    /// The 6-point intensity curve for this arc — values in roughly
+    /// `[0.2, 1.0]`. Ported verbatim from Codex's
+    /// `arc.py::ARC_PRESETS`.
+    pub fn curve(&self) -> [f32; 6] {
+        match self {
+            Self::Cinematic => [0.32, 0.52, 0.78, 1.00, 0.70, 0.46],
+            Self::Afterhours => [0.78, 0.66, 0.55, 0.43, 0.34, 0.28],
+            Self::ClubPeak => [0.46, 0.62, 0.78, 0.96, 1.00, 0.74],
+            Self::FeverDream => [0.58, 0.34, 0.86, 0.48, 1.00, 0.39],
+        }
+    }
+
+    pub fn display_name(&self) -> &'static str {
+        match self {
+            Self::Cinematic => "Cinematic",
+            Self::Afterhours => "Afterhours",
+            Self::ClubPeak => "Club Peak",
+            Self::FeverDream => "Fever Dream",
+        }
+    }
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+#[serde(tag = "kind", rename_all = "kebab-case")]
+pub enum AlbumArc {
+    /// One of the four named Codex arcs.
+    Preset { preset: AlbumArcKind },
+    /// Manual per-track LUFS offsets — one entry per track in playback
+    /// order. Lets the user override the arc entirely.
+    Custom { lufs_offsets: Vec<f32> },
+}
+
+impl Default for AlbumArc {
+    fn default() -> Self {
+        Self::Preset {
+            preset: AlbumArcKind::Cinematic,
+        }
+    }
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+pub enum TransitionKind {
+    /// Sample-accurate butt-splice. No silence between tracks.
+    Direct,
+    /// `duration_seconds` of digital silence between tracks.
+    Gap,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone, Copy)]
+pub struct TransitionSpec {
+    pub kind: TransitionKind,
+    /// Clamped to `[0.0, 5.0]` at the planner / render layer. Ignored
+    /// when `kind = Direct`.
+    pub duration_seconds: f32,
+}
+
+impl TransitionSpec {
+    pub const fn direct() -> Self {
+        Self {
+            kind: TransitionKind::Direct,
+            duration_seconds: 0.0,
+        }
+    }
+    pub const fn gap(seconds: f32) -> Self {
+        Self {
+            kind: TransitionKind::Gap,
+            duration_seconds: seconds,
+        }
+    }
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct AlbumTrackEntry {
+    pub track_id: TrackId,
+    /// 1-indexed playback position. The Vec position in
+    /// `AlbumPlan::tracks` is the canonical order; this field is for
+    /// the manifest and the per-track file-name prefix.
+    pub position: u32,
+    pub role: TrackRole,
+    /// `true` once the user manually overrides the role so re-planning
+    /// doesn't clobber the choice.
+    #[serde(default)]
+    pub role_locked: bool,
+    /// Per-track LUFS shift applied by the arc planner. Added on top of
+    /// the per-track `MasteringSettings::effective_target_lufs()` at
+    /// render time. Negative = quieter than the album-intent target.
+    pub arc_lufs_offset_db: f32,
+    /// Per-track intensity multiplier. `1.0` = the album-intent intensity;
+    /// >1.0 pushes harder for this track; <1.0 softens.
+    pub intensity_scale: f32,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct AlbumPlan {
+    pub title: String,
+    #[serde(default)]
+    pub arc: AlbumArc,
+    /// Tracks in playback order. Vec position is authoritative; the
+    /// `position` field on each entry is derived for display / manifest.
+    pub tracks: Vec<AlbumTrackEntry>,
+    /// `tracks.len() - 1` entries (or 0 for single-track albums).
+    /// `transitions[i]` is the join between `tracks[i]` and
+    /// `tracks[i + 1]`.
+    pub transitions: Vec<TransitionSpec>,
+    /// Album-level intensity multiplier — feeds into the arc resample
+    /// and per-track DSP. Clamped `[0.0, 2.0]`.
+    pub intensity: f32,
+}
+
+impl Default for AlbumPlan {
+    fn default() -> Self {
+        Self {
+            title: String::new(),
+            arc: AlbumArc::default(),
+            tracks: Vec::new(),
+            transitions: Vec::new(),
+            intensity: 1.0,
+        }
+    }
+}
+
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct MasteringSettings {
     pub preset: Preset,
@@ -311,6 +458,11 @@ pub struct MasteringSettings {
     /// projects load with the streaming-universal default.
     #[serde(default)]
     pub delivery_profile: DeliveryProfile,
+    /// Phase B — Album Master mode. `None` for Track Master mode. When
+    /// `Some`, the render pipeline reads per-track arc offsets / intensity
+    /// scales from the plan and shadows the per-track settings accordingly.
+    #[serde(default)]
+    pub album: Option<AlbumPlan>,
     pub advanced: AdvancedSettings,
 }
 

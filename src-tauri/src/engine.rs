@@ -195,6 +195,7 @@ pub fn analyze_one(track_id: TrackId, path: &Path) -> CommandResult<AnalysisResu
         input_gain_db: 0.0,
         output_gain_db: 0.0,
         delivery_profile: DeliveryProfile::default(),
+        album: None,
         advanced: AdvancedSettings {
             lufs_offset_db: Some(-14.0 - lufs_integrated),
             ceiling_dbtp: Some(-1.0),
@@ -942,6 +943,362 @@ pub fn album_render_with_progress(
         started_at_iso: ISO_PLACEHOLDER.to_string(),
         output_paths,
     })
+}
+
+// ============================================================================
+// Phase B Step 3: AlbumPlan-driven render path.
+//
+// Consumes an AlbumPlan + per-track settings + per-track source paths and
+// produces:
+//   1. NN per-track WAVs named NN-<sanitized_title>.wav
+//   2. one continuous album.wav with TransitionSpec silence between tracks
+//   3. manifest.json documenting the plan + per-track output paths +
+//      post-render measured integrated LUFS for each track
+//
+// The per-track render reuses the existing chunked-chain pipeline from
+// `album_render_with_progress`, but each track's `MasteringSettings` is
+// shadowed by the plan's `arc_lufs_offset_db` (added to the effective
+// LUFS target) and `intensity_scale` (multiplied onto `settings.intensity`).
+//
+// Sample-rate / channel-count mismatches between tracks fail with a
+// clear error — resampling is deferred to a future phase.
+// ============================================================================
+
+#[derive(Debug, Deserialize)]
+pub struct AlbumTrackRenderInput {
+    pub track_id: TrackId,
+    pub source_path: String,
+    pub settings: MasteringSettings,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct AlbumPlanRenderRequest {
+    pub plan: AlbumPlan,
+    pub tracks: Vec<AlbumTrackRenderInput>,
+}
+
+#[derive(Debug, Serialize, Clone)]
+pub struct AlbumTrackRenderRecord {
+    pub track_id: TrackId,
+    pub position: u32,
+    pub output_path: String,
+    pub measured_lufs: f32,
+}
+
+#[derive(Debug, Serialize, Clone)]
+pub struct AlbumRenderReport {
+    pub album_wav_path: String,
+    pub manifest_path: String,
+    pub tracks: Vec<AlbumTrackRenderRecord>,
+}
+
+#[derive(Debug, Serialize)]
+struct AlbumManifest<'a> {
+    plan: &'a AlbumPlan,
+    rendered_at_iso: &'static str,
+    sample_rate: u32,
+    channels: u16,
+    bit_depth: u16,
+    album_wav_path: &'a str,
+    tracks: &'a [AlbumTrackRenderRecord],
+}
+
+/// Sanitize a string into a safe file-name component. Replaces any
+/// character outside `[A-Za-z0-9._-]` with `_`. Empty input becomes
+/// `"untitled"`.
+fn sanitize_for_filename(s: &str) -> String {
+    let cleaned: String = s
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-') {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect();
+    let trimmed: String = cleaned.trim_matches('_').to_string();
+    if trimmed.is_empty() {
+        "untitled".to_string()
+    } else {
+        trimmed
+    }
+}
+
+/// Shadow a per-track `MasteringSettings` with the album plan's offsets:
+///   * advanced.lufs_offset_db is REPLACED with
+///     `effective_target_lufs() + arc_lufs_offset_db` so the per-track
+///     render lands at the arc-modulated target.
+///   * intensity is multiplied by intensity_scale (clamped to [0, 1.5]).
+fn apply_album_shadow(
+    settings: &MasteringSettings,
+    entry: &AlbumTrackEntry,
+) -> MasteringSettings {
+    let mut shadowed = settings.clone();
+    let base_target = shadowed
+        .effective_target_lufs()
+        .unwrap_or(-14.0);
+    shadowed.advanced.lufs_offset_db =
+        Some(base_target + entry.arc_lufs_offset_db);
+    shadowed.intensity =
+        (shadowed.intensity * entry.intensity_scale).clamp(0.0, 1.5);
+    shadowed
+}
+
+pub fn render_album_plan_impl(
+    request: &AlbumPlanRenderRequest,
+    out_dir: &Path,
+    on_progress: Option<&dyn Fn(f32)>,
+) -> CommandResult<AlbumRenderReport> {
+    if request.plan.tracks.is_empty() {
+        return Err(CommandError::Other(
+            "AlbumPlan has no tracks".to_string(),
+        ));
+    }
+    // Lookup: TrackId → (source_path, settings).
+    let settings_by_id: std::collections::HashMap<&str, &AlbumTrackRenderInput> =
+        request
+            .tracks
+            .iter()
+            .map(|t| (t.track_id.as_str(), t))
+            .collect();
+
+    let bit_depth = request
+        .plan
+        .tracks
+        .first()
+        .and_then(|t| settings_by_id.get(t.track_id.as_str()))
+        .map(|input| input.settings.effective_bit_depth())
+        .unwrap_or(24);
+
+    std::fs::create_dir_all(out_dir)
+        .map_err(|e| CommandError::Io(e.to_string()))?;
+
+    let total_tracks = request.plan.tracks.len();
+    if let Some(cb) = on_progress {
+        cb(0.0);
+    }
+
+    // Two passes:
+    //   Pass 1 — decode + render each track into samples in memory, write
+    //   the per-track WAV with NN-<title>.wav name, measure post-render
+    //   LUFS, and remember the rendered samples + transition spec for the
+    //   continuous writer in pass 2. Memory cost is the full album in f32;
+    //   for a typical 60-min album at 48k stereo that's ~1.3 GB which is
+    //   acceptable on modern desktop. Future optimization can stream
+    //   directly without staging.
+    //
+    //   Pass 2 — open the album writer, stream each track's samples in,
+    //   inject Gap silence frames per TransitionSpec, finalize.
+    let mut rendered_samples: Vec<Vec<f32>> = Vec::with_capacity(total_tracks);
+    let mut track_records: Vec<AlbumTrackRenderRecord> = Vec::with_capacity(total_tracks);
+    let mut common_sr: u32 = 0;
+    let mut common_channels: u16 = 0;
+
+    for (i, entry) in request.plan.tracks.iter().enumerate() {
+        let input = settings_by_id
+            .get(entry.track_id.as_str())
+            .copied()
+            .ok_or_else(|| {
+                CommandError::Other(format!(
+                    "AlbumPlan references track_id {} but no settings/path was provided",
+                    entry.track_id.as_str()
+                ))
+            })?;
+        let path = Path::new(&input.source_path);
+        if !path.exists() {
+            return Err(CommandError::Io(format!(
+                "source not found: {}",
+                input.source_path
+            )));
+        }
+        let pcm = crate::audio::decode_full(path)?;
+        if pcm.samples.is_empty() {
+            return Err(CommandError::Decode(format!(
+                "no samples decoded from {}",
+                input.source_path
+            )));
+        }
+        if i == 0 {
+            common_sr = pcm.sample_rate;
+            common_channels = pcm.channels.max(1);
+        } else if pcm.sample_rate != common_sr {
+            return Err(CommandError::Other(format!(
+                "album sample-rate mismatch on {}: {} Hz vs album {} Hz (resampling not yet supported)",
+                input.source_path, pcm.sample_rate, common_sr
+            )));
+        } else if pcm.channels != common_channels {
+            return Err(CommandError::Other(format!(
+                "album channel mismatch on {}: {} ch vs album {} ch",
+                input.source_path, pcm.channels, common_channels
+            )));
+        }
+
+        let shadowed = apply_album_shadow(&input.settings, entry);
+        let mut samples = pcm.samples;
+        let channels_usize = pcm.channels.max(1) as usize;
+        let mut chain = crate::dsp::MasteringChain::new(
+            pcm.sample_rate,
+            channels_usize,
+            &shadowed,
+        );
+        const CHUNK_FRAMES: usize = 4096;
+        let chunk_samples = CHUNK_FRAMES * channels_usize;
+        let track_total = samples.len();
+        let mut processed = 0;
+        while processed < track_total {
+            let end = (processed + chunk_samples).min(track_total);
+            chain.process_interleaved(
+                &mut samples[processed..end],
+                channels_usize,
+            );
+            processed = end;
+            if let Some(cb) = on_progress {
+                let within_track = processed as f32 / track_total.max(1) as f32;
+                let overall = (i as f32 + within_track) / total_tracks.max(1) as f32;
+                cb(overall.min(1.0));
+            }
+        }
+
+        // Apply per-track LUFS landing using the shadowed target (the
+        // arc-modulated value).
+        if let Some(target_lufs) = shadowed.effective_target_lufs() {
+            if target_lufs.is_finite() {
+                let measured =
+                    measure_integrated_lufs(&samples, pcm.sample_rate, pcm.channels)?;
+                if measured.is_finite() && measured > -70.0 {
+                    let delta_db = target_lufs - measured;
+                    if delta_db < 0.0 {
+                        let gain_lin = 10.0_f32.powf(delta_db / 20.0);
+                        for s in samples.iter_mut() {
+                            *s *= gain_lin;
+                        }
+                    }
+                }
+            }
+        }
+
+        // Per-track WAV named NN-<sanitized_title>.wav.
+        let stem = path
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("track");
+        let safe = sanitize_for_filename(stem);
+        let per_track_name = format!("{:02}-{}.wav", entry.position, safe);
+        let per_track_path = out_dir.join(&per_track_name);
+        write_wav(
+            &per_track_path,
+            &samples,
+            pcm.sample_rate,
+            pcm.channels,
+            bit_depth,
+        )?;
+
+        let measured_lufs =
+            measure_integrated_lufs(&samples, pcm.sample_rate, pcm.channels)?;
+        track_records.push(AlbumTrackRenderRecord {
+            track_id: entry.track_id.clone(),
+            position: entry.position,
+            output_path: per_track_path.to_string_lossy().to_string(),
+            measured_lufs,
+        });
+        rendered_samples.push(samples);
+    }
+
+    // Pass 2 — assemble the continuous album.wav, inserting silence
+    // frames per TransitionSpec.
+    let album_path = unique_album_path(out_dir)?;
+    let spec = wav_spec(common_channels, common_sr, bit_depth)?;
+    let mut album_writer =
+        hound::WavWriter::create(&album_path, spec).map_err(|e| CommandError::Io(e.to_string()))?;
+    for (i, samples) in rendered_samples.iter().enumerate() {
+        write_samples_into_writer(&mut album_writer, samples, bit_depth)?;
+        if i + 1 < rendered_samples.len() {
+            // Transition slot between track i and track i+1.
+            if let Some(t) = request.plan.transitions.get(i) {
+                if matches!(t.kind, TransitionKind::Gap) {
+                    let gap_seconds = t.duration_seconds.clamp(0.0, 5.0);
+                    let gap_frames = (gap_seconds * common_sr as f32) as usize;
+                    let gap_samples = gap_frames * common_channels as usize;
+                    let zeros = vec![0.0_f32; gap_samples];
+                    write_samples_into_writer(&mut album_writer, &zeros, bit_depth)?;
+                }
+            }
+        }
+    }
+    album_writer
+        .finalize()
+        .map_err(|e| CommandError::Io(e.to_string()))?;
+
+    // Manifest.
+    let manifest_path = out_dir.join("manifest.json");
+    let manifest = AlbumManifest {
+        plan: &request.plan,
+        rendered_at_iso: ISO_PLACEHOLDER,
+        sample_rate: common_sr,
+        channels: common_channels,
+        bit_depth,
+        album_wav_path: &album_path.to_string_lossy(),
+        tracks: &track_records,
+    };
+    let manifest_json = serde_json::to_string_pretty(&manifest)
+        .map_err(|e| CommandError::Other(format!("manifest serde: {e}")))?;
+    std::fs::write(&manifest_path, manifest_json)
+        .map_err(|e| CommandError::Io(e.to_string()))?;
+
+    if let Some(cb) = on_progress {
+        cb(1.0);
+    }
+
+    Ok(AlbumRenderReport {
+        album_wav_path: album_path.to_string_lossy().to_string(),
+        manifest_path: manifest_path.to_string_lossy().to_string(),
+        tracks: track_records,
+    })
+}
+
+#[derive(Debug, Deserialize)]
+pub struct PlanAlbumRequest {
+    pub title: String,
+    pub analyses: Vec<AnalysisResult>,
+    pub durations: Vec<f64>,
+    pub arc: AlbumArc,
+    pub intensity: f32,
+}
+
+/// Phase B Step 4: thin Tauri wrapper around `album::build_album_plan`.
+/// Lets the frontend pick (arc, intensity) and immediately receive the
+/// per-track plan without duplicating the math in TypeScript.
+#[tauri::command]
+pub async fn plan_album(request: PlanAlbumRequest) -> CommandResult<AlbumPlan> {
+    let refs: Vec<&AnalysisResult> = request.analyses.iter().collect();
+    Ok(crate::album::build_album_plan(
+        request.title,
+        &refs,
+        &request.durations,
+        request.arc,
+        request.intensity,
+    ))
+}
+
+#[tauri::command]
+pub async fn render_album_plan(
+    request: AlbumPlanRenderRequest,
+    app: tauri::AppHandle,
+) -> CommandResult<AlbumRenderReport> {
+    let out_dir = render_output_dir(&app, RenderKind::Album)?;
+    let app_for_progress = app.clone();
+    let on_progress = move |fraction: f32| {
+        let _ = app_for_progress.emit(
+            "render:progress",
+            RenderProgress {
+                track_id: TrackId(String::new()),
+                kind: RenderKind::Album,
+                fraction,
+            },
+        );
+    };
+    render_album_plan_impl(&request, &out_dir, Some(&on_progress))
 }
 
 fn unique_album_path(out_dir: &Path) -> CommandResult<PathBuf> {

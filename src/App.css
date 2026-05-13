@@ -52,6 +52,170 @@
   box-sizing: border-box;
 }
 
+/* Phase B — Album Master panel */
+.album-panel {
+  background: linear-gradient(180deg, rgba(31, 37, 51, 0.55) 0%, var(--bg-2) 100%);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0.6rem 0.85rem 0.7rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.03);
+}
+
+.album-panel-head {
+  display: flex;
+  align-items: center;
+  gap: 0.85rem;
+}
+
+.album-title-input {
+  flex: 1;
+  background: var(--bg-3);
+  border: 1px solid var(--border-strong);
+  color: var(--text-0);
+  border-radius: 4px;
+  padding: 0.35rem 0.6rem;
+  font-size: 0.9rem;
+  font-weight: 600;
+}
+
+.album-title-input:focus {
+  outline: 1px solid var(--accent);
+}
+
+.album-panel-controls {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+}
+
+.album-intensity-range {
+  flex: 1;
+  min-width: 120px;
+}
+
+.album-intensity-value {
+  font-variant-numeric: tabular-nums;
+  font-size: 0.85rem;
+  color: var(--text-1);
+  min-width: 3.5em;
+  text-align: right;
+}
+
+.album-export-btn {
+  padding: 0.5rem 0.9rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  font-size: 0.85rem;
+}
+
+.album-track-lane {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(110px, 1fr));
+  gap: 0.4rem;
+}
+
+.album-track-tile {
+  display: flex;
+}
+
+.album-track-tile-btn {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  width: 100%;
+  background: var(--bg-2);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 0.4rem 0.55rem 0.45rem;
+  text-align: left;
+  cursor: pointer;
+  gap: 0.15rem;
+  transition: border-color 120ms ease, background 120ms ease;
+}
+
+.album-track-tile-btn:hover {
+  border-color: var(--border-strong);
+}
+
+.album-track-tile.is-active .album-track-tile-btn {
+  border-color: var(--accent);
+  background: rgba(77, 139, 255, 0.12);
+}
+
+.album-track-position {
+  font-size: 0.62rem;
+  color: var(--text-2);
+  letter-spacing: 0.12em;
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+}
+
+.album-track-title {
+  font-size: 0.82rem;
+  color: var(--text-0);
+  font-weight: 600;
+  width: 100%;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.album-track-role {
+  font-size: 0.58rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  font-weight: 700;
+  padding: 1px 5px;
+  border-radius: 999px;
+  background: rgba(77, 139, 255, 0.18);
+  color: var(--text-1);
+}
+
+.album-track-role.role-opener,
+.album-track-role.role-closer {
+  background: rgba(168, 139, 250, 0.25);
+  color: #d6c7ff;
+}
+
+.album-export-receipt {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.75rem;
+  padding-top: 0.3rem;
+  border-top: 1px solid var(--border);
+}
+
+.album-export-receipt-label {
+  color: var(--text-2);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  font-weight: 700;
+}
+
+.album-export-receipt-path {
+  font-family: inherit;
+  color: var(--text-0);
+  background: var(--bg-3);
+  padding: 1px 6px;
+  border-radius: 4px;
+  font-size: 0.72rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.album-export-receipt-meta {
+  color: var(--text-2);
+}
+
 html,
 body,
 #root {

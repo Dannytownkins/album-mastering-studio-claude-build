@@ -1629,6 +1629,7 @@ fn default_settings() -> MasteringSettings {
         input_gain_db: 0.0,
         output_gain_db: 0.0,
         delivery_profile: types::DeliveryProfile::Custom,
+        album: None,
         advanced: AdvancedSettings::default(),
     }
 }

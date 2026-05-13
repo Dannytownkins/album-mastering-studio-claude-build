@@ -9,6 +9,7 @@ import { api } from "./lib/api";
 import { useTrackMaster } from "./hooks/useTrackMaster";
 import { PresetIcon } from "./components/PresetIcon";
 import { RightRail } from "./components/RightRail";
+import { AlbumPanel } from "./components/AlbumPanel";
 import { Knob, intensityLabel } from "./components/Knob";
 import { SignalChain } from "./components/SignalChain";
 import type {
@@ -66,11 +67,27 @@ function App() {
       />
       <main className="workspace">
         {tm.mode === "album" && tm.tracks.length > 0 && (
-          <AlbumHeader
-            tracks={tm.tracks}
-            isExporting={tm.isExportingAlbum}
-            onExport={tm.exportAlbum}
-          />
+          <>
+            <AlbumHeader
+              tracks={tm.tracks}
+              isExporting={tm.isExportingAlbum}
+              onExport={tm.exportAlbum}
+            />
+            <AlbumPanel
+              tracks={tm.tracks}
+              selectedTrackId={tm.selectedTrack?.id ?? null}
+              onSelectTrack={tm.selectTrack}
+              albumArcKind={tm.albumArcKind}
+              albumIntensity={tm.albumIntensity}
+              albumTitle={tm.albumTitle}
+              albumRendering={tm.albumRendering}
+              albumExportReport={tm.albumExportReport}
+              onAlbumArc={tm.setAlbumArc}
+              onAlbumIntensity={tm.setAlbumIntensity}
+              onAlbumTitle={tm.setAlbumTitle}
+              onExportAlbum={tm.exportAlbumPlan}
+            />
+          </>
         )}
         {tm.selectedTrack ? (
           <TrackMaster tm={tm} />

@@ -1,3 +1,4 @@
+pub mod album;
 pub mod audio;
 pub mod dsp;
 pub mod engine;
@@ -55,6 +56,8 @@ pub fn run() {
             engine::render_track_preview,
             engine::render_track_master,
             engine::render_album_master,
+            engine::plan_album,
+            engine::render_album_plan,
             audio::prepare_source_playback,
             audio::prepare_master_playback,
             audio::prepare_ab_preview,

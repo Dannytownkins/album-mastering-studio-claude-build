@@ -98,6 +98,52 @@ export const DELIVERY_PROFILE_TARGET_LUFS: Record<DeliveryProfile, number | null
   "custom": null,
 };
 
+/// Phase B — Album Master mode types. Mirror of the Rust types in
+/// types.rs; the four AlbumArcKind values map to the same 6-point
+/// curves the Rust runtime cosine-resamples to actual track count.
+export type AlbumArcKind =
+  | "cinematic"
+  | "afterhours"
+  | "club-peak"
+  | "fever-dream";
+
+export const ALBUM_ARC_DISPLAY: Record<AlbumArcKind, string> = {
+  "cinematic": "Cinematic",
+  "afterhours": "Afterhours",
+  "club-peak": "Club Peak",
+  "fever-dream": "Fever Dream",
+};
+
+export type AlbumArc =
+  | { kind: "preset"; preset: AlbumArcKind }
+  | { kind: "custom"; lufs_offsets: number[] };
+
+export type TransitionKind = "direct" | "gap";
+
+export interface TransitionSpec {
+  kind: TransitionKind;
+  /// Clamped to [0, 5] seconds at the planner / render layer. Ignored
+  /// for kind = "direct".
+  duration_seconds: number;
+}
+
+export interface AlbumTrackEntry {
+  track_id: TrackId;
+  position: number;
+  role: TrackRole;
+  role_locked?: boolean;
+  arc_lufs_offset_db: number;
+  intensity_scale: number;
+}
+
+export interface AlbumPlan {
+  title: string;
+  arc: AlbumArc;
+  tracks: AlbumTrackEntry[];
+  transitions: TransitionSpec[];
+  intensity: number;
+}
+
 export interface MasteringSettings {
   preset: Preset;
   intensity: number;
@@ -117,6 +163,8 @@ export interface MasteringSettings {
   /// Phase A3 — delivery profile preset. Shadows lufs_offset_db /
   /// ceiling_dbtp / bit_depth at render time when non-`custom`.
   delivery_profile: DeliveryProfile;
+  /// Phase B — album-mode plan. `null` for Track Master mode.
+  album?: AlbumPlan | null;
   advanced: AdvancedSettings;
 }
 

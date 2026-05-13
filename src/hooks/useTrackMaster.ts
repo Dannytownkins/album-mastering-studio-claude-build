@@ -764,6 +764,85 @@ export function useTrackMaster() {
     [selectedTrackId, updateSettings],
   );
 
+  // Phase B — Album Master mode controls. Stored on the hook (not
+  // serialized in MasteringSettings.album yet — the AlbumPlan is rebuilt
+  // at export time from current tracks + analyses + arc + intensity, so
+  // the hook only persists the user's *choice* of arc and intensity).
+  const [albumArcKind, setAlbumArcKind] =
+    useState<import("../bindings").AlbumArcKind>("cinematic");
+  const [albumIntensity, setAlbumIntensityState] = useState<number>(1.0);
+  const [albumTitle, setAlbumTitle] = useState<string>("");
+  const [albumRendering, setAlbumRendering] = useState<boolean>(false);
+  const [albumExportReport, setAlbumExportReport] =
+    useState<import("../lib/api").AlbumRenderReport | null>(null);
+
+  const setAlbumArc = useCallback(
+    (kind: import("../bindings").AlbumArcKind) => setAlbumArcKind(kind),
+    [],
+  );
+  const setAlbumIntensity = useCallback((v: number) => {
+    setAlbumIntensityState(Math.max(0, Math.min(2, v)));
+  }, []);
+
+  /// Phase B: build + render the album via the new AlbumPlan path. Picks
+  /// up the current tracks, per-track analyses, per-track settings,
+  /// current arc + intensity, and hands it to the backend. Returns the
+  /// AlbumRenderReport via `albumExportReport` state. Distinct from the
+  /// legacy `exportAlbum` (below) which uses the older
+  /// `render_album_master` command + per-track-override flow.
+  const exportAlbumPlan = useCallback(async () => {
+    if (tracks.length === 0) return;
+    setAlbumRendering(true);
+    setError(null);
+    try {
+      const analyses = tracks
+        .map((t) => analysisMap[t.id])
+        .filter((a): a is AnalysisResult => !!a);
+      if (analyses.length !== tracks.length) {
+        throw new Error(
+          "Analyze all tracks before exporting the album (some are missing analysis).",
+        );
+      }
+      const durations = tracks.map((t) => t.duration_seconds ?? 0);
+      const arc: import("../bindings").AlbumArc = {
+        kind: "preset",
+        preset: albumArcKind,
+      };
+      const title = albumTitle.trim() || tracks[0]?.display_name || "Album";
+      const plan = await api.planAlbum(
+        title,
+        analyses,
+        durations,
+        arc,
+        albumIntensity,
+      );
+      const renderTracks: import("../lib/api").AlbumTrackRenderInput[] =
+        plan.tracks.map((entry) => {
+          const settings = settingsMap[entry.track_id] ?? albumIntent;
+          const sourceTrack = tracks.find((t) => t.id === entry.track_id);
+          return {
+            track_id: entry.track_id,
+            source_path: sourceTrack?.path ?? "",
+            settings,
+          };
+        });
+      const report = await api.renderAlbumPlan(plan, renderTracks);
+      setAlbumExportReport(report);
+    } catch (err) {
+      setError(String(err));
+    } finally {
+      setAlbumRendering(false);
+    }
+  }, [
+    tracks,
+    analysisMap,
+    settingsMap,
+    albumIntent,
+    albumArcKind,
+    albumIntensity,
+    albumTitle,
+  ]);
+
   /// Phase A3 — pick a delivery profile. Replaces lufs_offset_db /
   /// ceiling_dbtp / bit_depth at render time when non-`custom`. Picking
   /// `custom` doesn't touch the user's existing advanced fields.
@@ -1344,6 +1423,16 @@ export function useTrackMaster() {
     setInputGain,
     setOutputGain,
     setDeliveryProfile,
+    // Phase B — Album Master controls.
+    albumArcKind,
+    albumIntensity,
+    albumTitle,
+    albumRendering,
+    albumExportReport,
+    setAlbumArc,
+    setAlbumIntensity,
+    setAlbumTitle,
+    exportAlbumPlan,
     updatePreview,
     exportMaster,
     togglePlay,

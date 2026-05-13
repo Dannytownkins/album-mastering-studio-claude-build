@@ -2,6 +2,8 @@ import { invoke, listen } from "./tauri-runtime";
 import type { UnlistenFn } from "@tauri-apps/api/event";
 import type {
   AbPreview,
+  AlbumArc,
+  AlbumPlan,
   AnalysisResult,
   ExportReport,
   ImportedTrack,
@@ -17,6 +19,26 @@ import type {
   UserPreset,
   WaveformPeaks,
 } from "../bindings";
+
+/// Phase B: render_album_plan return shape.
+export interface AlbumTrackRenderRecord {
+  track_id: TrackId;
+  position: number;
+  output_path: string;
+  measured_lufs: number;
+}
+
+export interface AlbumRenderReport {
+  album_wav_path: string;
+  manifest_path: string;
+  tracks: AlbumTrackRenderRecord[];
+}
+
+export interface AlbumTrackRenderInput {
+  track_id: TrackId;
+  source_path: string;
+  settings: MasteringSettings;
+}
 
 // Tauri 2 auto-converts camelCase invoke arg keys to snake_case Rust parameter
 // names. So `trackId` here lands as `track_id` in the Rust handler signature.
@@ -178,6 +200,23 @@ export const api = {
     invoke<null>("seek_playback", { positionSec }),
   setLoopRegion: (region: LoopRegion | null) =>
     invoke<null>("set_loop_region", { region }),
+
+  // Phase B — album-mode planning + render.
+  planAlbum: (
+    title: string,
+    analyses: AnalysisResult[],
+    durations: number[],
+    arc: AlbumArc,
+    intensity: number,
+  ) =>
+    invoke<AlbumPlan>("plan_album", {
+      request: { title, analyses, durations, arc, intensity },
+    }),
+
+  renderAlbumPlan: (plan: AlbumPlan, tracks: AlbumTrackRenderInput[]) =>
+    invoke<AlbumRenderReport>("render_album_plan", {
+      request: { plan, tracks },
+    }),
 };
 
 export function onPlaybackTick(

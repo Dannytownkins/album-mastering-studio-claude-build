@@ -247,6 +247,41 @@ export async function mockInvoke<T>(
       return preset as unknown as T;
     }
 
+    case "plan_album": {
+      // Mock: return a single-track plan from whatever the caller passed.
+      const req = (args?.request as Record<string, unknown>) ?? {};
+      const analyses = (req.analyses as Array<{ track_id: string }> | undefined) ?? [];
+      const tracks = analyses.map((a, i) => ({
+        track_id: a.track_id,
+        position: i + 1,
+        role: i === 0
+          ? "opener"
+          : i === analyses.length - 1
+            ? "closer"
+            : "album_track",
+        role_locked: false,
+        arc_lufs_offset_db: 0,
+        intensity_scale: 1.0,
+      }));
+      return {
+        title: req.title ?? "Mock Album",
+        arc: req.arc ?? { kind: "preset", preset: "cinematic" },
+        tracks,
+        transitions: Array(Math.max(0, analyses.length - 1)).fill({
+          kind: "direct",
+          duration_seconds: 0,
+        }),
+        intensity: req.intensity ?? 1.0,
+      } as unknown as T;
+    }
+
+    case "render_album_plan":
+      return {
+        album_wav_path: "/preview/album.wav",
+        manifest_path: "/preview/manifest.json",
+        tracks: [],
+      } as unknown as T;
+
     case "render_track_preview":
     case "render_track_master":
     case "render_album_master":
