@@ -129,6 +129,9 @@ export const api = {
   loadRecentSession: () =>
     invoke<ProjectState | null>("load_recent_session"),
 
+  loadProject: (path: string) =>
+    invoke<ProjectState>("load_project", { path }),
+
   saveUserPreset: (
     name: string,
     kind: PresetKind,

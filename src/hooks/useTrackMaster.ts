@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { open } from "@tauri-apps/plugin-dialog";
+import { open, save } from "@tauri-apps/plugin-dialog";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { api, onPlaybackTick, onRenderProgress } from "../lib/api";
 import type {
@@ -1168,6 +1168,104 @@ export function useTrackMaster() {
     }
   }, [tracks, albumIntent, overrideAlbum, settingsMap]);
 
+  // Phase 12.2 P3 — explicit Save As / Open Project for .ams.json files.
+  // Autosave still runs every 1.5 s into app_data/session.json; these flows
+  // let the user park a named snapshot anywhere on disk and reload it.
+  const saveProjectAs = useCallback(async () => {
+    try {
+      const defaultName =
+        (selectedTrack?.display_name ?? "untitled-project").replace(
+          /[^a-z0-9-_]+/gi,
+          "_",
+        ) + ".ams.json";
+      const path = await save({
+        defaultPath: defaultName,
+        filters: [
+          {
+            name: "Album Mastering Studio project",
+            extensions: ["ams.json", "json"],
+          },
+        ],
+      });
+      if (!path) return;
+      const state: ProjectState = {
+        schema_version: 1,
+        mode,
+        tracks,
+        track_order: tracks.map((t) => t.id),
+        track_settings: settingsMap,
+        album_intent: albumIntent,
+        track_override_album: Array.from(overrideAlbum),
+        last_saved_iso: new Date().toISOString(),
+      };
+      await api.saveProject(path, state);
+    } catch (err) {
+      setError(String(err));
+    }
+  }, [
+    selectedTrack,
+    mode,
+    tracks,
+    settingsMap,
+    albumIntent,
+    overrideAlbum,
+  ]);
+
+  const openProjectFromDisk = useCallback(async () => {
+    try {
+      const selected = await open({
+        multiple: false,
+        filters: [
+          {
+            name: "Album Mastering Studio project",
+            extensions: ["ams.json", "json"],
+          },
+        ],
+      });
+      if (!selected) return;
+      const path = Array.isArray(selected) ? selected[0] : selected;
+      const state = await api.loadProject(path);
+      if (state.schema_version !== 1) {
+        setError(`Unsupported project schema: v${state.schema_version}`);
+        return;
+      }
+      setTracks(state.tracks ?? []);
+      setSettingsMap(state.track_settings ?? {});
+      setMode(state.mode);
+      if (state.album_intent) setAlbumIntent(state.album_intent);
+      setOverrideAlbum(new Set(state.track_override_album ?? []));
+      if (state.tracks && state.tracks.length > 0) {
+        setSelectedTrackId(state.tracks[0].id);
+      } else {
+        setSelectedTrackId(null);
+      }
+      // Best-effort re-analyze + re-waveform for the restored tracks so the
+      // user lands in a working state without manually pressing Analyze.
+      if (state.tracks && state.tracks.length > 0) {
+        try {
+          const results = await api.analyzeTracks(
+            state.tracks.map((t) => ({ id: t.id, path: t.path })),
+          );
+          const nextAnalysis: Record<TrackId, AnalysisResult> = {};
+          for (const r of results) nextAnalysis[r.track_id] = r;
+          setAnalysisMap(nextAnalysis);
+        } catch (err) {
+          console.warn("Re-analyze on open failed", err);
+        }
+        for (const t of state.tracks) {
+          try {
+            const wf = await api.prepareWaveform(t.id, t.path, 1200);
+            setWaveformMap((prev) => ({ ...prev, [t.id]: wf }));
+          } catch (err) {
+            console.warn(`Waveform re-decode failed for ${t.display_name}`, err);
+          }
+        }
+      }
+    } catch (err) {
+      setError(String(err));
+    }
+  }, []);
+
   const reorderTracks = useCallback((fromIndex: number, toIndex: number) => {
     setTracks((prev) => {
       if (
@@ -1256,5 +1354,7 @@ export function useTrackMaster() {
     deleteUserPreset,
     applyUserPreset,
     isDragOver,
+    saveProjectAs,
+    openProjectFromDisk,
   };
 }

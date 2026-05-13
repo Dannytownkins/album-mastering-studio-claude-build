@@ -24,6 +24,28 @@ pub async fn save_project(path: String, state: ProjectState) -> CommandResult<()
     write_session_atomic(p, &state)
 }
 
+/// Load a project from an arbitrary `.ams.json` path picked via native
+/// file-open dialog. Mirrors `save_project` — same path-traversal guard,
+/// same JSON shape (ProjectState).
+#[tauri::command]
+pub async fn load_project(path: String) -> CommandResult<ProjectState> {
+    if path.is_empty() {
+        return Err(CommandError::InvalidPath("empty path".to_string()));
+    }
+    let p = Path::new(&path);
+    if crate::files::has_parent_dir_component(p) {
+        return Err(CommandError::InvalidPath(format!(
+            "path traversal not allowed: {path}"
+        )));
+    }
+    if !p.exists() {
+        return Err(CommandError::Io(format!(
+            "project file does not exist: {path}"
+        )));
+    }
+    read_session(p)
+}
+
 #[tauri::command]
 pub async fn autosave_session(
     state: ProjectState,

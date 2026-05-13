@@ -71,6 +71,7 @@ pub fn run() {
             project::save_project,
             project::autosave_session,
             project::load_recent_session,
+            project::load_project,
             settings::save_user_preset,
             settings::list_user_presets,
             settings::delete_user_preset,
