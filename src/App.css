@@ -605,11 +605,21 @@ button.primary:disabled {
   display: flex;
   gap: 0.4rem;
   margin: 0.5rem 0 0.25rem;
+  justify-content: flex-end;
 }
 
 .undo-redo-bar .ghost-btn {
   padding: 0.3rem 0.7rem;
   font-size: 0.78rem;
+  background: var(--bg-2);
+  border-radius: 4px;
+  transition: background 80ms, border-color 80ms, color 80ms;
+}
+
+.undo-redo-bar .ghost-btn:not(:disabled):hover {
+  background: var(--bg-3);
+  border-color: var(--accent);
+  color: var(--text-0);
 }
 
 .render-progress {
@@ -2490,7 +2500,8 @@ button.primary:disabled {
   gap: 1.4rem;
   align-items: stretch;
   padding: 1rem 1.1rem;
-  background: var(--bg-2);
+  background: linear-gradient(180deg, rgba(31, 37, 51, 0.5) 0%, var(--bg-2) 100%);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.03);
   border: 1px solid var(--border);
   border-radius: 6px;
 }
