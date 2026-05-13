@@ -71,6 +71,14 @@ function App() {
         analysis={tm.selectedAnalysis}
         isAnalyzing={tm.isAnalyzing}
         lastChecks={tm.lastExportReceipt?.checks}
+        advancedSlot={
+          tm.selectedTrack ? (
+            <AdvancedPanel
+              settings={tm.selectedSettings}
+              onAdvanced={tm.setAdvanced}
+            />
+          ) : undefined
+        }
       />
       {tm.isDragOver && (
         <div className="drop-overlay" aria-hidden>
@@ -396,16 +404,8 @@ function TrackMaster({ tm }: { tm: ReturnType<typeof useTrackMaster> }) {
         canExport={!!tm.selectedAnalysis}
         isExporting={tm.isExporting}
         isRendering={tm.isRendering}
-        advancedOpen={tm.advancedOpen}
-        onToggleAdvanced={tm.toggleAdvanced}
         onExport={tm.exportMaster}
       />
-      {tm.advancedOpen && (
-        <AdvancedPanel
-          settings={tm.selectedSettings}
-          onAdvanced={tm.setAdvanced}
-        />
-      )}
     </>
   );
 }
@@ -1493,15 +1493,11 @@ function ExportSection({
   canExport,
   isExporting,
   isRendering,
-  advancedOpen,
-  onToggleAdvanced,
   onExport,
 }: {
   canExport: boolean;
   isExporting: boolean;
   isRendering: boolean;
-  advancedOpen: boolean;
-  onToggleAdvanced: () => void;
   onExport: () => void;
 }) {
   return (
@@ -1518,9 +1514,6 @@ function ExportSection({
         }
       >
         {isExporting ? "Exporting…" : "Export Master"}
-      </button>
-      <button type="button" className="advanced-toggle" onClick={onToggleAdvanced}>
-        {advancedOpen ? "▲ Hide advanced" : "▼ Advanced"}
       </button>
     </section>
   );

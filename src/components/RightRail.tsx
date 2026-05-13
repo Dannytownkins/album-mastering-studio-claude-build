@@ -5,22 +5,36 @@
 // here yet. A follow-up slice will trigger a re-analyze after preview /
 // export so the readouts reflect what was actually delivered.
 
+import type { ReactNode } from "react";
 import type { AnalysisResult, QualityCheck } from "../bindings";
 
 type RightRailProps = {
   analysis: AnalysisResult | undefined;
   isAnalyzing: boolean;
   lastChecks: QualityCheck[] | undefined;
+  // Slot for the AdvancedPanel content. Wrapped in a collapsible details/
+  // summary container so it sits between the quality summary and quality
+  // check panels (matches the reference layout).
+  advancedSlot?: ReactNode;
 };
 
 const LUFS_SCALE_MIN = -36;
 const LUFS_SCALE_MAX = -6;
 
-export function RightRail({ analysis, isAnalyzing, lastChecks }: RightRailProps) {
+export function RightRail({ analysis, isAnalyzing, lastChecks, advancedSlot }: RightRailProps) {
   return (
     <aside className="right-rail">
       <MasterOutPanel analysis={analysis} isAnalyzing={isAnalyzing} />
       <QualitySummaryCard analysis={analysis} />
+      {advancedSlot && (
+        <details className="panel advanced-panel-slot" open>
+          <summary className="panel-head panel-head-summary">
+            <span className="panel-title">ADVANCED CONTROLS</span>
+            <span className="panel-chevron" aria-hidden>⌄</span>
+          </summary>
+          <div className="advanced-slot-body">{advancedSlot}</div>
+        </details>
+      )}
       <QualityCheckPanel checks={lastChecks} analysis={analysis} />
     </aside>
   );

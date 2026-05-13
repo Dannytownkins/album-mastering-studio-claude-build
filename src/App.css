@@ -1891,6 +1891,50 @@ button.primary:disabled {
   font-variant-numeric: tabular-nums;
 }
 
+/* Advanced panel embedded in right rail. */
+.advanced-panel-slot summary.panel-head-summary {
+  cursor: pointer;
+  list-style: none;
+  user-select: none;
+}
+
+.advanced-panel-slot summary.panel-head-summary::-webkit-details-marker {
+  display: none;
+}
+
+.panel-chevron {
+  font-size: 0.9rem;
+  color: var(--text-2);
+  transition: transform 80ms;
+}
+
+.advanced-panel-slot[open] .panel-chevron {
+  transform: rotate(180deg);
+}
+
+.advanced-slot-body {
+  margin-top: 0.5rem;
+}
+
+.advanced-slot-body .advanced {
+  /* The AdvancedPanel ships its own .advanced wrapper styles for the
+     standalone (workspace) presentation. Inside the right rail we tighten
+     spacing and let our panel chrome handle the head/border. */
+  padding: 0;
+  background: transparent;
+  border: none;
+}
+
+.advanced-slot-body .section-head {
+  display: none;
+}
+
+.advanced-slot-body .advanced-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+}
+
 /* Phase 12.2 P2 — Intensity + Tone Shape as knobs. */
 
 .knobs-row {
