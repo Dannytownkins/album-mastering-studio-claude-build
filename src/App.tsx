@@ -681,14 +681,33 @@ function AnalysisSummary({ analysis }: { analysis: AnalysisResult }) {
     lines.push(`True peak ${tp.toFixed(2)} dBTP — comfortable headroom.`);
   }
 
+  // Most actionable headline = first line (loudness commentary). Subsequent
+  // lines stay collapsed by default so the card reads as a one-line "insight"
+  // until the user clicks for the full breakdown.
+  const [headline, ...rest] = lines;
   return (
     <details className="analysis-summary">
-      <summary>Details</summary>
-      <ul>
-        {lines.map((line, i) => (
-          <li key={i}>{line}</li>
-        ))}
-      </ul>
+      <summary>
+        <span className="analysis-summary-icon" aria-hidden>
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+            <path d="M9 18h6" />
+            <path d="M10 22h4" />
+            <path d="M12 2a7 7 0 0 0-5 11.9c1 1 1.5 2 1.5 3.1h7c0-1.1.5-2.1 1.5-3.1A7 7 0 0 0 12 2z" />
+          </svg>
+        </span>
+        <span className="analysis-summary-text">
+          <span className="analysis-summary-eyebrow">Insight</span>
+          <span className="analysis-summary-headline">{headline}</span>
+        </span>
+        <span className="analysis-summary-chevron" aria-hidden>⌄</span>
+      </summary>
+      {rest.length > 0 && (
+        <ul>
+          {rest.map((line, i) => (
+            <li key={i}>{line}</li>
+          ))}
+        </ul>
+      )}
     </details>
   );
 }

@@ -800,21 +800,82 @@ button.primary:disabled {
   color: var(--text-2);
 }
 
+.analysis-summary {
+  display: block;
+  background: linear-gradient(180deg, rgba(31, 37, 51, 0.5) 0%, var(--bg-2) 100%);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 0.55rem 0.75rem;
+  margin-top: 0.4rem;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.03);
+}
+
 .analysis-summary > summary {
   cursor: pointer;
   user-select: none;
-  display: inline-block;
-  padding: 0.15rem 0.4rem;
-  border: 1px solid var(--border-strong);
-  border-radius: 3px;
-  background: var(--bg-2);
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  list-style: none;
   color: var(--text-1);
   font-size: 0.78rem;
   letter-spacing: 0.03em;
 }
 
+.analysis-summary > summary::-webkit-details-marker {
+  display: none;
+}
+
+.analysis-summary-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.75rem;
+  height: 1.75rem;
+  border-radius: 50%;
+  color: var(--accent-bright);
+  background: rgba(77, 139, 255, 0.12);
+  border: 1px solid rgba(77, 139, 255, 0.35);
+  filter: drop-shadow(0 0 4px rgba(111, 163, 255, 0.3));
+  flex-shrink: 0;
+}
+
+.analysis-summary-text {
+  display: flex;
+  flex-direction: column;
+  gap: 0.05rem;
+  flex: 1;
+  min-width: 0;
+}
+
+.analysis-summary-eyebrow {
+  font-size: 0.62rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-2);
+  font-weight: 600;
+}
+
+.analysis-summary-headline {
+  font-size: 0.82rem;
+  color: var(--text-0);
+  line-height: 1.3;
+  font-weight: 500;
+}
+
+.analysis-summary-chevron {
+  color: var(--text-2);
+  font-size: 0.95rem;
+  transition: transform 100ms ease;
+}
+
+.analysis-summary[open] .analysis-summary-chevron {
+  transform: rotate(180deg);
+}
+
 .analysis-summary > summary:hover {
-  background: var(--bg-3, var(--bg-2));
+  /* No-op: the gradient panel already conveys hover affordance via
+     pointer; we don't want to add a re-paint flash. */
 }
 
 .analysis-summary > ul {
