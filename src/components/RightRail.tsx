@@ -23,6 +23,13 @@ type RightRailProps = {
   // summary container so it sits between the levels and quality check
   // panels (matches the reference layout).
   advancedSlot?: ReactNode;
+  // Export action — promoted from the workspace into the right rail to
+  // match the reference layout. Disabled until analysis exists and while
+  // any render/export is in flight.
+  canExport: boolean;
+  isExporting: boolean;
+  isRendering: boolean;
+  onExport: () => void;
 };
 
 const LUFS_SCALE_MIN = -36;
@@ -39,6 +46,10 @@ export function RightRail({
   isPlaying,
   compressionGr,
   advancedSlot,
+  canExport,
+  isExporting,
+  isRendering,
+  onExport,
 }: RightRailProps) {
   return (
     <aside className="right-rail">
@@ -58,6 +69,21 @@ export function RightRail({
         </details>
       )}
       <QualityCheckPanel checks={lastChecks} analysis={analysis} />
+      <button
+        type="button"
+        className="primary right-rail-export"
+        onClick={onExport}
+        disabled={!canExport || isExporting || isRendering}
+        title={
+          isRendering && !isExporting
+            ? "Disabled while a render-audit WAV is in progress — they share render state."
+            : !canExport
+            ? "Analyze a track first."
+            : undefined
+        }
+      >
+        {isExporting ? "Exporting…" : "Export Master"}
+      </button>
     </aside>
   );
 }

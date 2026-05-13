@@ -82,6 +82,10 @@ function App() {
             />
           ) : undefined
         }
+        canExport={!!tm.selectedAnalysis}
+        isExporting={tm.isExporting}
+        isRendering={tm.isRendering}
+        onExport={tm.exportMaster}
       />
       {tm.isDragOver && (
         <div className="drop-overlay" aria-hidden>
@@ -505,12 +509,6 @@ function TrackMaster({ tm }: { tm: ReturnType<typeof useTrackMaster> }) {
         peakDbfs={tm.transport.peakDbfs}
         isPlaying={tm.transport.isPlaying}
         compressionGr={tm.transport.compressionGr}
-      />
-      <ExportSection
-        canExport={!!tm.selectedAnalysis}
-        isExporting={tm.isExporting}
-        isRendering={tm.isRendering}
-        onExport={tm.exportMaster}
       />
     </>
   );
@@ -1610,35 +1608,6 @@ function GrIndicator({
   );
 }
 
-function ExportSection({
-  canExport,
-  isExporting,
-  isRendering,
-  onExport,
-}: {
-  canExport: boolean;
-  isExporting: boolean;
-  isRendering: boolean;
-  onExport: () => void;
-}) {
-  return (
-    <section className="export-bar">
-      <button
-        type="button"
-        className="primary export-btn"
-        onClick={onExport}
-        disabled={!canExport || isExporting || isRendering}
-        title={
-          isRendering && !isExporting
-            ? "Disabled while a render-audit WAV is in progress — they share render state."
-            : undefined
-        }
-      >
-        {isExporting ? "Exporting…" : "Export Master"}
-      </button>
-    </section>
-  );
-}
 
 function AdvancedPanel({
   settings,

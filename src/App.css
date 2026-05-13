@@ -1989,6 +1989,16 @@ button.primary:disabled {
   font-variant-numeric: tabular-nums;
 }
 
+/* Right-rail Export Master CTA — full-width prominent button at the
+   bottom of the right rail. */
+.right-rail-export {
+  width: 100%;
+  padding: 0.8rem 1rem;
+  font-size: 0.95rem;
+  letter-spacing: 0.02em;
+  margin-top: 0.25rem;
+}
+
 /* Track header — metadata chips. */
 
 .track-header-main {
