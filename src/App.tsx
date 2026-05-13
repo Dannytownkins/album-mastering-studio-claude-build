@@ -7,6 +7,7 @@ import {
 } from "react";
 import { api } from "./lib/api";
 import { useTrackMaster } from "./hooks/useTrackMaster";
+import { PresetIcon } from "./components/PresetIcon";
 import type {
   AnalysisResult,
   ImportedTrack,
@@ -852,6 +853,7 @@ function PresetTiles({
               className={"tile " + (active ? "active" : "")}
               onClick={() => onChange(p.value)}
             >
+              <PresetIcon kind={p.value.kind} className="tile-icon" />
               <span className="tile-label">{p.label}</span>
               <span className="tile-blurb">{p.blurb}</span>
             </button>

@@ -1865,3 +1865,57 @@ Next recommended slice:
 
 SVG preset icons (HANDOFF P1 #7). Plan path: `docs/superpowers/plans/2026-05-12-svg-preset-icons.md`.
 
+## 2026-05-12 — Phase 12.2 P1: SVG preset icons (visual hierarchy)
+
+Goal:
+
+Dan's reference screenshot from the parallel Codex build had distinct icons per preset tile. Adding them improves visual scanning of the preset row and gives each preset a memorable visual handle alongside the label.
+
+What changed:
+
+Frontend (`src/components/PresetIcon.tsx` — new file):
+
+- Self-contained inline-SVG component. One `<svg>` per `Preset["kind"]` variant (9 total: universal, clarity, tape, spatial, oomph, warmth, punch, loud, custom).
+- Icons sourced from Lucide (MIT licensed, https://lucide.dev). Path data fetched fresh from `https://unpkg.com/lucide-static@latest/icons/<name>.svg` for each icon — no `lucide-react` dependency added. License attribution at the top of the file.
+- `stroke="currentColor"` on every icon so the SVG inherits the parent tile's `color`, which means active/inactive state, hover, and theme changes all flow through without per-icon CSS.
+
+Frontend (`src/App.tsx`):
+
+- `PresetTiles` now renders `<PresetIcon kind={p.value.kind} className="tile-icon" />` as the first child of each `.tile` button, above the existing label and blurb.
+
+Frontend (`src/App.css`):
+
+- New `.tile-icon` rule (1.25rem square, muted default color, accent on active, intermediate on hover).
+- No other style regressions.
+
+Icon mapping (Dan-approved on first pass):
+
+- Universal → Sparkles
+- Clarity → Eye
+- Tape → Disc
+- Spatial → Maximize2
+- Oomph → Speaker
+- Warmth → Flame
+- Punch → Zap
+- Loud → Megaphone
+- Custom → Sliders (reserved; not currently rendered since custom presets surface through `UserPresetSection`, not `PresetTiles`)
+
+Verification:
+
+- `npm run build`: clean. Bundle 259.84 KB raw / 79.22 KB gzipped (delta from pre-slice: +2.82 KB raw / +0.88 KB gzipped — well under the +5 KB regression bar; no `lucide-react` dependency added).
+- `cargo check --tests`: clean (no Rust changes; sanity check only).
+- Dan's visual smoke: approved "Ship it" on first pass on 2026-05-12.
+
+What failed or remains partial:
+
+- **TS namespace fix.** Initial component used `JSX.Element` for the local `inner` variable; TS 5.x in this repo doesn't expose `JSX` as a global namespace. Switched to `ReactElement` imported from `react`. Functional behavior unchanged.
+- **No automated frontend test** for icon presence / mapping (vitest infra still deferred per HANDOFF infra #13).
+- **`UserPresetSection` still uses text-only chips.** Could reuse `<PresetIcon kind={...} />` later, but the `UserPreset.kind` enum is `"track" | "album" | "shared"`, not `Preset["kind"]`, so a small mapping decision is needed first — out of scope here.
+
+Next recommended slice:
+
+Phase 12.2 P1 polish (typography + SVG preset icons) is **complete** with this commit. Phase 12.2 wired-controls campaign is complete. Stop and ask Dan for next direction:
+- Listening notes / preset rebalancing (subjective, needs Dan's ear).
+- Brainstorm something else (e.g., the rendered-LUFS export-receipt gap from the evening handoff).
+- `PHASE 12 CONFIRMED — proceed to 13` (Dan writes the sentinel by hand if satisfied).
+
