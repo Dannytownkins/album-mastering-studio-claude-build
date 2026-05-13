@@ -2082,7 +2082,10 @@ button.primary:disabled {
   display: flex;
   gap: 0.3rem;
   flex: 1;
-  align-items: flex-end;
+  /* Stretch so children fill the meter's full height — the fill height
+     is calculated relative to the bar's height, so any short bar makes
+     the meter read as silent even when the value is hot. */
+  align-items: stretch;
   height: 100%;
 }
 
@@ -2102,6 +2105,7 @@ button.primary:disabled {
   justify-content: center;
   min-width: 16px;
   max-width: 28px;
+  height: 100%;
   box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.04);
 }
 
@@ -2167,6 +2171,7 @@ button.primary:disabled {
   display: flex;
   align-items: flex-end;
   justify-content: center;
+  height: 100%;
   box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.04);
 }
 
