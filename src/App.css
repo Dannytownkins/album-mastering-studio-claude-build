@@ -2257,6 +2257,17 @@ button.primary:disabled {
   color: var(--text-1);
   line-height: 1.35;
   margin: 0;
+  /* Reserve two lines of height so the LEVELS panel doesn't grow or
+     shrink as the status hint changes per playback state. */
+  min-height: 2.1em;
+}
+
+/* Steady panel sizing — peak-readout panels shouldn't shift their
+   container as values change. The .levels body grid already keeps
+   the readout cells fixed, but enforce a min height on the body so
+   small empty states don't shrink the card height either. */
+.panel.levels {
+  min-height: 170px;
 }
 
 /* QUALITY CHECK */
@@ -2720,15 +2731,29 @@ button.primary:disabled {
 
 .knob-vis svg {
   filter: drop-shadow(0 0 4px rgba(77, 139, 255, 0.18));
-  transition: filter 100ms ease;
-}
-
-.knob-vis svg.is-dragging {
-  filter: drop-shadow(0 0 8px rgba(111, 163, 255, 0.55));
+  transition: filter 100ms ease, transform 80ms ease;
 }
 
 .knob-vis svg:hover {
-  filter: drop-shadow(0 0 6px rgba(111, 163, 255, 0.35));
+  filter: drop-shadow(0 0 10px rgba(111, 163, 255, 0.5));
+  transform: scale(1.03);
+}
+
+.knob-vis svg.is-dragging,
+.knob-vis svg:active {
+  filter: drop-shadow(0 0 14px rgba(111, 163, 255, 0.75));
+  transform: scale(1.05);
+}
+
+/* Outer ring on hover — gives a clear "this is a control" affordance
+   regardless of the cursor reaching the knob. */
+.knob-vis {
+  border-radius: 50%;
+  transition: box-shadow 100ms ease;
+}
+
+.knob:hover .knob-vis {
+  box-shadow: 0 0 0 2px rgba(77, 139, 255, 0.25);
 }
 
 .knob-fallback {

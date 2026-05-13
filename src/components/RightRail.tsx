@@ -53,7 +53,12 @@ export function RightRail({
 }: RightRailProps) {
   return (
     <aside className="right-rail">
-      <MasterOutPanel analysis={analysis} isAnalyzing={isAnalyzing} />
+      <MasterOutPanel
+        analysis={analysis}
+        isAnalyzing={isAnalyzing}
+        peakDbfs={peakDbfs}
+        isPlaying={isPlaying}
+      />
       <LevelsPanel
         peakDbfs={peakDbfs}
         isPlaying={isPlaying}
@@ -91,15 +96,29 @@ export function RightRail({
 function MasterOutPanel({
   analysis,
   isAnalyzing,
+  peakDbfs,
+  isPlaying,
 }: {
   analysis: AnalysisResult | undefined;
   isAnalyzing: boolean;
+  peakDbfs: number;
+  isPlaying: boolean;
 }) {
   const lufs = analysis?.lufs_integrated;
-  const lufsShort = analysis?.lufs_short_term_max;
   const tp = analysis?.true_peak_dbtp;
   const dr = analysis?.dynamic_range_lu;
   const width = analysis?.stereo_width;
+
+  // Bars now drive off the LIVE post-output peak (transport.peakDbfs) so
+  // they actually move while you're auditioning — analysis.lufs_integrated
+  // is a one-shot measurement and was static between Analyze presses.
+  // Integrated LUFS sits as a horizontal peak-hold line so both pieces of
+  // data stay on screen at once.
+  const liveValue = isPlaying && peakDbfs > -120 ? peakDbfs : undefined;
+  // Live TP estimate: use the same live peak (dBFS ≈ dBTP for our chain;
+  // not strictly true-peak in the BS.1770 sense, but in the right ballpark
+  // for a live indicator).
+  const liveTp = isPlaying && peakDbfs > -120 ? peakDbfs : undefined;
 
   return (
     <section className="panel master-out">
@@ -109,11 +128,11 @@ function MasterOutPanel({
       </header>
       <div className="lufs-meter">
         <div className="lufs-bars">
-          <LufsBar value={lufs} peakHold={lufsShort} channel="L" />
-          <LufsBar value={lufs} peakHold={lufsShort} channel="R" />
+          <LufsBar value={liveValue} peakHold={lufs} channel="L" />
+          <LufsBar value={liveValue} peakHold={lufs} channel="R" />
         </div>
         <LufsScale />
-        <TruePeakBar value={tp} />
+        <TruePeakBar value={liveTp ?? tp} />
       </div>
       <dl className="master-readouts">
         <Readout

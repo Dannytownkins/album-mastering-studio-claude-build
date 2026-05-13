@@ -143,7 +143,10 @@ export function Knob({
           onWheel={handleWheel}
           onDoubleClick={handleDoubleClick}
           className={isDragging ? "is-dragging" : ""}
-          style={{ touchAction: "none", cursor: disabled ? "default" : "ns-resize" }}
+          style={{
+            touchAction: "none",
+            cursor: disabled ? "default" : isDragging ? "grabbing" : "grab",
+          }}
         >
           <path
             d={trackPath}

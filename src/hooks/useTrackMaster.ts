@@ -840,7 +840,17 @@ export function useTrackMaster() {
     try {
       const loadedCorrectTrack = loadedTrackId === selectedTrackId;
       const loadedCorrectKind = loadedKindByTrack[selectedTrackId] === transport.playbackKind;
-      if (!loadedCorrectTrack || !loadedCorrectKind) {
+      // Detect end-of-track: when a song finishes the sink empties but the
+      // backend still reports is_loaded=true, so the previous code path
+      // called resumePlayback() on a dead sink and nothing happened.  If
+      // the playhead is at (or essentially at) the duration AND we're not
+      // currently playing, treat this as "re-load and play from start".
+      const duration = selectedTrack.duration_seconds ?? Infinity;
+      const isAtEnd =
+        Number.isFinite(duration) &&
+        transport.currentTimeSec >= duration - 0.5 &&
+        !transport.isPlaying;
+      if (!loadedCorrectTrack || !loadedCorrectKind || isAtEnd) {
         await playWithKind(transport.playbackKind, 0);
       } else if (transport.isPlaying) {
         await api.pausePlayback();
@@ -857,6 +867,7 @@ export function useTrackMaster() {
     loadedKindByTrack,
     transport.playbackKind,
     transport.isPlaying,
+    transport.currentTimeSec,
     playWithKind,
   ]);
 
@@ -932,15 +943,29 @@ export function useTrackMaster() {
       if (!selectedTrack) return;
       const clamped = Math.max(0, positionSec);
       setTransport((t) => ({ ...t, currentTimeSec: clamped }));
+      // If the track ran to the end the sink is empty and seekPlayback is a
+      // no-op on the backend. Re-prepare the source at the click position
+      // so the next play actually starts from the new playhead.
+      const duration = selectedTrack.duration_seconds ?? Infinity;
+      const wasAtEnd =
+        Number.isFinite(duration) &&
+        transport.currentTimeSec >= duration - 0.5 &&
+        !transport.isPlaying;
       if (loadedTrackId === selectedTrack.id) {
         try {
-          await api.seekPlayback(clamped);
+          if (wasAtEnd) {
+            // Re-prep at the new offset (this also unpauses; the user
+            // intends "play from here" after a finish).
+            await playWithKind(transport.playbackKind, clamped);
+          } else {
+            await api.seekPlayback(clamped);
+          }
         } catch (err) {
           setError(String(err));
         }
       }
     },
-    [selectedTrack, loadedTrackId],
+    [selectedTrack, loadedTrackId, transport.currentTimeSec, transport.isPlaying, transport.playbackKind, playWithKind],
   );
 
   const toggleLoop = useCallback(async () => {
