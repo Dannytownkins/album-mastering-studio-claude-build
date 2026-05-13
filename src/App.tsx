@@ -39,6 +39,8 @@ function App() {
   const tm = useTrackMaster();
 
   return (
+    <div className="app-root">
+      <TopHeader mode={tm.mode} onModeChange={tm.setMode} />
     <div className="app">
       <Sidebar
         tracks={tm.tracks}
@@ -48,7 +50,6 @@ function App() {
         onAdd={tm.openImportDialog}
         isAnalyzing={tm.isAnalyzing}
         mode={tm.mode}
-        onModeChange={tm.setMode}
         onReorder={tm.reorderTracks}
         overrideAlbum={tm.overrideAlbum}
       />
@@ -89,6 +90,72 @@ function App() {
         />
       )}
     </div>
+    </div>
+  );
+}
+
+function TopHeader({
+  mode,
+  onModeChange,
+}: {
+  mode: "track" | "album";
+  onModeChange: (mode: "track" | "album") => void;
+}) {
+  return (
+    <header className="top-header">
+      <div className="top-header-left">
+        <span className="brand-mark" aria-hidden>
+          <svg width="22" height="22" viewBox="0 0 24 24" fill="none">
+            <path
+              d="M4 6h2v12H4zM8 10h2v8H8zM12 4h2v16h-2zM16 8h2v10h-2zM20 12h2v6h-2z"
+              fill="currentColor"
+            />
+          </svg>
+        </span>
+        <span className="brand-name">Album Mastering Studio</span>
+      </div>
+      <nav className="top-header-tabs" aria-label="Mode">
+        <button
+          type="button"
+          className={"top-tab " + (mode === "track" ? "is-active" : "")}
+          onClick={() => onModeChange("track")}
+        >
+          Track Master
+        </button>
+        <button
+          type="button"
+          className={"top-tab " + (mode === "album" ? "is-active" : "")}
+          onClick={() => onModeChange("album")}
+        >
+          Album Master
+        </button>
+      </nav>
+      <div className="top-header-right">
+        <button
+          type="button"
+          className="icon-tile"
+          aria-label="Settings (not yet wired)"
+          title="Settings (coming soon)"
+        >
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+            <path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z" />
+            <circle cx="12" cy="12" r="3" />
+          </svg>
+        </button>
+        <button
+          type="button"
+          className="icon-tile"
+          aria-label="Help (not yet wired)"
+          title="Help (coming soon)"
+        >
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+            <circle cx="12" cy="12" r="10" />
+            <path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3" />
+            <path d="M12 17h.01" />
+          </svg>
+        </button>
+      </div>
+    </header>
   );
 }
 
@@ -100,7 +167,6 @@ function Sidebar({
   onAdd,
   isAnalyzing,
   mode,
-  onModeChange,
   onReorder,
   overrideAlbum,
 }: {
@@ -111,7 +177,6 @@ function Sidebar({
   onAdd: () => void;
   isAnalyzing: boolean;
   mode: "track" | "album";
-  onModeChange: (mode: "track" | "album") => void;
   onReorder: (fromIndex: number, toIndex: number) => void;
   overrideAlbum: Set<string>;
 }) {
@@ -155,26 +220,6 @@ function Sidebar({
 
   return (
     <aside className="sidebar">
-      <header className="sidebar-head">
-        <span className="brand">Album Mastering Studio</span>
-        <div className="mode-toggle">
-          <button
-            type="button"
-            className={mode === "track" ? "on" : ""}
-            onClick={() => onModeChange("track")}
-          >
-            Track Master
-          </button>
-          <button
-            type="button"
-            className={mode === "album" ? "on" : ""}
-            onClick={() => onModeChange("album")}
-          >
-            Album Master
-          </button>
-        </div>
-      </header>
-
       <div className="sidebar-section">
         <span className="section-label">
           {mode === "album" ? `Album order (${tracks.length})` : `Tracks (${tracks.length})`}
