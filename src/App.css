@@ -60,6 +60,19 @@ body,
   overflow: hidden;
 }
 
+/* ui-tighten: cap the app canvas at a target design size and center it
+   when the OS window is wider than that. Premium audio plugins typically
+   lock to a fixed aspect / size (FabFilter, iZotope, Soundtheory) — fluid
+   stretching to ultrawide hurts the visual rhythm. Tauri sets a 1600×940
+   default + 1280×780 minimum at the OS layer; this rule keeps the layout
+   honest if a user resizes wider. */
+body {
+  max-width: 1920px;
+  max-height: 1200px;
+  margin: 0 auto;
+  background: #000;
+}
+
 button {
   font-family: inherit;
   font-size: inherit;
@@ -176,14 +189,14 @@ select {
 
 .app {
   display: grid;
-  grid-template-columns: 240px 1fr 320px;
+  grid-template-columns: 260px 1fr 300px;
   flex: 1;
   min-height: 0;
   background: var(--bg-0);
   color: var(--text-0);
 }
 
-@media (max-width: 1280px) {
+@media (max-width: 1400px) {
   .app {
     grid-template-columns: 220px 1fr 280px;
   }
@@ -2952,7 +2965,7 @@ button.primary:disabled {
 /* Phase 12.2 P3 — Signal-chain visualization. */
 
 .signal-chain {
-  padding: 0.55rem 0.95rem 0.6rem;
+  padding: 0.55rem 0.95rem 1.5rem;
   background:
     radial-gradient(circle at 20% 0%, rgba(77, 139, 255, 0.12) 0%, transparent 55%),
     linear-gradient(180deg, rgba(31, 37, 51, 0.55) 0%, var(--bg-2) 100%);
@@ -2960,7 +2973,8 @@ button.primary:disabled {
   border-radius: 8px;
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
   position: relative;
-  overflow: hidden;
+  /* overflow: visible so per-stage labels (SOURCE / EQ / WARMTH / …) that
+     extend below the disc baseline aren't clipped by the panel border. */
 }
 
 .signal-chain::before {
