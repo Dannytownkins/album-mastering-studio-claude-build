@@ -57,20 +57,8 @@ body,
 #root {
   margin: 0;
   height: 100vh;
+  width: 100vw;
   overflow: hidden;
-}
-
-/* ui-tighten: cap the app canvas at a target design size and center it
-   when the OS window is wider than that. Premium audio plugins typically
-   lock to a fixed aspect / size (FabFilter, iZotope, Soundtheory) — fluid
-   stretching to ultrawide hurts the visual rhythm. Tauri sets a 1600×940
-   default + 1280×780 minimum at the OS layer; this rule keeps the layout
-   honest if a user resizes wider. */
-body {
-  max-width: 1920px;
-  max-height: 1200px;
-  margin: 0 auto;
-  background: #000;
 }
 
 button {
