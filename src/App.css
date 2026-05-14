@@ -1456,25 +1456,24 @@ button.primary:disabled {
 }
 
 .tile {
-  /* UI restyle 2026-05-14 slice 3 — premium preset tile.
-     `--tile-accent` (set inline per preset) drives a tight radial wash
-     behind the imagery + tints the otherwise-neutral border so each
-     tile inherits its character even at rest. min-height locks the
-     row to a uniform 136 px so the eight tiles read as one console
-     strip rather than uneven cards. Darker bottom gradient matches
-     the waveform-deck surface so the whole workspace feels like one
-     mastering room. */
-  min-height: 136px;
+  /* Restructure 2026-05-14 slice B — compact preset strip.
+     Dropped min-height from 136 → 72 px so the preset row reads as
+     a secondary selector rather than dominating the workspace.
+     `--tile-accent` still tints the border + radial wash so each
+     preset keeps its character cue. Per Dan's UX review: presets
+     should be accessible but not oversized — primary working area
+     is waveform + transport + mastering controls below. */
+  min-height: 72px;
   background:
     radial-gradient(
-      circle at 50% 28%,
-      color-mix(in srgb, var(--tile-accent, #4d8bff) 26%, transparent),
-      transparent 46%
+      circle at 50% 30%,
+      color-mix(in srgb, var(--tile-accent, #4d8bff) 24%, transparent),
+      transparent 58%
     ),
     linear-gradient(180deg, rgba(31, 37, 51, 0.84) 0%, rgba(13, 16, 24, 0.96) 100%);
   border: 1px solid color-mix(in srgb, var(--tile-accent, #4d8bff) 18%, var(--border));
   border-radius: 8px;
-  padding: 0.7rem 0.45rem 0.55rem;
+  padding: 0.4rem 0.3rem 0.35rem;
   text-align: center;
   display: flex;
   flex-direction: column;
@@ -1482,7 +1481,7 @@ button.primary:disabled {
   position: relative;
   overflow: hidden;
   justify-content: center;
-  gap: 0.3rem;
+  gap: 0.18rem;
   color: var(--text-1);
   transition: border-color 80ms, background 80ms, box-shadow 120ms, transform 80ms;
   cursor: pointer;
@@ -1490,25 +1489,16 @@ button.primary:disabled {
 
 .tile-label {
   font-weight: 600;
-  font-size: 0.85rem;
+  font-size: 0.72rem;
+  letter-spacing: 0.02em;
+  line-height: 1;
 }
 
+/* Restructure slice B: blurb hidden entirely on the compact strip;
+   browser title-attribute on the button still surfaces it on hover
+   for users who want the description without burning vertical space. */
 .tile-blurb {
-  font-size: 0.7rem;
-  color: var(--text-2);
-  line-height: 1.25;
-  /* Default: collapsed on the chip. Surfaces on hover / active state via
-     the rule below so the card stays compact at rest. */
-  max-height: 0;
-  overflow: hidden;
-  opacity: 0;
-  transition: max-height 140ms ease, opacity 140ms ease;
-}
-
-.tile:hover .tile-blurb,
-.tile.active .tile-blurb {
-  max-height: 3em;
-  opacity: 1;
+  display: none;
 }
 
 .tile:hover {
@@ -1516,18 +1506,15 @@ button.primary:disabled {
   transform: translateY(-1px);
 }
 
-/* Photoreal preset imagery — sits on top of the tile via screen blend
-   so the bright parts of the 3D render add light to the tile underneath
-   instead of looking like a sticker pasted on. The transparent areas of
-   the PNG let the tile's accent-radial gradient show through naturally.
-   UI restyle slice 3: responsive sizing — clamp() so the imagery
-   stretches with the row width (64 px floor at narrow viewports, 92 px
-   ceiling at 1600+ wide). */
+/* Photoreal preset imagery — screen-blended so the highlights add
+   light to the tile rather than reading as a pasted sticker. Compact
+   strip slice B: imagery shrinks from 64-92 → 28-40 so the strip
+   stays a secondary control. */
 .tile-icon {
-  width: clamp(64px, 5.8vw, 92px);
-  height: clamp(64px, 5.8vw, 92px);
+  width: clamp(28px, 2.6vw, 40px);
+  height: clamp(28px, 2.6vw, 40px);
   object-fit: contain;
-  margin-bottom: 0.35rem;
+  margin-bottom: 0.1rem;
   flex-shrink: 0;
   mix-blend-mode: screen;
   filter: brightness(0.95) saturate(1.05) contrast(1.04);
@@ -1740,6 +1727,26 @@ button.primary:disabled {
   display: flex;
   flex-direction: column;
   gap: 0.4rem;
+}
+
+/* Restructure 2026-05-14 slice A — embedded EQ variant used INSIDE
+   the tone-shape-block beside the L/M/H knobs. No outer chrome (the
+   parent .knobs-row already owns the console surface); no header; no
+   per-node labels (node color is the identity cue); shorter min-
+   height so it doesn't blow up the deck row. */
+.visual-eq-panel-compact {
+  min-height: 132px;
+  flex: 1;
+  border: 1px solid rgba(111, 163, 255, 0.10);
+  border-radius: 6px;
+  padding: 0.35rem 0.5rem 0.3rem;
+  background: rgba(8, 12, 20, 0.55);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.025);
+  min-width: 0;
+}
+
+.visual-eq-panel-compact .eq-overlay {
+  min-height: 110px;
 }
 
 .visual-eq-head {
@@ -2404,25 +2411,29 @@ button.primary:disabled {
 
 /* Phase 12.2 P2 — right-rail master-out / quality panels. */
 
+/* Restructure 2026-05-14 slice D — denser right rail.
+   Tighter panel padding, smaller gap between panels, less form-style
+   spacing inside Advanced. Per Dan's UX review: the rail should feel
+   like meters / export / quality, not a settings drawer. */
 .right-rail {
   background: var(--bg-1);
   border-left: 1px solid var(--border);
   overflow-y: auto;
-  padding: 0.7rem 0.85rem 0.85rem;
-  display: flex;
-  flex-direction: column;
-  gap: 0.55rem;
-}
-
-.panel {
-  background: linear-gradient(180deg, rgba(31, 37, 51, 0.6) 0%, var(--bg-2) 100%);
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  padding: 0.55rem 0.75rem 0.6rem;
+  padding: 0.6rem 0.75rem 0.75rem;
   display: flex;
   flex-direction: column;
   gap: 0.4rem;
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
+}
+
+.panel {
+  background: linear-gradient(180deg, rgba(24, 29, 41, 0.7) 0%, rgba(12, 15, 23, 0.85) 100%);
+  border: 1px solid rgba(111, 163, 255, 0.10);
+  border-radius: 8px;
+  padding: 0.45rem 0.65rem 0.5rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.03);
 }
 
 .panel-head {
@@ -2910,13 +2921,19 @@ button.primary:disabled {
 }
 
 .levels-hint {
-  font-size: 0.72rem;
-  color: var(--text-1);
-  line-height: 1.35;
+  font-size: 0.68rem;
+  color: var(--text-2);
+  line-height: 1.25;
   margin: 0;
-  /* Reserve two lines of height so the LEVELS panel doesn't grow or
-     shrink as the status hint changes per playback state. */
-  min-height: 2.1em;
+}
+
+/* Slice D — only the actionable hints (warn / clip) take a row.
+   Idle/silent/ok states hide the hint so the LEVELS panel doesn't
+   carry a redundant "Press play to start metering." in the rail. */
+.levels-idle .levels-hint,
+.levels-silent .levels-hint,
+.levels-ok .levels-hint {
+  display: none;
 }
 
 /* Steady panel sizing — peak-readout panels shouldn't shift their
@@ -3306,7 +3323,9 @@ button.primary:disabled {
 }
 
 .advanced-slot-body {
-  margin-top: 0.5rem;
+  /* Slice D — pulled in tighter from 0.5rem so the Advanced drawer
+     reads as a dense settings tray rather than a verbose form. */
+  margin-top: 0.35rem;
 }
 
 .advanced-slot-body .advanced {
@@ -3325,13 +3344,13 @@ button.primary:disabled {
 .advanced-slot-body .advanced-grid {
   display: flex;
   flex-direction: column;
-  gap: 0.5rem;
+  gap: 0.35rem;
 }
 
 .advanced-slot-body .adv-field {
-  gap: 0.2rem;
-  padding: 0.35rem 0;
-  border-bottom: 1px dashed var(--border);
+  gap: 0.15rem;
+  padding: 0.25rem 0;
+  border-bottom: 1px dashed rgba(111, 163, 255, 0.06);
 }
 
 .advanced-slot-body .adv-field:last-child {
@@ -3376,37 +3395,27 @@ button.primary:disabled {
   padding: 0.14rem 0.3rem;
 }
 
-/* Phase 12.2 P3 — Signal-chain visualization. */
+/* Phase 12.2 P3 — Signal-chain visualization.
+   Restructure 2026-05-14 slice C — compressed from full-height panel
+   to a thin breadcrumb. Hidden header (the row reads as a chain
+   already), smaller discs, shorter labels, per-stage details hidden
+   (the same values are in the Macros knobs / right rail). */
 
 .signal-chain {
-  padding: 0.55rem 0.95rem 1.5rem;
+  padding: 0.35rem 0.9rem 0.4rem;
   background:
-    radial-gradient(circle at 20% 0%, rgba(77, 139, 255, 0.12) 0%, transparent 55%),
-    linear-gradient(180deg, rgba(31, 37, 51, 0.55) 0%, var(--bg-2) 100%);
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
+    radial-gradient(circle at 20% 0%, rgba(77, 139, 255, 0.10) 0%, transparent 60%),
+    linear-gradient(180deg, rgba(20, 25, 36, 0.6) 0%, rgba(12, 15, 23, 0.85) 100%);
+  border: 1px solid rgba(111, 163, 255, 0.10);
+  border-radius: 6px;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.025);
   position: relative;
-  /* overflow: visible so per-stage labels (SOURCE / EQ / WARMTH / …) that
-     extend below the disc baseline aren't clipped by the panel border. */
-}
-
-.signal-chain::before {
-  content: "SIGNAL CHAIN";
-  position: absolute;
-  top: 0.4rem;
-  left: 1rem;
-  font-size: 0.58rem;
-  letter-spacing: 0.16em;
-  color: var(--text-2);
-  font-weight: 700;
 }
 
 .signal-chain-track {
   display: flex;
   align-items: center;
   gap: 0;
-  margin-top: 0.55rem;
   justify-content: space-between;
 }
 
@@ -3414,15 +3423,15 @@ button.primary:disabled {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 0.15rem;
+  gap: 0.1rem;
   text-align: center;
   flex: 0 0 auto;
-  min-width: 52px;
+  min-width: 38px;
 }
 
 .chain-stage-disc {
-  width: 38px;
-  height: 38px;
+  width: 24px;
+  height: 24px;
   border-radius: 50%;
   display: inline-flex;
   align-items: center;
@@ -3437,24 +3446,27 @@ button.primary:disabled {
   transition: color 120ms ease, background 120ms ease, transform 120ms ease;
 }
 
+.chain-stage-disc svg {
+  display: block;
+  width: 14px;
+  height: 14px;
+}
+
 .chain-stage.is-active .chain-stage-disc {
   color: var(--accent-bright);
   background: linear-gradient(180deg, rgba(77, 139, 255, 0.18) 0%, rgba(42, 107, 242, 0.08) 100%);
   border-color: rgba(111, 163, 255, 0.5);
 }
 
-/* SVG icons must render as block-level inside the disc so they don't pick
-   up the inline baseline offset that flex centering can't fully override. */
-.chain-stage-disc svg {
-  display: block;
-}
+/* (Earlier `.chain-stage-disc svg { display: block }` rule is the
+   authoritative one — kept above with the slice-C compressed sizing.) */
 
 .chain-stage:hover .chain-stage-disc {
   transform: scale(1.06);
 }
 
 .chain-stage-label {
-  font-size: 0.66rem;
+  font-size: 0.58rem;
   letter-spacing: 0.06em;
   text-transform: uppercase;
   color: var(--text-2);
@@ -3465,20 +3477,11 @@ button.primary:disabled {
   color: var(--text-0);
 }
 
+/* Slice C: per-stage detail (e.g. "Density 30% · -7…") removed from
+   the breadcrumb — the same values live in the Macros knobs and the
+   right-rail readouts. Stage hover-title still surfaces the detail. */
 .chain-stage-detail {
-  font-size: 0.6rem;
-  color: var(--text-2);
-  font-variant-numeric: tabular-nums;
-  max-width: 86px;
-  line-height: 1.15;
-  /* Hide overflow on narrow widths — full text is in the title tooltip. */
-  text-overflow: ellipsis;
-  overflow: hidden;
-  white-space: nowrap;
-}
-
-.chain-stage.is-active .chain-stage-detail {
-  color: var(--text-1);
+  display: none;
 }
 
 .chain-link {
@@ -3585,11 +3588,23 @@ button.primary:disabled {
   outline-offset: 0;
 }
 
+/* Slice A restructure 2026-05-14: tone-shape contains both the
+   precision knobs AND an embedded compact Visual EQ. Side-by-side
+   so the deck row stays one strip; at narrower viewports the EQ
+   wraps below the knobs so neither gets squeezed. */
+.tone-shape-content {
+  display: flex;
+  align-items: stretch;
+  gap: 0.8rem;
+  min-width: 0;
+}
+
 .tone-shape-knobs {
   display: flex;
   gap: 1rem;
   align-items: flex-start;
   justify-content: center;
+  flex-shrink: 0;
 }
 
 .knob {

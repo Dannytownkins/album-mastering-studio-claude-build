@@ -581,10 +581,6 @@ function TrackMaster({ tm }: { tm: ReturnType<typeof useTrackMaster> }) {
         onDelete={tm.deleteUserPreset}
         onApply={tm.applyUserPreset}
       />
-      <VisualEqPanel
-        settings={tm.selectedSettings}
-        onEq={tm.setEqBand}
-      />
       <Macros
         settings={tm.selectedSettings}
         onIntensity={tm.setIntensity}
@@ -601,9 +597,7 @@ function TrackMaster({ tm }: { tm: ReturnType<typeof useTrackMaster> }) {
         isRendering={tm.isRendering}
         liveUpdateStats={tm.liveUpdateStats}
         renderProgress={tm.renderProgress}
-        peakDbfs={tm.transport.peakDbfs}
         isPlaying={tm.transport.isPlaying}
-        compressionGr={tm.transport.compressionGr}
       />
     </>
   );
@@ -1276,6 +1270,7 @@ function PresetTiles({
               className={"tile " + (active ? "active" : "")}
               style={{ ["--tile-accent" as never]: accent }}
               onClick={() => onChange(p.value)}
+              title={`${p.label} — ${p.blurb}`}
             >
               <PresetIcon kind={p.value.kind} className="tile-icon" />
               <span className="tile-label">{p.label}</span>
@@ -1407,7 +1402,9 @@ function Macros({
 }: {
   settings: MasteringSettings;
   onIntensity: (v: number) => void;
-  onEq: (band: "low" | "mid" | "high", db: number) => void;
+  // Widened in slice 4b: includes "low-mid" so the embedded Visual EQ
+  // can drive eq_low_mid_db via the same setter the knobs use.
+  onEq: (band: "low" | "low-mid" | "mid" | "high", db: number) => void;
   onAdvanced: (adv: MasteringSettings["advanced"]) => void;
 }) {
   return (
@@ -1430,43 +1427,52 @@ function Macros({
       </div>
       <div className="tone-shape-block">
         <span className="section-label">TONE SHAPE</span>
-        <div className="tone-shape-knobs">
-          <Knob
-            label="Low"
-            size="md"
-            tone="cyan"
-            value={settings.eq_low_db}
-            min={-12}
-            max={12}
-            step={0.1}
-            defaultValue={0}
-            format={(v) => `${v > 0 ? "+" : ""}${v.toFixed(1)} dB`}
-            onChange={(v) => onEq("low", v)}
-          />
-          <Knob
-            label="Mid"
-            size="md"
-            tone="green"
-            value={settings.eq_mid_db}
-            min={-12}
-            max={12}
-            step={0.1}
-            defaultValue={0}
-            format={(v) => `${v > 0 ? "+" : ""}${v.toFixed(1)} dB`}
-            onChange={(v) => onEq("mid", v)}
-          />
-          <Knob
-            label="High"
-            size="md"
-            tone="purple"
-            value={settings.eq_high_db}
-            min={-12}
-            max={12}
-            step={0.1}
-            defaultValue={0}
-            format={(v) => `${v > 0 ? "+" : ""}${v.toFixed(1)} dB`}
-            onChange={(v) => onEq("high", v)}
-          />
+        {/* Restructure 2026-05-14 — the Visual EQ used to live above
+            the Macros row as a full-width panel; per Dan's UX review
+            the layout was too vertical, so EQ now sits beside the
+            three precision knobs INSIDE Tone Shape. The compact mode
+            drops the panel chrome + header + per-node labels so it
+            embeds cleanly. */}
+        <div className="tone-shape-content">
+          <div className="tone-shape-knobs">
+            <Knob
+              label="Low"
+              size="md"
+              tone="cyan"
+              value={settings.eq_low_db}
+              min={-12}
+              max={12}
+              step={0.1}
+              defaultValue={0}
+              format={(v) => `${v > 0 ? "+" : ""}${v.toFixed(1)} dB`}
+              onChange={(v) => onEq("low", v)}
+            />
+            <Knob
+              label="Mid"
+              size="md"
+              tone="green"
+              value={settings.eq_mid_db}
+              min={-12}
+              max={12}
+              step={0.1}
+              defaultValue={0}
+              format={(v) => `${v > 0 ? "+" : ""}${v.toFixed(1)} dB`}
+              onChange={(v) => onEq("mid", v)}
+            />
+            <Knob
+              label="High"
+              size="md"
+              tone="purple"
+              value={settings.eq_high_db}
+              min={-12}
+              max={12}
+              step={0.1}
+              defaultValue={0}
+              format={(v) => `${v > 0 ? "+" : ""}${v.toFixed(1)} dB`}
+              onChange={(v) => onEq("high", v)}
+            />
+          </div>
+          <VisualEqPanel settings={settings} onEq={onEq} compact />
         </div>
       </div>
       <LoudnessTarget settings={settings} onAdvanced={onAdvanced} />
@@ -1575,22 +1581,23 @@ function StaleBar({
   isRendering,
   liveUpdateStats,
   renderProgress,
-  peakDbfs,
   isPlaying,
-  compressionGr,
 }: {
   isRendering: boolean;
   liveUpdateStats: { attempts: number; applied: number; lastAt: number | null };
   renderProgress: { fraction: number; kind: "preview" | "master" | "album" } | null;
-  peakDbfs: number;
   isPlaying: boolean;
-  compressionGr: { low: number; mid: number; high: number };
 }) {
   const progressPct =
     renderProgress !== null
       ? Math.round(Math.max(0, Math.min(1, renderProgress.fraction)) * 100)
       : null;
   // Compact session-state pill: one of Rendering / Realtime / Ready.
+  // Restructure 2026-05-14 slice E — the chunky PEAK / L / M / H meter
+  // chips that used to live in this bar are gone; they duplicated the
+  // right-rail LEVELS panel and made the workspace footer read as
+  // debug-flavored. The bar now does one job: surface the session's
+  // playback / render state and any in-progress render bar.
   const statusLabel =
     progressPct !== null
       ? `Rendering ${renderProgress!.kind} ${progressPct}%`
@@ -1625,10 +1632,6 @@ function StaleBar({
           />
         </div>
       )}
-      <ClippingIndicator peakDbfs={peakDbfs} isPlaying={isPlaying} />
-      <GrIndicator label="L" db={compressionGr.low} isPlaying={isPlaying} />
-      <GrIndicator label="M" db={compressionGr.mid} isPlaying={isPlaying} />
-      <GrIndicator label="H" db={compressionGr.high} isPlaying={isPlaying} />
       {/* Phase 12.1 live-update counter — verifies that the frontend is
           actually firing api.updateChain calls when controls move. Useful
           only when debugging the realtime update plumbing, so it stays
@@ -1649,96 +1652,10 @@ function StaleBar({
   );
 }
 
-// Phase 12.2 — live clipping / output peak indicator. Reads the dBFS peak
-// streamed via PlaybackTick (audio thread → atomic → snapshot → tick) and
-// renders one of three states: silent (no signal), OK (peak below threshold),
-// or CLIP (peak above -0.1 dBFS, the streaming-headroom warning floor).
-// Idle (not playing) collapses to a neutral "—" so the meter doesn't read as
-// "OK" when there's nothing actually being measured.
-const CLIP_THRESHOLD_DBFS = -0.1;
-const SILENCE_FLOOR_DBFS = -80;
-
-function ClippingIndicator({
-  peakDbfs,
-  isPlaying,
-}: {
-  peakDbfs: number;
-  isPlaying: boolean;
-}) {
-  let state: "idle" | "silent" | "ok" | "clip";
-  if (!isPlaying) {
-    state = "idle";
-  } else if (peakDbfs >= CLIP_THRESHOLD_DBFS) {
-    state = "clip";
-  } else if (peakDbfs < SILENCE_FLOOR_DBFS) {
-    state = "silent";
-  } else {
-    state = "ok";
-  }
-  const label = ((): string => {
-    if (state === "idle") return "PEAK —";
-    if (state === "silent") return "PEAK —";
-    if (state === "clip") return "CLIP";
-    return `PEAK ${peakDbfs.toFixed(1)} dB`;
-  })();
-  const title =
-    state === "clip"
-      ? `Output peak ${peakDbfs.toFixed(2)} dBFS — clipping risk. Lower Output Gain, Intensity, or pull Input Gain down to back off the chain.`
-      : state === "ok"
-      ? `Output peak ${peakDbfs.toFixed(2)} dBFS (safe headroom).`
-      : state === "silent"
-      ? "Below -80 dBFS — effectively silent in the last window."
-      : "No mastered playback in progress; meter is idle.";
-  return (
-    <span
-      className={`clip-indicator clip-${state}`}
-      role="status"
-      aria-live="polite"
-      title={title}
-    >
-      {label}
-    </span>
-  );
-}
-
-// Phase 12.2 — per-band gain-reduction readout chip. Mirrors ClippingIndicator's
-// shape: idle (not playing) → "—"; silent sentinel (-120 dB) → "—"; otherwise
-// shows the reduction in dB. Color bands: idle/silent muted; >= -3 dB green;
-// -3..-6 dB amber; < -6 dB red.
-function GrIndicator({
-  label,
-  db,
-  isPlaying,
-}: {
-  label: string;
-  db: number;
-  isPlaying: boolean;
-}) {
-  let state: "idle" | "ok" | "warn" | "hot";
-  let text: string;
-  if (!isPlaying || db <= -119.9) {
-    state = "idle";
-    text = `${label} —`;
-  } else if (db >= -3.0) {
-    state = "ok";
-    text = `${label} ${db.toFixed(1)}`;
-  } else if (db >= -6.0) {
-    state = "warn";
-    text = `${label} ${db.toFixed(1)}`;
-  } else {
-    state = "hot";
-    text = `${label} ${db.toFixed(1)}`;
-  }
-  return (
-    <span
-      className={`gr-indicator gr-${state}`}
-      title={`Compressor gain reduction (${label}): ${db.toFixed(2)} dB`}
-    >
-      {text}
-    </span>
-  );
-}
-
+// Restructure 2026-05-14 slice E — the live ClippingIndicator + per-band
+// GrIndicator chips that used to render here in StaleBar were deleted;
+// their readouts already live in the right-rail LEVELS / MASTER OUT
+// panels (which carry their own clip / silence-floor constants).
 
 function AdvancedPanel({
   settings,

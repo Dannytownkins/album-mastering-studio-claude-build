@@ -2979,3 +2979,140 @@ UI restyle queue is now CLOSED — all six planned slices plus
 4b have shipped. Any further UI work picks up from Dan's next
 listening / usage pass.
 
+
+
+## 2026-05-14 — UX restructure: deck consolidation, preset strip, signal-chain compression, rail density, status quieting
+
+Goal: Dan's post-slice-6 UX review flagged that the page still
+reads as "stacked engineering control panels" rather than the
+integrated studio console of the reference. Slice-by-slice
+polish improved individual components but never tackled the
+layout's verticality — every section was a peer of every other
+in the workspace flex column. This restructure compresses
+hierarchy across five sub-slices and ships as one coherent
+architecture change.
+
+Sub-slices (in order applied):
+
+### Slice A — Deck consolidation
+
+- `src/components/VisualEqPanel.tsx` gained a `compact?: boolean`
+  prop. When true: drops the outer header, the per-node value
+  labels, the band-name row below the axis, shrinks the
+  viewBox 720×272 → 420×180. Same drag handlers, same response
+  curve math, same per-band color identity carried via the
+  node colors.
+- `src/App.tsx::Macros::tone-shape-block`: wraps the three L /
+  M / H precision knobs AND the compact `<VisualEqPanel compact
+  />` in a new `.tone-shape-content` flex row. The Visual EQ
+  is now embedded INSIDE Tone Shape per Dan's direction
+  ("compact embedded panel inside tone shaping, not a full-
+  width page section").
+- `src/App.tsx`: removed the standalone full-width `<VisualEqPanel>`
+  that used to sit above `<Macros>`.
+- `Macros` prop type widened: `onEq` accepts `"low" | "low-mid"
+  | "mid" | "high"` (was `"low" | "mid" | "high"`). The
+  embedded EQ drives Low-Mid via the same setter the workspace
+  knobs use.
+
+### Slice B — Preset strip compaction
+
+- `.tile`: min-height 136 → 72 px (~half the vertical footprint).
+  Padding 0.7rem 0.45rem 0.55rem → 0.4rem 0.3rem 0.35rem.
+  Border / accent-tint behavior preserved.
+- `.tile-icon`: imagery clamp(64, 5.8vw, 92) →
+  clamp(28, 2.6vw, 40). Photoreal preset PNGs still render
+  with the screen-blend treatment so each preset's character
+  cue stays intact.
+- `.tile-label`: 0.85rem → 0.72rem.
+- `.tile-blurb`: hidden entirely (`display: none`). Browser
+  title-tooltip on the tile button surfaces the blurb on hover
+  for discovery without burning vertical space.
+- `App.tsx::PresetTiles`: added `title={"\${label} — \${blurb}"}`
+  on each tile button so the tooltip carries the description
+  the inline-revealed blurb used to.
+
+### Slice C — Signal-chain compression
+
+- `.signal-chain`: padding 0.55rem 0.95rem 1.5rem →
+  0.35rem 0.9rem 0.4rem. Header text ("SIGNAL CHAIN" pseudo-
+  element) removed — the row of stage discs reads as a chain
+  on its own. Border softened to accent-tinted.
+- `.chain-stage-disc`: 38px → 24px. Internal SVG icons clamped
+  to 14px so they don't outgrow the smaller disc.
+- `.chain-stage`: min-width 52 → 38 px. Internal gap 0.15rem →
+  0.1rem.
+- `.chain-stage-label`: 0.66rem → 0.58rem.
+- `.chain-stage-detail`: `display: none`. The per-stage value
+  readouts (Density %, EQ dB, etc.) lived here AND in the
+  Macros knobs / right rail — pure duplication. Stage button's
+  `title` attribute still carries the detail on hover.
+- Deleted a duplicate `.chain-stage-disc svg { display: block }`
+  block that snuck in across phases.
+
+### Slice D — Right-rail densification
+
+- `.right-rail`: gap 0.55rem → 0.4rem; padding tightened.
+- `.panel`: background switched from
+  `rgba(31,37,51,.6) → var(--bg-2)` to the deeper
+  `rgba(24,29,41,.7) → rgba(12,15,23,.85)` deck gradient so the
+  rail panels read as part of the same console family as the
+  waveform deck and macros row. Border softened to accent-
+  tinted at 10%. Padding pulled in.
+- `.levels-hint`: only the actionable hints (warn / clip) take
+  a row now. Idle/silent/ok hide the hint so the LEVELS panel
+  doesn't carry a redundant "Press play to start metering."
+- `.advanced-slot-body`: tightened `margin-top`, advanced-grid
+  gap, per-field padding so the Advanced drawer reads as a
+  dense settings tray rather than a verbose form.
+
+### Slice E — Status quieting
+
+- `App.tsx::StaleBar`: deleted the `ClippingIndicator` and
+  three `GrIndicator` chip components from the workspace
+  footer. They duplicated the right-rail LEVELS panel and
+  made the footer read as debug-flavored. Bar now shows just
+  the status pill (Realtime / Ready / Rendering N%) plus the
+  in-progress render bar when applicable.
+- `StaleBar` prop type slimmed: `peakDbfs` and `compressionGr`
+  removed (no consumers left in the bar).
+- Deleted the `ClippingIndicator` and `GrIndicator` component
+  definitions plus the now-unused `CLIP_THRESHOLD_DBFS` /
+  `SILENCE_FLOOR_DBFS` constants from App.tsx (the right rail
+  has its own copies inside `RightRail.tsx`).
+
+Verification:
+
+- `npm run build`: clean. CSS chunk 54.21 → 54.08 kB (net
+  -0.13 kB — denser CSS replaced wider CSS). Main JS chunk
+  284.34 → 283.28 kB (-1.06 kB from the deleted indicator
+  components).
+- Rust untouched.
+
+Real-audio fixture used: None — pure UI restructure.
+
+What failed or remains partial:
+
+- Cannot eyeball in this autonomous session. The restructure is
+  the biggest UI change in this session — Dan's next
+  `npm run tauri dev` pass is the acceptance check.
+- Bottom status bar (`BottomStatusBar`) wasn't tightened in
+  slice E. The dots + readouts there are still wordier than
+  ideal ("Quality checks not run", "Awaiting analysis"). Easy
+  follow-up tweak if Dan still finds it debug-flavored after
+  the StaleBar chips are gone.
+- The `.tone-shape-content` flex row in the Macros section
+  doesn't wrap at narrow viewports yet — at 1366×768 the
+  three knobs + compact EQ in the middle cell might get
+  tight. Slice 6 responsive math covered the preset row but
+  not the new deck-row composition. If a wrap is needed at
+  narrow widths, add `flex-wrap: wrap` to `.tone-shape-content`
+  in a follow-up.
+
+Next recommended slice: **Codex audit slice 6 — split
+`cargo test` into fast/slow lanes** (queued behind the UI
+work). The ~4-minute real-fixture metering snapshot would gate
+behind a Cargo feature flag or env var so `cargo test --lib`
+becomes the default daily path. After 6: Codex audit slice 7
+(background decode for first Mastered click latency).
+

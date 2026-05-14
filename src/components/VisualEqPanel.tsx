@@ -110,9 +110,14 @@ function totalResponseDb(hz: number, gains: Record<BandId, number>): number {
 interface VisualEqPanelProps {
   settings: MasteringSettings;
   onEq: (band: BandId, db: number) => void;
+  /** `true` renders the dense embedded variant used inside the
+   * mastering-deck Tone Shape cell — no card chrome, no
+   * outer header, no per-node value labels, smaller viewBox
+   * so it sits beside the L/M/H knobs without dominating. */
+  compact?: boolean;
 }
 
-export function VisualEqPanel({ settings, onEq }: VisualEqPanelProps) {
+export function VisualEqPanel({ settings, onEq, compact = false }: VisualEqPanelProps) {
   const svgRef = useRef<SVGSVGElement | null>(null);
   // Drag state: which band is being dragged, and the pixel-space y where
   // the pointer is. We don't capture frequency drag at all in v1.
@@ -127,17 +132,19 @@ export function VisualEqPanel({ settings, onEq }: VisualEqPanelProps) {
 
   // SVG drawing constants. Viewport is `width × height` (logical units);
   // CSS sizes the visible panel. Padding leaves room for axis labels.
-  const PAD_LEFT = 40;
-  const PAD_RIGHT = 12;
-  const PAD_TOP = 14;
+  const PAD_LEFT = compact ? 28 : 40;
+  const PAD_RIGHT = compact ? 8 : 12;
+  const PAD_TOP = compact ? 8 : 14;
   // Bottom padding holds two text rows: the frequency axis (50/100/1k/…)
   // on the first line, then the colored band labels (LOW / LOW-MID /
   // MID / HIGH) on the second so they don't overlap the axis ticks.
-  const PAD_BOTTOM = 34;
-  const AXIS_LABEL_Y_OFFSET = 14;
+  // Compact mode drops the band-label row entirely — node colors carry
+  // the identity.
+  const PAD_BOTTOM = compact ? 18 : 34;
+  const AXIS_LABEL_Y_OFFSET = compact ? 12 : 14;
   const BAND_LABEL_Y_OFFSET = 28;
-  const VBW = 720;
-  const VBH = 272;
+  const VBW = compact ? 420 : 720;
+  const VBH = compact ? 180 : 272;
   const plotW = VBW - PAD_LEFT - PAD_RIGHT;
   const plotH = VBH - PAD_TOP - PAD_BOTTOM;
 
@@ -218,11 +225,16 @@ export function VisualEqPanel({ settings, onEq }: VisualEqPanelProps) {
   );
 
   return (
-    <section className="visual-eq-panel" aria-label="Visual EQ">
-      <header className="visual-eq-head">
-        <span className="section-label">TONE CURVE</span>
-        <span className="visual-eq-hint">Drag a node up or down · double-click to reset</span>
-      </header>
+    <section
+      className={`visual-eq-panel ${compact ? "visual-eq-panel-compact" : ""}`}
+      aria-label="Visual EQ"
+    >
+      {!compact && (
+        <header className="visual-eq-head">
+          <span className="section-label">TONE CURVE</span>
+          <span className="visual-eq-hint">Drag a node up or down · double-click to reset</span>
+        </header>
+      )}
       <svg
         ref={svgRef}
         className="eq-overlay"
@@ -306,24 +318,28 @@ export function VisualEqPanel({ settings, onEq }: VisualEqPanelProps) {
                 onDoubleClick={() => handleDoubleClick(band.id)}
                 style={{ cursor: "ns-resize", touchAction: "none" }}
               />
-              <text
-                className="eq-node-label"
-                x={x}
-                y={PAD_TOP + plotH + BAND_LABEL_Y_OFFSET}
-                textAnchor="middle"
-                fill={band.color}
-              >
-                {band.label}
-              </text>
-              <text
-                className="eq-node-value"
-                x={x}
-                y={Math.max(PAD_TOP + 12, y - 12)}
-                textAnchor="middle"
-                fill={band.color}
-              >
-                {gains[band.id] > 0 ? `+${gains[band.id].toFixed(1)}` : gains[band.id].toFixed(1)}
-              </text>
+              {!compact && (
+                <text
+                  className="eq-node-label"
+                  x={x}
+                  y={PAD_TOP + plotH + BAND_LABEL_Y_OFFSET}
+                  textAnchor="middle"
+                  fill={band.color}
+                >
+                  {band.label}
+                </text>
+              )}
+              {!compact && (
+                <text
+                  className="eq-node-value"
+                  x={x}
+                  y={Math.max(PAD_TOP + 12, y - 12)}
+                  textAnchor="middle"
+                  fill={band.color}
+                >
+                  {gains[band.id] > 0 ? `+${gains[band.id].toFixed(1)}` : gains[band.id].toFixed(1)}
+                </text>
+              )}
             </g>
           );
         })}
