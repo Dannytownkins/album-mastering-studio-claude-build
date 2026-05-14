@@ -1164,15 +1164,19 @@ button.primary:disabled {
   color: var(--text-2);
 }
 
-/* UI_LAYOUT_REVISION_1600x940 L1 — waveform deck module.
-   Two-column layout: a narrow transport column (play btn + time +
-   loop) on the left, the waveform card on the right. The deck owns
-   the chrome (background gradient + accent-tinted border + shadow)
-   so the inner pieces (.wf-card, .wf-deck-transport) stay chromeless. */
+/* UI_LAYOUT_REVISION_1600x940 L1 + L2 — waveform deck module.
+   Three-column layout:
+     [ transport ] [ waveform ] [ meters ]
+   • transport: narrow (play btn + time + loop). L1.
+   • waveform: 1fr — the workspace anchor. SVG + mini overview.
+   • meters: Master Out + Stereo Width gauge, moved here from the
+     right rail per L2 so metering sits with the audio being metered.
+   The deck owns the chrome (gradient + accent border + layered
+   shadow) so the inner pieces stay chromeless. */
 .wf-deck {
   display: grid;
-  grid-template-columns: 132px 1fr;
-  gap: 0.5rem;
+  grid-template-columns: 132px 1fr clamp(180px, 14vw, 220px);
+  gap: 0.55rem;
   padding: 0.55rem;
   background:
     linear-gradient(180deg, rgba(8, 13, 23, 0.98) 0%, rgba(5, 8, 14, 0.98) 100%);
@@ -1181,6 +1185,30 @@ button.primary:disabled {
   box-shadow:
     inset 0 1px 0 rgba(255, 255, 255, 0.035),
     0 24px 60px rgba(0, 0, 0, 0.32);
+}
+
+/* Meters column — hosts MasterOutPanel + StereoWidthGauge inside
+   the deck. Panels lose their own card chrome since the deck owns
+   it; they read as integrated faces of the meter column rather than
+   stacked cards. */
+.wf-deck-meters {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  min-width: 0;
+}
+
+.wf-deck-meters .panel {
+  background: transparent;
+  border: none;
+  border-radius: 0;
+  padding: 0.35rem 0.4rem;
+  box-shadow: none;
+}
+
+.wf-deck-meters .panel + .panel {
+  border-top: 1px solid rgba(111, 163, 255, 0.08);
+  padding-top: 0.5rem;
 }
 
 .wf-deck-transport {

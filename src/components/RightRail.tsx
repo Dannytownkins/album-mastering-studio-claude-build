@@ -9,8 +9,9 @@ import type { ReactNode } from "react";
 import type { AnalysisResult, QualityCheck } from "../bindings";
 
 type RightRailProps = {
+  /// QualityCheckPanel uses this for the preflight checks when no
+  /// export receipt has been generated yet.
   analysis: AnalysisResult | undefined;
-  isAnalyzing: boolean;
   lastChecks: QualityCheck[] | undefined;
   // Live signals from PlaybackTick / snapshot. Drive the "Levels" panel that
   // replaces the static Quality Summary in the reference — the readouts here
@@ -19,17 +20,6 @@ type RightRailProps = {
   peakDbfs: number;
   isPlaying: boolean;
   compressionGr: { low: number; mid: number; high: number };
-  /// Phase 12.2 P3 — live BS.1770 momentary LUFS (K-weighted 400 ms window).
-  /// Drives the MASTER OUT bars.
-  lufsMomentary: number;
-  /// Phase 12.2 P3+ — live BS.1770-4 integrated LUFS over the current
-  /// playback session. Drives the "Integrated LUFS" readout and the
-  /// peak-hold line on the bars while playing.
-  lufsIntegrated: number;
-  /// Effective stereo width the chain is using right now (0 = mono,
-  /// 1 = neutral, 2 = max widen). Driven by the user's Width slider with
-  /// the preset's default as fallback. Drives the STEREO WIDTH gauge.
-  effectiveWidth: number;
   // Slot for the AdvancedPanel content. Wrapped in a collapsible details/
   // summary container so it sits between the levels and quality check
   // panels (matches the reference layout).
@@ -58,14 +48,10 @@ const SILENCE_FLOOR_DBFS = -80;
 
 export function RightRail({
   analysis,
-  isAnalyzing,
   lastChecks,
   peakDbfs,
   isPlaying,
   compressionGr,
-  lufsMomentary,
-  lufsIntegrated,
-  effectiveWidth,
   advancedSlot,
   canExport,
   isExporting,
@@ -77,22 +63,14 @@ export function RightRail({
 }: RightRailProps) {
   return (
     <aside className="right-rail">
-      {/* UI restyle 2026-05-14 slice 5 — rail reads meters → export →
-          quality → advanced (collapsed). The reorder + the collapsed-
-          by-default Advanced details fixes the per-band compressor
-          overflow Dan flagged in the 2026-05-14 screenshot: the rail
-          is 300 px and the per-band 3-column grid only fits when the
-          surrounding Advanced section is given its own breathing room
-          on user demand. */}
-      <MasterOutPanel
-        analysis={analysis}
-        isAnalyzing={isAnalyzing}
-        peakDbfs={peakDbfs}
-        isPlaying={isPlaying}
-        lufsMomentary={lufsMomentary}
-        lufsIntegrated={lufsIntegrated}
-        effectiveWidth={effectiveWidth}
-      />
+      {/* UI_LAYOUT_REVISION_1600x940 L2 — MasterOutPanel +
+          StereoWidthGauge moved out of the rail into the waveform
+          deck's right column (they're now alongside the audio they
+          meter, not buried in technical settings). The rail still
+          carries the LEVELS panel (compact peak/GR readouts) plus
+          Export → Quality → Advanced → Per-Band → Bit/SR. The
+          extracted components are exported from this module so
+          App.tsx can host them inside the deck. */}
       <LevelsPanel
         peakDbfs={peakDbfs}
         isPlaying={isPlaying}
@@ -147,14 +125,13 @@ export function RightRail({
   );
 }
 
-function MasterOutPanel({
+export function MasterOutPanel({
   analysis,
   isAnalyzing,
   peakDbfs,
   isPlaying,
   lufsMomentary,
   lufsIntegrated,
-  effectiveWidth,
 }: {
   analysis: AnalysisResult | undefined;
   isAnalyzing: boolean;
@@ -162,7 +139,6 @@ function MasterOutPanel({
   isPlaying: boolean;
   lufsMomentary: number;
   lufsIntegrated: number;
-  effectiveWidth: number;
 }) {
   const tp = analysis?.true_peak_dbtp;
   const dr = analysis?.dynamic_range_lu;
@@ -234,12 +210,15 @@ function MasterOutPanel({
           unit="LU"
         />
       </dl>
-      <StereoWidthGauge width={effectiveWidth} />
+      {/* StereoWidthGauge used to render here as part of MasterOutPanel.
+          UI_LAYOUT_REVISION_1600x940 L2 pulls it out so the caller can
+          position it as its own section beside Master Out in the
+          waveform deck's meters column. */}
     </section>
   );
 }
 
-function StereoWidthGauge({ width }: { width: number }) {
+export function StereoWidthGauge({ width }: { width: number }) {
   // The chain's internal width is 0 (mono) → 1 (neutral) → 2 (max widen).
   // Display it on a -1..+1 scale where 0 = neutral. Driven by the live
   // chain setting (user's Width slider or preset default), so dragging

@@ -8,7 +8,7 @@ import {
 import { api } from "./lib/api";
 import { useTrackMaster } from "./hooks/useTrackMaster";
 import { PresetIcon } from "./components/PresetIcon";
-import { RightRail } from "./components/RightRail";
+import { RightRail, MasterOutPanel, StereoWidthGauge } from "./components/RightRail";
 import { VisualEqPanel } from "./components/VisualEqPanel";
 import { AlbumPanel } from "./components/AlbumPanel";
 import { Knob, intensityLabel } from "./components/Knob";
@@ -99,17 +99,10 @@ function App() {
       </main>
       <RightRail
         analysis={tm.selectedAnalysis}
-        isAnalyzing={tm.isAnalyzing}
         lastChecks={tm.lastExportReceipt?.checks}
         peakDbfs={tm.transport.peakDbfs}
         isPlaying={tm.transport.isPlaying}
         compressionGr={tm.transport.compressionGr}
-        lufsMomentary={tm.transport.lufsMomentary}
-        lufsIntegrated={tm.transport.lufsIntegrated}
-        effectiveWidth={
-          tm.selectedSettings.advanced.width ??
-          (tm.selectedSettings.preset.kind === "spatial" ? 1.3 : 1.0)
-        }
         advancedSlot={
           tm.selectedTrack ? (
             <AdvancedPanel
@@ -551,10 +544,13 @@ function TrackMaster({ tm }: { tm: ReturnType<typeof useTrackMaster> }) {
         onPlaybackKindChange={tm.setPlaybackKind}
         onVolumeMatchChange={tm.setVolumeMatch}
       />
-      {/* UI_LAYOUT_REVISION_1600x940 L1 — waveform + transport as one
-          mastering-deck module. Transport is the left column (play btn
-          + time + loop); waveform is the right column. The mockup
-          treats this pair as the single workspace anchor. */}
+      {/* UI_LAYOUT_REVISION_1600x940 L1 + L2 — waveform deck as the
+          workspace anchor.
+          Three columns: transport (play btn + time + loop) | waveform
+          (SVG + mini overview) | meters (Master Out + Stereo Width).
+          MasterOutPanel and StereoWidthGauge live here now rather
+          than the right rail so metering sits with the audio being
+          metered. */}
       <section className="wf-deck">
         <Transport
           isPlaying={tm.transport.isPlaying}
@@ -575,6 +571,22 @@ function TrackMaster({ tm }: { tm: ReturnType<typeof useTrackMaster> }) {
           onSetRegion={tm.setRegion}
           onClearRegion={tm.clearRegion}
         />
+        <div className="wf-deck-meters">
+          <MasterOutPanel
+            analysis={tm.selectedAnalysis}
+            isAnalyzing={tm.isAnalyzing}
+            peakDbfs={tm.transport.peakDbfs}
+            isPlaying={tm.transport.isPlaying}
+            lufsMomentary={tm.transport.lufsMomentary}
+            lufsIntegrated={tm.transport.lufsIntegrated}
+          />
+          <StereoWidthGauge
+            width={
+              tm.selectedSettings.advanced.width ??
+              (tm.selectedSettings.preset.kind === "spatial" ? 1.3 : 1.0)
+            }
+          />
+        </div>
       </section>
       <PresetTiles
         selected={tm.selectedSettings.preset}
