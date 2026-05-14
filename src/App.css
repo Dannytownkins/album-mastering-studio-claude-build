@@ -3100,6 +3100,90 @@ button.primary:disabled {
   font-variant-numeric: tabular-nums;
 }
 
+/* UI_LAYOUT_REVISION_1600x940 L3 — rail card variants. The four
+   advanced cards (Delivery / Advanced / Per-Band / Format) share the
+   .rail-card class so they read as a consistent family of technical
+   drawers, distinct from the meters-style panels that previously
+   lived in the rail. */
+
+.rail-card {
+  padding: 0.55rem 0.7rem 0.6rem;
+}
+
+.rail-card .panel-head {
+  margin-bottom: 0.35rem;
+}
+
+.rail-card-select {
+  width: 100%;
+}
+
+.rail-card-body {
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+}
+
+/* Per-band compressor uses Low / Mid / High tabs (only one band's
+   controls visible at a time). Matches the mockup and prevents the
+   rail from becoming a very tall 3-column form. */
+.rail-card-per-band .per-band-link-stereo {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.72rem;
+  color: var(--text-2);
+  padding: 0.2rem 0;
+}
+
+.rail-card-per-band .per-band-link-stereo input[type="checkbox"] {
+  accent-color: var(--accent);
+}
+
+.per-band-tabs {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 0;
+  background: rgba(13, 16, 24, 0.55);
+  border: 1px solid rgba(111, 163, 255, 0.10);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+  margin: 0.35rem 0 0.45rem;
+}
+
+.per-band-tab {
+  background: transparent;
+  color: var(--text-2);
+  border: none;
+  border-right: 1px solid rgba(111, 163, 255, 0.08);
+  padding: 0.35rem 0.5rem;
+  font-size: 0.74rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 80ms, color 80ms;
+}
+
+.per-band-tab:last-child {
+  border-right: none;
+}
+
+.per-band-tab:hover {
+  color: var(--text-0);
+}
+
+.per-band-tab.is-active {
+  background: linear-gradient(180deg, var(--accent-bright) 0%, var(--accent-deep) 100%);
+  color: #fff;
+}
+
+.per-band-active-body {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+}
+
 /* Right-rail Export Master CTA — full-width prominent button at the
    bottom of the right rail. */
 .right-rail-export {
@@ -3125,11 +3209,23 @@ button.primary:disabled {
 
 /* Export cluster — Export Master CTA + the small Tools fold-out that
    holds Render audit WAV. Keeps the audit action one click away from
-   Export while staying off the playback strip. */
+   Export while staying off the playback strip.
+   UI_LAYOUT_REVISION_1600x940 L3: position: sticky pins this group to
+   the bottom of the right rail, so Export stays reachable while the
+   rest of the rail's technical drawer scrolls. */
 .right-rail-export-group {
   display: flex;
   flex-direction: column;
   gap: 0.45rem;
+  position: sticky;
+  bottom: 0;
+  margin-top: auto;
+  /* Soft gradient mask above the sticky group so the panels that scroll
+     past behind it don't look abruptly clipped. */
+  padding: 0.6rem 0 0;
+  background:
+    linear-gradient(180deg, rgba(17, 21, 31, 0) 0%, rgba(17, 21, 31, 0.95) 35%, var(--bg-1) 100%);
+  z-index: 2;
 }
 
 .right-rail-tools {

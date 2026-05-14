@@ -8,7 +8,7 @@ import {
 import { api } from "./lib/api";
 import { useTrackMaster } from "./hooks/useTrackMaster";
 import { PresetIcon } from "./components/PresetIcon";
-import { RightRail, MasterOutPanel, StereoWidthGauge } from "./components/RightRail";
+import { RightRail, MasterOutPanel, StereoWidthGauge, LevelsPanel } from "./components/RightRail";
 import { VisualEqPanel } from "./components/VisualEqPanel";
 import { AlbumPanel } from "./components/AlbumPanel";
 import { Knob, intensityLabel } from "./components/Knob";
@@ -100,9 +100,6 @@ function App() {
       <RightRail
         analysis={tm.selectedAnalysis}
         lastChecks={tm.lastExportReceipt?.checks}
-        peakDbfs={tm.transport.peakDbfs}
-        isPlaying={tm.transport.isPlaying}
-        compressionGr={tm.transport.compressionGr}
         advancedSlot={
           tm.selectedTrack ? (
             <AdvancedPanel
@@ -579,6 +576,11 @@ function TrackMaster({ tm }: { tm: ReturnType<typeof useTrackMaster> }) {
             isPlaying={tm.transport.isPlaying}
             lufsMomentary={tm.transport.lufsMomentary}
             lufsIntegrated={tm.transport.lufsIntegrated}
+          />
+          <LevelsPanel
+            peakDbfs={tm.transport.peakDbfs}
+            isPlaying={tm.transport.isPlaying}
+            compressionGr={tm.transport.compressionGr}
           />
           <StereoWidthGauge
             width={
@@ -1748,6 +1750,11 @@ function StaleBar({
 // their readouts already live in the right-rail LEVELS / MASTER OUT
 // panels (which carry their own clip / silence-floor constants).
 
+/// UI_LAYOUT_REVISION_1600x940 L3 — AdvancedPanel renders four
+/// separate rail cards (Delivery Profile, Advanced Controls,
+/// Per-Band Compressor, Bit Depth + Sample Rate) instead of one
+/// monolithic section, so the rail reads as discrete technical
+/// drawers in the order the spec lays out.
 function AdvancedPanel({
   settings,
   onAdvanced,
@@ -1768,44 +1775,80 @@ function AdvancedPanel({
   ) => {
     onAdvanced({ ...a, [field]: value });
   };
-  const profile = settings.delivery_profile;
-  const profileTargetLufs = DELIVERY_PROFILE_TARGET_LUFS[profile];
   return (
-    <section className="advanced">
-      <div className="section-head">
-        <span className="section-label">Advanced</span>
-      </div>
-      <div className="advanced-delivery-row">
-        <label className="adv-label" htmlFor="delivery-profile-select">
-          Delivery profile
-        </label>
-        <select
-          id="delivery-profile-select"
-          className="loudness-profile-select"
-          value={profile}
-          onChange={(e) =>
-            onDeliveryProfile(e.target.value as DeliveryProfile)
-          }
-        >
-          {(Object.keys(DELIVERY_PROFILE_DISPLAY) as DeliveryProfile[]).map(
-            (p) => (
-              <option key={p} value={p}>
-                {DELIVERY_PROFILE_DISPLAY[p]}
-                {DELIVERY_PROFILE_TARGET_LUFS[p] !== null
-                  ? ` · ${DELIVERY_PROFILE_TARGET_LUFS[p]} LUFS`
-                  : ""}
-              </option>
-            ),
-          )}
-        </select>
-        {profile !== "custom" && profileTargetLufs !== null && (
-          <span className="adv-profile-hint">
-            Shadows LUFS / ceiling / bit-depth at render. Pick Custom to use the
-            explicit values below.
-          </span>
+    <>
+      <DeliveryProfileCard
+        settings={settings}
+        onDeliveryProfile={onDeliveryProfile}
+      />
+      <AdvancedControlsCard
+        settings={settings}
+        update={update}
+        onInputGain={onInputGain}
+        onOutputGain={onOutputGain}
+      />
+      <PerBandCompressorCard a={a} onUpdate={update} />
+      <DeliveryFormatCard a={a} update={update} />
+    </>
+  );
+}
+
+function DeliveryProfileCard({
+  settings,
+  onDeliveryProfile,
+}: {
+  settings: MasteringSettings;
+  onDeliveryProfile: (profile: DeliveryProfile) => void;
+}) {
+  const profile = settings.delivery_profile;
+  return (
+    <section className="panel rail-card rail-card-delivery">
+      <header className="panel-head">
+        <span className="panel-title">DELIVERY PROFILE</span>
+      </header>
+      <select
+        id="delivery-profile-select"
+        className="loudness-profile-select rail-card-select"
+        value={profile}
+        onChange={(e) => onDeliveryProfile(e.target.value as DeliveryProfile)}
+      >
+        {(Object.keys(DELIVERY_PROFILE_DISPLAY) as DeliveryProfile[]).map(
+          (p) => (
+            <option key={p} value={p}>
+              {DELIVERY_PROFILE_DISPLAY[p]}
+              {DELIVERY_PROFILE_TARGET_LUFS[p] !== null
+                ? ` · ${DELIVERY_PROFILE_TARGET_LUFS[p]} LUFS`
+                : ""}
+            </option>
+          ),
         )}
-      </div>
-      <div className="advanced-grid">
+      </select>
+    </section>
+  );
+}
+
+function AdvancedControlsCard({
+  settings,
+  update,
+  onInputGain,
+  onOutputGain,
+}: {
+  settings: MasteringSettings;
+  update: (
+    field: keyof MasteringSettings["advanced"],
+    value: number | boolean | null,
+  ) => void;
+  onInputGain: (db: number) => void;
+  onOutputGain: (db: number) => void;
+}) {
+  const a = settings.advanced;
+  return (
+    <details className="panel rail-card rail-card-advanced" open>
+      <summary className="panel-head panel-head-summary">
+        <span className="panel-title">ADVANCED CONTROLS</span>
+        <span className="panel-chevron" aria-hidden>⌄</span>
+      </summary>
+      <div className="advanced-grid rail-card-body">
         <GainField
           label="Input gain"
           value={settings.input_gain_db}
@@ -1870,7 +1913,116 @@ function AdvancedPanel({
           format={(v) => v.toFixed(2)}
           onChange={(v) => update("compression_density", v)}
         />
-        <CompressionPerBandSubsection a={a} onUpdate={update} />
+      </div>
+    </details>
+  );
+}
+
+function PerBandCompressorCard({
+  a,
+  onUpdate,
+}: {
+  a: MasteringSettings["advanced"];
+  onUpdate: (
+    field: keyof MasteringSettings["advanced"],
+    value: number | boolean | null,
+  ) => void;
+}) {
+  type Band = "low" | "mid" | "high";
+  const [active, setActive] = useState<Band>("low");
+  const bandFields: Record<Band, {
+    threshold: number | null;
+    ratio: number | null;
+    attack: number | null;
+    release: number | null;
+    onThreshold: (v: number | null) => void;
+    onRatio: (v: number | null) => void;
+    onAttack: (v: number | null) => void;
+    onRelease: (v: number | null) => void;
+  }> = {
+    low: {
+      threshold: a.compression_low_threshold_db,
+      ratio: a.compression_low_ratio,
+      attack: a.compression_low_attack_ms,
+      release: a.compression_low_release_ms,
+      onThreshold: (v) => onUpdate("compression_low_threshold_db", v),
+      onRatio: (v) => onUpdate("compression_low_ratio", v),
+      onAttack: (v) => onUpdate("compression_low_attack_ms", v),
+      onRelease: (v) => onUpdate("compression_low_release_ms", v),
+    },
+    mid: {
+      threshold: a.compression_mid_threshold_db,
+      ratio: a.compression_mid_ratio,
+      attack: a.compression_mid_attack_ms,
+      release: a.compression_mid_release_ms,
+      onThreshold: (v) => onUpdate("compression_mid_threshold_db", v),
+      onRatio: (v) => onUpdate("compression_mid_ratio", v),
+      onAttack: (v) => onUpdate("compression_mid_attack_ms", v),
+      onRelease: (v) => onUpdate("compression_mid_release_ms", v),
+    },
+    high: {
+      threshold: a.compression_high_threshold_db,
+      ratio: a.compression_high_ratio,
+      attack: a.compression_high_attack_ms,
+      release: a.compression_high_release_ms,
+      onThreshold: (v) => onUpdate("compression_high_threshold_db", v),
+      onRatio: (v) => onUpdate("compression_high_ratio", v),
+      onAttack: (v) => onUpdate("compression_high_attack_ms", v),
+      onRelease: (v) => onUpdate("compression_high_release_ms", v),
+    },
+  };
+  return (
+    <section className="panel rail-card rail-card-per-band">
+      <header className="panel-head">
+        <span className="panel-title">PER-BAND COMPRESSOR</span>
+      </header>
+      <label className="per-band-link-stereo">
+        <input
+          type="checkbox"
+          checked={a.compression_link_stereo !== false}
+          onChange={(e) =>
+            onUpdate("compression_link_stereo", e.target.checked ? null : false)
+          }
+        />
+        <span>Link stereo</span>
+      </label>
+      <div className="per-band-tabs" role="tablist">
+        {(["low", "mid", "high"] as Band[]).map((band) => (
+          <button
+            key={band}
+            type="button"
+            role="tab"
+            aria-selected={active === band}
+            className={"per-band-tab" + (active === band ? " is-active" : "")}
+            onClick={() => setActive(band)}
+          >
+            {band === "low" ? "Low" : band === "mid" ? "Mid" : "High"}
+          </button>
+        ))}
+      </div>
+      <div className="per-band-active-body">
+        <CompressionBandColumn label="" {...bandFields[active]} />
+      </div>
+    </section>
+  );
+}
+
+function DeliveryFormatCard({
+  a,
+  update,
+}: {
+  a: MasteringSettings["advanced"];
+  update: (
+    field: keyof MasteringSettings["advanced"],
+    value: number | boolean | null,
+  ) => void;
+}) {
+  return (
+    <section className="panel rail-card rail-card-format">
+      <header className="panel-head">
+        <span className="panel-title">DELIVERY FORMAT</span>
+      </header>
+      <div className="rail-card-body">
         <SelectField
           label="Bit depth"
           value={a.bit_depth}
@@ -1884,11 +2036,7 @@ function AdvancedPanel({
         />
         {/* Codex audit 2026-05-13 P2: the renderer writes `pcm.sample_rate`
             regardless of this control (see `types.rs` DeliveryProfile doc:
-            "A3 does NOT resample"). Until high-quality SRC ships, the field
-            is collapsed to a single honest option so a user can't pick 96 kHz
-            and silently receive 44.1. Label kept short so it doesn't clip in
-            the 300 px right-rail. Restore full options + descriptive label
-            once `mastering_render_with_progress` honors target SR. */}
+            "A3 does NOT resample"). Single honest option until SRC ships. */}
         <SelectField
           label="Sample rate"
           value={a.target_sample_rate}
@@ -1902,74 +2050,11 @@ function AdvancedPanel({
   );
 }
 
-function CompressionPerBandSubsection({
-  a,
-  onUpdate,
-}: {
-  a: MasteringSettings["advanced"];
-  onUpdate: (
-    field: keyof MasteringSettings["advanced"],
-    value: number | boolean | null,
-  ) => void;
-}) {
-  const [open, setOpen] = useState(false);
-  return (
-    <details
-      className="compression-per-band"
-      open={open}
-      onToggle={(e) => setOpen((e.target as HTMLDetailsElement).open)}
-    >
-      <summary className="adv-label">Per-band compressor</summary>
-      <div className="compression-link">
-        <label>
-          <input
-            type="checkbox"
-            checked={a.compression_link_stereo !== false}
-            onChange={(e) =>
-              onUpdate("compression_link_stereo", e.target.checked ? null : false)
-            }
-          />
-          {" "}Link stereo (default on — drives both channels from a shared envelope)
-        </label>
-      </div>
-      <div className="compression-per-band-grid">
-        <CompressionBandColumn
-          label="Low"
-          threshold={a.compression_low_threshold_db}
-          ratio={a.compression_low_ratio}
-          attack={a.compression_low_attack_ms}
-          release={a.compression_low_release_ms}
-          onThreshold={(v) => onUpdate("compression_low_threshold_db", v)}
-          onRatio={(v) => onUpdate("compression_low_ratio", v)}
-          onAttack={(v) => onUpdate("compression_low_attack_ms", v)}
-          onRelease={(v) => onUpdate("compression_low_release_ms", v)}
-        />
-        <CompressionBandColumn
-          label="Mid"
-          threshold={a.compression_mid_threshold_db}
-          ratio={a.compression_mid_ratio}
-          attack={a.compression_mid_attack_ms}
-          release={a.compression_mid_release_ms}
-          onThreshold={(v) => onUpdate("compression_mid_threshold_db", v)}
-          onRatio={(v) => onUpdate("compression_mid_ratio", v)}
-          onAttack={(v) => onUpdate("compression_mid_attack_ms", v)}
-          onRelease={(v) => onUpdate("compression_mid_release_ms", v)}
-        />
-        <CompressionBandColumn
-          label="High"
-          threshold={a.compression_high_threshold_db}
-          ratio={a.compression_high_ratio}
-          attack={a.compression_high_attack_ms}
-          release={a.compression_high_release_ms}
-          onThreshold={(v) => onUpdate("compression_high_threshold_db", v)}
-          onRatio={(v) => onUpdate("compression_high_ratio", v)}
-          onAttack={(v) => onUpdate("compression_high_attack_ms", v)}
-          onRelease={(v) => onUpdate("compression_high_release_ms", v)}
-        />
-      </div>
-    </details>
-  );
-}
+// CompressionPerBandSubsection (3-column grid) was replaced by
+// PerBandCompressorCard (Low/Mid/High tabs) per the
+// UI_LAYOUT_REVISION_1600x940 L3 spec. Tabs prevent the right rail
+// from becoming a tall form when all three bands' controls are
+// expanded at once.
 
 function CompressionBandColumn({
   label,

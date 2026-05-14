@@ -13,16 +13,10 @@ type RightRailProps = {
   /// export receipt has been generated yet.
   analysis: AnalysisResult | undefined;
   lastChecks: QualityCheck[] | undefined;
-  // Live signals from PlaybackTick / snapshot. Drive the "Levels" panel that
-  // replaces the static Quality Summary in the reference — the readouts here
-  // are what we actually meter today (post-output peak + per-band gain
-  // reduction); fake-grade language is gone.
-  peakDbfs: number;
-  isPlaying: boolean;
-  compressionGr: { low: number; mid: number; high: number };
-  // Slot for the AdvancedPanel content. Wrapped in a collapsible details/
-  // summary container so it sits between the levels and quality check
-  // panels (matches the reference layout).
+  /// Slot for the advanced rail cards (Delivery Profile, Advanced
+  /// Controls, Per-Band Compressor, Delivery Format). App.tsx composes
+  /// them as a fragment so the rail just renders the slot in the right
+  /// place, between Quality Check and the sticky Export group.
   advancedSlot?: ReactNode;
   // Export action — promoted from the workspace into the right rail to
   // match the reference layout. Disabled until analysis exists and while
@@ -49,9 +43,6 @@ const SILENCE_FLOOR_DBFS = -80;
 export function RightRail({
   analysis,
   lastChecks,
-  peakDbfs,
-  isPlaying,
-  compressionGr,
   advancedSlot,
   canExport,
   isExporting,
@@ -63,19 +54,13 @@ export function RightRail({
 }: RightRailProps) {
   return (
     <aside className="right-rail">
-      {/* UI_LAYOUT_REVISION_1600x940 L2 — MasterOutPanel +
-          StereoWidthGauge moved out of the rail into the waveform
-          deck's right column (they're now alongside the audio they
-          meter, not buried in technical settings). The rail still
-          carries the LEVELS panel (compact peak/GR readouts) plus
-          Export → Quality → Advanced → Per-Band → Bit/SR. The
-          extracted components are exported from this module so
-          App.tsx can host them inside the deck. */}
-      <LevelsPanel
-        peakDbfs={peakDbfs}
-        isPlaying={isPlaying}
-        compressionGr={compressionGr}
-      />
+      {/* UI_LAYOUT_REVISION_1600x940 L3 — rail order per spec:
+          Quality Check → advancedSlot (Delivery / Advanced / Per-Band /
+          Bit+SR cards, App.tsx composes) → sticky Export Master at
+          bottom. Levels moved to the waveform deck's meters column;
+          MasterOutPanel + StereoWidthGauge moved in L2. */}
+      <QualityCheckPanel checks={lastChecks} analysis={analysis} />
+      {advancedSlot}
       <div className="right-rail-export-group">
         <button
           type="button"
@@ -111,16 +96,6 @@ export function RightRail({
           </button>
         </details>
       </div>
-      <QualityCheckPanel checks={lastChecks} analysis={analysis} />
-      {advancedSlot && (
-        <details className="panel advanced-panel-slot">
-          <summary className="panel-head panel-head-summary">
-            <span className="panel-title">ADVANCED CONTROLS</span>
-            <span className="panel-chevron" aria-hidden>⌄</span>
-          </summary>
-          <div className="advanced-slot-body">{advancedSlot}</div>
-        </details>
-      )}
     </aside>
   );
 }
@@ -453,7 +428,7 @@ function Readout({
   );
 }
 
-function LevelsPanel({
+export function LevelsPanel({
   peakDbfs,
   isPlaying,
   compressionGr,
