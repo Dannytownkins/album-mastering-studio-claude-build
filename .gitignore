@@ -23,6 +23,7 @@ __pycache__/
 
 # Private audio and generated renders
 private-audio-fixtures/
+tests for presets/
 outputs/
 renders/
 test-output/
