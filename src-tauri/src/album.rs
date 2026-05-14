@@ -565,6 +565,7 @@ mod tests {
             eq_mid_db: 0.0,
             eq_high_db: 0.0,
             volume_match: false,
+            source_lufs_integrated: None,
             input_gain_db: 0.0,
             output_gain_db: 0.0,
             delivery_profile: DeliveryProfile::Custom,

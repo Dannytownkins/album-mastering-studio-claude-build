@@ -373,8 +373,14 @@ export function useTrackMaster() {
           applied: s.applied,
           lastAt: Date.now(),
         }));
+        // Volume Match source-LUFS injection (see updateSettings above).
+        const sourceLufs = analysisMap[id as string]?.lufs_integrated;
+        const effectiveForChain =
+          sourceLufs !== undefined && Number.isFinite(sourceLufs)
+            ? { ...effective, source_lufs_integrated: sourceLufs }
+            : effective;
         api
-          .updateChain(effective)
+          .updateChain(effectiveForChain)
           .then(() => {
             setLiveUpdateStats((s) => ({
               attempts: s.attempts,
@@ -385,7 +391,7 @@ export function useTrackMaster() {
           .catch((err) => setError(String(err)));
       }
     },
-    [selectedTrackId, loadedKindByTrack, loadedTrackId, mode],
+    [selectedTrackId, loadedKindByTrack, loadedTrackId, mode, analysisMap],
   );
 
   const undo = useCallback(() => {
@@ -474,8 +480,17 @@ export function useTrackMaster() {
           applied: s.applied,
           lastAt: Date.now(),
         }));
+        // Volume Match needs the current track's source-LUFS to attenuate
+        // mastered playback to the source's measured loudness. Injecting it
+        // on every updateChain call keeps the chain in sync even if the
+        // user switches tracks while VM is on.
+        const sourceLufs = analysisMap[id]?.lufs_integrated;
+        const settingsForChain =
+          sourceLufs !== undefined && Number.isFinite(sourceLufs)
+            ? { ...nextSettings, source_lufs_integrated: sourceLufs }
+            : nextSettings;
         api
-          .updateChain(nextSettings)
+          .updateChain(settingsForChain)
           .then(() => {
             setLiveUpdateStats((s) => ({
               attempts: s.attempts,
@@ -496,6 +511,7 @@ export function useTrackMaster() {
       loadedTrackId,
       albumIntent,
       settingsMap,
+      analysisMap,
       commitToHistory,
     ],
   );

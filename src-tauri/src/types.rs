@@ -479,6 +479,14 @@ pub struct MasteringSettings {
     pub eq_mid_db: f32,
     pub eq_high_db: f32,
     pub volume_match: bool,
+    /// Source-track integrated LUFS, injected by the playback driver
+    /// before each `updateChain` so the chain can compute a proper
+    /// Volume Match attenuation (target_lufs - source_lufs) instead of
+    /// merely undoing the input-gain stage. `None` falls back to the
+    /// legacy "undo input gain" behavior. Not user-facing — set by the
+    /// frontend from the current track's `AnalysisResult.lufs_integrated`.
+    #[serde(default)]
+    pub source_lufs_integrated: Option<f32>,
     /// Pre-chain gain. Negative values back off the source before the preset
     /// EQ/saturation/limiter sees it — useful for already-mastered material
     /// that would otherwise clip when the preset adds its baseline gain push.

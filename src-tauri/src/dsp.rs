@@ -673,13 +673,34 @@ impl ChainCoeffs {
         let user_output_gain_lin = 10.0_f32.powf(user_output_gain_db / 20.0);
 
         let volume_match_gain_lin = if settings.volume_match {
-            // Undo the input-gain boost so mastered playback meets the source
-            // at roughly equal loudness. Limiter has already shaped the peaks
-            // to the ceiling; we just trim level here.
-            if input_gain_lin > 0.0 {
-                1.0 / input_gain_lin
-            } else {
-                1.0
+            // Attenuate the mastered output so its measured LUFS matches the
+            // SOURCE's measured LUFS — that's what "fair tone comparison"
+            // requires. The chain pushed loudness up via input-gain, EQ
+            // boosts, saturation, compression makeup, and the limiter; just
+            // undoing the input-gain stage (the prior behavior) leaves the
+            // other stages audibly louder than the source.
+            //
+            // Frontend injects `source_lufs_integrated` from the current
+            // track's AnalysisResult before each updateChain call. When
+            // both source LUFS and target LUFS are known, attenuation =
+            // source_lufs - target_lufs (negative; clamped to never amplify).
+            // Falls back to the legacy "undo input-gain" approximation when
+            // either value is missing.
+            match (
+                settings.source_lufs_integrated,
+                settings.effective_target_lufs(),
+            ) {
+                (Some(src), Some(tgt)) if src.is_finite() && tgt.is_finite() => {
+                    let offset_db = (src - tgt).clamp(-24.0, 0.0);
+                    10.0_f32.powf(offset_db / 20.0)
+                }
+                _ => {
+                    if input_gain_lin > 0.0 {
+                        1.0 / input_gain_lin
+                    } else {
+                        1.0
+                    }
+                }
             }
         } else {
             1.0
@@ -1973,6 +1994,7 @@ mod tests {
             eq_mid_db: 0.0,
             eq_high_db: 0.0,
             volume_match: false,
+            source_lufs_integrated: None,
             input_gain_db: 0.0,
             output_gain_db: 0.0,
             delivery_profile: DeliveryProfile::Custom,
@@ -2000,6 +2022,7 @@ mod tests {
             eq_mid_db: 0.0,
             eq_high_db: 0.0,
             volume_match: false,
+            source_lufs_integrated: None,
             input_gain_db: 0.0,
             output_gain_db: 0.0,
             delivery_profile: DeliveryProfile::Custom,
@@ -2040,6 +2063,7 @@ mod tests {
             eq_mid_db: 0.0,
             eq_high_db: 0.0,
             volume_match: false,
+            source_lufs_integrated: None,
             input_gain_db: 0.0,
             output_gain_db: 0.0,
             delivery_profile: DeliveryProfile::Custom,
@@ -2085,6 +2109,7 @@ mod tests {
             eq_mid_db: 0.0,
             eq_high_db: 0.0,
             volume_match: false,
+            source_lufs_integrated: None,
             input_gain_db: 0.0,
             output_gain_db: 0.0,
             delivery_profile: DeliveryProfile::Custom,
@@ -2129,6 +2154,7 @@ mod tests {
             eq_mid_db: 0.0,
             eq_high_db: 0.0,
             volume_match: false,
+            source_lufs_integrated: None,
             input_gain_db: 0.0,
             output_gain_db: 0.0,
             delivery_profile: DeliveryProfile::Custom,
@@ -2156,6 +2182,7 @@ mod tests {
             eq_mid_db: 0.0,
             eq_high_db: 0.0,
             volume_match: false,
+            source_lufs_integrated: None,
             input_gain_db: 0.0,
             output_gain_db: 0.0,
             delivery_profile: DeliveryProfile::Custom,
@@ -2195,6 +2222,7 @@ mod tests {
             eq_mid_db: 0.0,
             eq_high_db: 0.0,
             volume_match: false,
+            source_lufs_integrated: None,
             input_gain_db: 0.0,
             output_gain_db: 0.0,
             delivery_profile: DeliveryProfile::Custom,
@@ -2229,6 +2257,7 @@ mod tests {
             eq_mid_db: 0.0,
             eq_high_db: 0.0,
             volume_match: false,
+            source_lufs_integrated: None,
             input_gain_db: 0.0,
             output_gain_db: 0.0,
             delivery_profile: DeliveryProfile::Custom,
@@ -2257,6 +2286,7 @@ mod tests {
             eq_mid_db: 0.0,
             eq_high_db: 0.0,
             volume_match: false,
+            source_lufs_integrated: None,
             input_gain_db: 0.0,
             output_gain_db: 0.0,
             delivery_profile: DeliveryProfile::Custom,
@@ -2298,6 +2328,7 @@ mod tests {
             eq_mid_db: 0.0,
             eq_high_db: 0.0,
             volume_match: false,
+            source_lufs_integrated: None,
             input_gain_db: 0.0,
             output_gain_db: 0.0,
             delivery_profile: DeliveryProfile::Custom,
@@ -2868,6 +2899,102 @@ mod tests {
             "1500 Hz (above band): expected ~0 dB, got {:.3}",
             at_1500
         );
+    }
+
+    // ========================================================================
+    // Volume Match attenuation formula.
+    // ========================================================================
+
+    /// When VM is on AND source_lufs_integrated + effective_target_lufs
+    /// are both available, the chain attenuates by (source - target),
+    /// clamped to never amplify.
+    #[test]
+    fn volume_match_attenuates_to_source_lufs_when_known() {
+        let mut s = default_master_settings();
+        s.volume_match = true;
+        s.source_lufs_integrated = Some(-19.0);
+        s.delivery_profile = DeliveryProfile::StreamingUniversal; // target -14
+        let c = ChainCoeffs::from_settings(48_000, &s);
+        // Expected: 10^((-19 - -14) / 20) = 10^(-5/20) ≈ 0.5623.
+        let expected = 10.0_f32.powf(-5.0 / 20.0);
+        assert!(
+            (c.volume_match_gain_lin - expected).abs() < 1e-4,
+            "VM should attenuate by source - target = -5 dB; got {} (expected {})",
+            c.volume_match_gain_lin,
+            expected
+        );
+    }
+
+    /// When the user has a Custom profile and explicit lufs_offset_db,
+    /// VM attenuates to that explicit target.
+    #[test]
+    fn volume_match_uses_explicit_advanced_target_when_custom() {
+        let mut s = default_master_settings();
+        s.volume_match = true;
+        s.source_lufs_integrated = Some(-20.0);
+        s.delivery_profile = DeliveryProfile::Custom;
+        s.advanced.lufs_offset_db = Some(-11.0); // very loud target
+        let c = ChainCoeffs::from_settings(48_000, &s);
+        // source - target = -20 - -11 = -9 dB → 10^(-9/20) ≈ 0.3548.
+        let expected = 10.0_f32.powf(-9.0 / 20.0);
+        assert!(
+            (c.volume_match_gain_lin - expected).abs() < 1e-4,
+            "VM with Custom + lufs_offset_db -11 against source -20: expected {} got {}",
+            expected,
+            c.volume_match_gain_lin
+        );
+    }
+
+    /// When source LUFS is missing, VM falls back to the legacy
+    /// "undo input gain" approximation (preserves prior behavior so older
+    /// projects that don't ship a source_lufs_integrated still get some
+    /// attenuation).
+    #[test]
+    fn volume_match_fallback_undoes_input_gain_without_source_lufs() {
+        let mut s = default_master_settings();
+        s.volume_match = true;
+        s.source_lufs_integrated = None;
+        s.delivery_profile = DeliveryProfile::Custom;
+        s.advanced.lufs_offset_db = None;
+        let c = ChainCoeffs::from_settings(48_000, &s);
+        // input_gain_lin = preset gain × preset_scale at intensity 0.5
+        //   = 1.5 dB × 1.0 = 10^(1.5/20) ≈ 1.189 for Universal.
+        // Fallback VM = 1/1.189 ≈ 0.841.
+        assert!(
+            c.volume_match_gain_lin < 1.0 && c.volume_match_gain_lin > 0.5,
+            "VM fallback should attenuate < 1.0 but not below 0.5; got {}",
+            c.volume_match_gain_lin
+        );
+    }
+
+    /// VM never amplifies: when the source is QUIETER than the target
+    /// (the mastered version is going to be louder regardless), the
+    /// attenuation clamps to 0 dB so we don't accidentally introduce
+    /// gain that could push past the limiter ceiling on quieter tracks
+    /// that already match.
+    #[test]
+    fn volume_match_never_amplifies() {
+        let mut s = default_master_settings();
+        s.volume_match = true;
+        s.source_lufs_integrated = Some(-10.0); // unusually loud source
+        s.delivery_profile = DeliveryProfile::StreamingUniversal; // target -14
+        let c = ChainCoeffs::from_settings(48_000, &s);
+        // source - target = -10 - -14 = +4. Clamped to 0 → gain_lin = 1.0.
+        assert!(
+            (c.volume_match_gain_lin - 1.0).abs() < 1e-4,
+            "VM should clamp positive offset to 0 dB; got {}",
+            c.volume_match_gain_lin
+        );
+    }
+
+    /// VM off (default) leaves the gain at 1.0 regardless of source/target.
+    #[test]
+    fn volume_match_off_is_unity_gain() {
+        let mut s = default_master_settings();
+        s.volume_match = false;
+        s.source_lufs_integrated = Some(-19.0);
+        let c = ChainCoeffs::from_settings(48_000, &s);
+        assert!((c.volume_match_gain_lin - 1.0).abs() < 1e-6);
     }
 
     // ========================================================================

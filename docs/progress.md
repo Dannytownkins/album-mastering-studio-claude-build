@@ -2131,3 +2131,76 @@ listening pass.
 
 
 
+## 2026-05-13 — Volume Match LUFS fix
+
+Goal: Dan reported "volume matching isnt working." Investigation
+showed the existing formula in `ChainCoeffs::from_settings` was
+
+    volume_match_gain_lin = 1.0 / input_gain_lin
+
+which only undoes the *input-gain* stage. The downstream EQ, multi-
+band compression, saturation, and limiter all add their own loudness
+on top — so the "match" A/B comparison was still hearing a louder
+master, defeating the whole point of the toggle. (Original sin: the
+formula was a placeholder from before integrated LUFS metering was
+plumbed.)
+
+What changed:
+
+- `src-tauri/src/types.rs`: New `source_lufs_integrated: Option<f32>`
+  field on `MasteringSettings` with `#[serde(default)]` for back-
+  compat. Not user-facing — populated by the frontend playback driver
+  before each `updateChain` from the current track's
+  `AnalysisResult.lufs_integrated`.
+- `src-tauri/src/dsp.rs`: `volume_match_gain_lin` now resolves as:
+    1. If `volume_match` is off → unity.
+    2. If both source LUFS and target LUFS (from
+       `settings.effective_target_lufs()`) are finite →
+       `10 ^ ((source - target).clamp(-24.0, 0.0) / 20)`. The clamp
+       enforces "never amplify" — a track quieter than its target
+       gets unity, not boost; a track louder gets pulled down by the
+       exact LU offset, with a hard floor at -24 dB.
+    3. Otherwise → legacy `1.0 / input_gain_lin` fallback so existing
+       projects without populated LUFS still behave like before
+       rather than going to unity.
+- `src/bindings.ts`: Added `source_lufs_integrated?: number | null`
+  on the TS MasteringSettings.
+- `src/hooks/useTrackMaster.ts`: Two `api.updateChain` call sites now
+  splice `analysisMap[id]?.lufs_integrated` into `settingsForChain`
+  before sending. Dependency arrays updated.
+- Five new `cargo test --lib` cases in `dsp.rs` cover: attenuates to
+  source LUFS when known; uses explicit advanced lufs_offset target
+  when delivery_profile is Custom; falls back to undo-input-gain
+  without source LUFS; never amplifies (positive source-target →
+  unity); off → unity.
+- Plumbed `source_lufs_integrated: None` into every existing
+  `MasteringSettings` struct literal: audio.rs, engine.rs,
+  contracts.rs, produce_dialog_smoke.rs, album.rs, tests/album_render.rs.
+
+Verification:
+- `cargo test --lib`: 79/79 pass (was 74; +5 for the new VM tests).
+- `cargo test`: 120/120 (79 lib + 39 contracts + 2 album_render).
+- `npm run build`: clean (just verified).
+
+Real-audio fixture used: None for this slice — the fix is a pure
+formula change with unit tests over synthetic input_gain / LUFS
+pairs. Dan's next listening pass with a -8 LUFS master vs the
+unmastered source at -14 LUFS will be the definitive verification:
+hitting Volume Match should pull the master down ~6 dB so the A/B
+is genuinely level-matched.
+
+What failed or remains partial:
+
+- The frontend injects `source_lufs_integrated` only when the current
+  track has a finished analysis. Importing a brand-new track and
+  toggling Volume Match before analysis completes still falls back to
+  the legacy behavior. Acceptable — analysis runs automatically on
+  import and completes in a few seconds.
+- Album Master export does not yet use this path; album renders
+  attenuate per-track using the arc/character LUFS-pull math and
+  don't currently consult `source_lufs_integrated`. Track Master is
+  the only place a user toggles Volume Match anyway.
+
+Next recommended slice: Unchanged — **Phase B+ Step 8 validation
+sound tests** is still the open queue item.
+

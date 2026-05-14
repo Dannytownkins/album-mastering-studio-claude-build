@@ -154,6 +154,10 @@ export interface MasteringSettings {
   eq_mid_db: number;
   eq_high_db: number;
   volume_match: boolean;
+  /// Source-track integrated LUFS — populated by the frontend before
+  /// each `updateChain` so the chain can compute proper Volume Match
+  /// attenuation. Not user-facing.
+  source_lufs_integrated?: number | null;
   /// Pre-chain gain in dB. Negative reduces the source level before the
   /// preset / EQ / limiter sees it. Default 0.
   input_gain_db: number;
