@@ -3396,20 +3396,24 @@ button.primary:disabled {
 
 /* Phase 12.2 P2 — Intensity + Tone Shape as knobs. */
 
-/* Macros row: one tight horizontal strip — Intensity (big) | Tone Shape
-   (3 small) | Loudness Target (small dropdown stack). Reference image
-   packs these inline; previously we let the middle column stretch and
-   strand the loudness block on the right with a big empty band. */
+/* Macros row: one mastering console panel — Intensity (big) | Tone Shape
+   (3 small) | Loudness Target. UI restyle 2026-05-14 slice 4: deck-style
+   gradient surface, soft accent-tinted border, layered shadow so the row
+   reads as one console panel rather than a flat strip — matches the
+   waveform-deck aesthetic introduced in slice 2. */
 .knobs-row {
   display: grid;
   grid-template-columns: auto minmax(240px, 1fr) minmax(170px, auto);
   gap: 1.5rem;
   align-items: center;
-  padding: 0.85rem 1.1rem;
-  background: linear-gradient(180deg, rgba(31, 37, 51, 0.55) 0%, var(--bg-2) 100%);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.03);
-  border: 1px solid var(--border);
-  border-radius: 6px;
+  padding: 1rem 1.15rem;
+  background:
+    linear-gradient(180deg, rgba(24, 29, 41, 0.94) 0%, rgba(12, 15, 23, 0.98) 100%);
+  border: 1px solid rgba(111, 163, 255, 0.14);
+  border-radius: var(--radius);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.04),
+    0 20px 42px rgba(0, 0, 0, 0.28);
 }
 
 .intensity-block,
@@ -3574,4 +3578,13 @@ button.primary:disabled {
    visually centered when there is a caption below the SVG. */
 .knob-lg .knob-vis text {
   dominant-baseline: middle;
+}
+
+/* UI restyle 2026-05-14 slice 4 — the large Intensity knob gets a soft
+   always-on halo so it reads as the "cockpit" macro control, not just a
+   bigger knob. Hover and active states still layer their stronger halos
+   on top via the .knob-vis box-shadow rules above. Drop-shadow follows
+   the round SVG alpha so the glow doesn't form a square ring. */
+.knob-lg .knob-vis {
+  filter: drop-shadow(0 0 22px color-mix(in srgb, var(--knob-tone, #4d8bff) 22%, transparent));
 }

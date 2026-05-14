@@ -2714,3 +2714,71 @@ stronger cockpit role, use per-band knob tone colors (cyan/
 green/purple/pink/gold). After that: slice 4b (VisualEqPanel v1
 — new component, not just CSS), slice 6 (responsive check).
 
+
+
+## 2026-05-14 — UI restyle slice 4: console controls
+
+Goal: Per `docs/UI_CSS_RESTYLE_PLAN_2026-05-14.md` — promote the
+macros row from "tight strip" to "one mastering console panel",
+strengthen the large Intensity knob's cockpit role. The existing
+implementation already had the right architecture (Knob component
+with `tone` prop, `--knob-tone` CSS variable per knob, three EQ
+knobs at cyan/green/purple, one large Intensity); slice 4
+delivers the surface chrome and rest-state cockpit halo.
+
+What changed (App.css only — no JSX changes):
+
+- `.knobs-row` (the console panel surface): deeper deck-style
+  gradient `rgba(24,29,41,.94)` → `rgba(12,15,23,.98)` matches
+  the waveform-deck surface introduced in slice 2. Border
+  switched from `var(--border)` to
+  `rgba(111,163,255,.14)` — a faint accent-tinted line so the
+  panel reads as part of the same console family as the deck.
+  Layered shadow: `inset 0 1px 0 rgba(255,255,255,.04)` for
+  the top highlight + `0 20px 42px rgba(0,0,0,.28)` for the
+  ambient floor lift. Padding bumped slightly (0.85rem 1.1rem
+  → 1rem 1.15rem) so the knobs breathe inside the new panel.
+  Border-radius switched to `var(--radius)` so it matches the
+  rest of the deck.
+- `.knob-lg .knob-vis`: added a rest-state
+  `filter: drop-shadow(0 0 22px color-mix(--knob-tone 22%
+  transparent))`. The drop-shadow follows the SVG socket's
+  round alpha so the glow renders as a circular halo rather
+  than a square box-shadow ring. Hover and active still layer
+  their stronger halos on top via the existing
+  `.knob:hover .knob-vis` / `.knob:active .knob-vis` rules,
+  so the cockpit pulse intensifies on interaction.
+
+Verification:
+
+- `npm run build`: clean. CSS chunk barely moved.
+- Rust untouched.
+
+Real-audio fixture used: None — pure UI/CSS change.
+
+What failed or remains partial:
+
+- "Reserve visual space for VisualEqPanel" from the plan was
+  left to slice 4b — adding a placeholder div now would be
+  YAGNI; slice 4b will build the real component and slot it
+  into the layout above the knobs at the same time. The
+  current layout (`.macros` → `.knobs-row`) accommodates an
+  added sibling without restructuring.
+- Per-band knob tone colors (Width = gold, Warmth = pink,
+  Presence/Air, Compression) mentioned in the plan are for
+  future knobs that don't exist yet; those advanced controls
+  currently use slider/NumberField rather than Knob. Out of
+  scope for slice 4.
+
+Next recommended slice: **Restyle slice 4b — VisualEqPanel v1**
+per `UI_CSS_RESTYLE_PLAN_2026-05-14.md`. Build the
+`src/components/VisualEqPanel.tsx` component with a log-
+frequency SVG grid (20 Hz → 20 kHz), fixed-frequency EQ nodes
+mapped to the existing `eq_low_db` / `eq_low_mid_db` /
+`eq_mid_db` / `eq_high_db` + advanced `warmth` and
+`presence_air` settings, vertical-drag for gain updates, and a
+response curve derived from current settings. v1 omits live FFT
+data. The node-drag handlers should call the same setter paths
+the existing knobs do, so realtime `update_chain` wiring stays
+intact. After 4b: slice 6 (responsive check).
+
