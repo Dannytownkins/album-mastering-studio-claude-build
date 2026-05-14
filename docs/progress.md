@@ -2417,3 +2417,155 @@ strip cleanup), slice 6 (test split into fast/slow lanes), slice 7
 auto-restore) is *not* P1 for Dan's workflow — demoted to a Tools
 menu "New project" action rather than a default change.
 
+
+
+## 2026-05-14 — Phase B+ Step 8 merge
+
+Goal: Land all seven Step 8 validation tests on master so the
+listening-quality surface has a regression net before the UI
+restyle work begins.
+
+What changed:
+
+Merged `phase-b-step-8-validation` into master via `--no-ff` at
+`49c5f2f`. Seven new test files:
+
+- `src-tauri/tests/preset_signature.rs` (8.1) — between-band tilt
+  assertions for all 8 presets + saturation detection for
+  Tape/Warmth + M/S widener for Spatial. The original "neutral
+  bands within ±0.5 dB of input" framing was reframed to between-
+  band tilts because the chain at intensity 0.5 pushes ~+4 dB of
+  broadband makeup+limiter gain — neutral bands are NOT 0 dB
+  relative to input, but tilts ARE preserved.
+- `src-tauri/tests/preset_loudness_balance.rs` (8.2) — 8 presets'
+  integrated LUFS spread under 4 LU on Paul Kellet pink at peak
+  -12 dBFS.
+- `src-tauri/tests/delivery_profile_render.rs` (8.3) — all 7
+  non-Custom profiles + Custom land within ±1 LU of target and
+  produce the correct WAV `bits_per_sample`.
+- `src-tauri/tests/album_arc_trace.rs` (8.4) — Cinematic curve
+  actually shapes per-track LUFS through the full pipeline; peak
+  at index 3, bookends ≥ +1.5 LU below peak.
+- `src-tauri/tests/album_character_bias.rs` (8.5) — filename
+  hint pass + ReturnAcoustic back-half-after-heavy promotion +
+  per-character bias landing on the rendered audio.
+- `src-tauri/tests/dither_absence_of_harmonics.rs` (8.6) — TPDF
+  dither absence-of-harmonics on a -90 dBFS sine through the
+  16-bit writer.
+- `src-tauri/src/dsp.rs` (8.7) — BS.1770-4 K-weighting cascade
+  response locked at 7 canonical frequencies. The plan's "0 dB
+  at 1 kHz" target was the *LUFS reading* (after the -0.691 dB
+  gating offset in the LUFS formula); the *filter* response at
+  1 kHz inherently sits near +0.7 dB. Targets adjusted to lock
+  our actual coefficient response.
+
+Verification:
+
+- `cargo test --lib`: 80/80 (+1 K-weighting cascade).
+- `cargo test`: 138/138 (80 lib + 40 contracts + 2 album_render +
+  6 new step-8 test binaries; +1 ignored debug helper inside
+  `preset_signature.rs`).
+- `npm run build`: clean.
+- `phase_12_1_real_fixture_metering_snapshot` still byte-identical.
+
+Real-audio fixture used: None for the new tests (all synthetic).
+The existing real-fixture test still runs as part of the full
+suite and passes.
+
+What failed or remains partial:
+
+- Three commits document spec-reframings vs the plan v1
+  (preset_signature broadband-gain offset, album_arc_trace
+  curve→LUFS slope, k_weighting_cascade filter-vs-LUFS-reading
+  conflation). Each commit message explains what diverged and why
+  the underlying calibration is correct.
+
+Next recommended slice: **UI restyle slices 1 + 2** per
+`docs/UI_CSS_RESTYLE_PLAN_2026-05-14.md` — hide debug surface +
+deck polish. After that, restyle slice 3 (preset tiles), slice 4
+(console controls), slice 4b (VisualEqPanel v1), slice 5 (right
+rail reorder), slice 6 (responsive check). The Codex audit's
+slices 6 (test split) and 7 (first-play decode) are queued
+behind the UI work.
+
+
+
+## 2026-05-14 — UI restyle slices 1 + 2: hide debug surface + deck polish
+
+Goal: Per `docs/UI_CSS_RESTYLE_PLAN_2026-05-14.md` "Best Next
+Step" — make the main workflow read like one mastering deck
+rather than stacked debug panels. Two slices delivered together
+because the restyle plan paired them as the recommended
+starting bundle.
+
+What changed:
+
+Slice 1 (Hide Debug Surface):
+
+- `src/App.tsx::StaleBar`: replaced the long sentence
+  "Mastered playback is live — drag controls and hear the change
+  immediately." with a compact session-status pill that toggles
+  between `Realtime` / `Ready` / `Rendering N%` based on
+  playback + render state. Per-state CSS tones (live/busy/idle).
+- `src/App.tsx::StaleBar`: the `live: applied/attempts` badge is
+  now wrapped in `import.meta.env.DEV`; Vite tree-shakes it out
+  of production bundles entirely (main JS chunk dropped 0.21 kB
+  on rebuild).
+- `src/App.tsx`: the "Render audit WAV" button is gone from the
+  StaleBar's prop interface AND its rendered output. Its source
+  callback (`tm.updatePreview`) now flows to RightRail instead.
+- `src/components/RightRail.tsx`: new `<details>` "Tools" fold-out
+  rendered beneath the Export Master CTA, holding the relocated
+  "Render audit WAV" button. The audit action stays one click
+  away from the export it relates to without crowding the
+  playback strip.
+- `src/App.css`: removed the `.stale-text` rule (now unused);
+  added `.stale-status` + tone variants and the new
+  `.right-rail-export-group` / `.right-rail-tools` /
+  `.right-rail-audit` styling.
+
+Slice 2 (Deck Polish):
+
+- `src/App.css::.wf-card`: deeper linear-gradient background
+  (rgba(8,13,23,.98) → rgba(5,8,14,.98)), taller min-height
+  (240 → 310 px), deck shadow
+  (`inset 0 1px 0 rgba(255,255,255,.035) + 0 24px 60px
+  rgba(0,0,0,.32)`), softened accent border.
+- `src/App.css::.transport`: matching dark surface, softer top
+  border so the seam with the waveform deck reads as part of
+  the same console, tighter padding (1.4 → 1.05 rem vertical,
+  min-height 96 → 82 px), shared shadow style. Per the restyle
+  plan: "a later JSX pass can wrap them" in a `.track-deck`
+  container; this slice does the work in CSS only.
+- `src/App.css::.wf-playhead`: bumped to rgba(235,241,255,.92)
+  with a subtle accent drop-shadow so the active position pops
+  against the new darker deck.
+
+Verification:
+
+- `npm run build`: clean. CSS chunk 50.57 → 52.21 kB (+1.6 kB
+  for the new pill/tools/deck styling); main JS chunk 280.61 →
+  280.40 kB (Vite pruned the dev-only live badge).
+- Rust untouched — no `cargo test` run needed for this slice.
+
+Real-audio fixture used: None — pure UI change.
+
+What failed or remains partial:
+
+- The wf-card and transport are visually matched but still
+  separated by the workspace's 0.75 rem flex `gap`. A later
+  pass can wrap them in a `<section className="track-deck">` so
+  they share one shadow envelope with zero seam. The CSS-only
+  approach intentionally stops short of JSX restructuring per
+  the restyle plan.
+- Restyle slices 3 (preset tiles), 4 (console controls), 4b
+  (VisualEqPanel v1), 5 (right rail reorder), 6 (responsive
+  check) are still open.
+
+Next recommended slice: **Restyle slice 3 — preset tiles** per
+`UI_CSS_RESTYLE_PLAN_2026-05-14.md`. Existing 8 preset PNGs
+stay; selected state gets a colored floor glow, tile minimum
+height bumps to 136 px, text clutter inside each tile drops.
+After that: slice 4 (console controls rebalance), then slice 4b
+(VisualEqPanel v1 — new component, not just CSS).
+

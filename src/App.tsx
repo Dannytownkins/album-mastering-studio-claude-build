@@ -122,6 +122,9 @@ function App() {
         canExport={!!tm.selectedAnalysis}
         isExporting={tm.isExporting}
         isRendering={tm.isRendering}
+        previewStale={tm.previewStale}
+        canRenderPreview={!!tm.selectedTrack}
+        onUpdatePreview={tm.updatePreview}
         onExport={tm.exportMaster}
       />
       {tm.isDragOver && (
@@ -590,10 +593,7 @@ function TrackMaster({ tm }: { tm: ReturnType<typeof useTrackMaster> }) {
         onRedo={tm.redo}
       />
       <StaleBar
-        stale={tm.previewStale}
         isRendering={tm.isRendering}
-        isExporting={tm.isExporting}
-        onUpdate={tm.updatePreview}
         liveUpdateStats={tm.liveUpdateStats}
         renderProgress={tm.renderProgress}
         peakDbfs={tm.transport.peakDbfs}
@@ -1567,20 +1567,14 @@ function UndoRedoBar({
 }
 
 function StaleBar({
-  stale,
   isRendering,
-  isExporting,
-  onUpdate,
   liveUpdateStats,
   renderProgress,
   peakDbfs,
   isPlaying,
   compressionGr,
 }: {
-  stale: boolean;
   isRendering: boolean;
-  isExporting: boolean;
-  onUpdate: () => void;
   liveUpdateStats: { attempts: number; applied: number; lastAt: number | null };
   renderProgress: { fraction: number; kind: "preview" | "master" | "album" } | null;
   peakDbfs: number;
@@ -1591,15 +1585,26 @@ function StaleBar({
     renderProgress !== null
       ? Math.round(Math.max(0, Math.min(1, renderProgress.fraction)) * 100)
       : null;
+  // Compact session-state pill: one of Rendering / Realtime / Ready.
+  const statusLabel =
+    progressPct !== null
+      ? `Rendering ${renderProgress!.kind} ${progressPct}%`
+      : isRendering
+      ? "Rendering preview"
+      : isPlaying
+      ? "Realtime"
+      : "Ready";
+  const statusTone =
+    progressPct !== null || isRendering
+      ? "stale-status-busy"
+      : isPlaying
+      ? "stale-status-live"
+      : "stale-status-idle";
   return (
     <section className="stale-bar">
-      <span className="stale-dot live" aria-hidden />
-      <span className="stale-text">
-        {progressPct !== null
-          ? `Rendering ${renderProgress!.kind} WAV… ${progressPct}%`
-          : isRendering
-          ? "Rendering preview WAV…"
-          : "Mastered playback is live — drag controls and hear the change immediately."}
+      <span className={`stale-status ${statusTone}`}>
+        <span className="stale-dot live" aria-hidden />
+        <span className="stale-status-text">{statusLabel}</span>
       </span>
       {progressPct !== null && (
         <div
@@ -1619,33 +1624,22 @@ function StaleBar({
       <GrIndicator label="L" db={compressionGr.low} isPlaying={isPlaying} />
       <GrIndicator label="M" db={compressionGr.mid} isPlaying={isPlaying} />
       <GrIndicator label="H" db={compressionGr.high} isPlaying={isPlaying} />
-      {/* Phase 12.1 live-update counter — increments every time the frontend
-          sends api.updateChain to the backend. If you make adjustments and
-          this counter doesn't change, the frontend isn't firing live updates
-          (look at this number to verify without DevTools). */}
-      <span
-        className="live-update-badge"
-        title={`Live coeff updates sent / resolved since session start${
-          liveUpdateStats.lastAt
-            ? `. Last fired ${Math.round((Date.now() - liveUpdateStats.lastAt) / 1000)} s ago.`
-            : ". None fired yet."
-        }`}
-      >
-        live: {liveUpdateStats.applied}/{liveUpdateStats.attempts}
-      </span>
-      <button
-        type="button"
-        className="ghost-btn"
-        onClick={onUpdate}
-        disabled={isRendering || isExporting}
-        title={
-          isExporting
-            ? "Disabled while an export is in progress — the two operations share render state."
-            : "Render a temporary WAV with the current settings so you can audit it in another player or DAW. Not required for live audition — the Mastered button above plays through the chain in real time."
-        }
-      >
-        {stale ? "Render audit WAV" : "Re-render audit WAV"}
-      </button>
+      {/* Phase 12.1 live-update counter — verifies that the frontend is
+          actually firing api.updateChain calls when controls move. Useful
+          only when debugging the realtime update plumbing, so it stays
+          dev-only (Vite drops the whole node from production bundles). */}
+      {import.meta.env.DEV && (
+        <span
+          className="live-update-badge"
+          title={`Live coeff updates sent / resolved since session start${
+            liveUpdateStats.lastAt
+              ? `. Last fired ${Math.round((Date.now() - liveUpdateStats.lastAt) / 1000)} s ago.`
+              : ". None fired yet."
+          }`}
+        >
+          live: {liveUpdateStats.applied}/{liveUpdateStats.attempts}
+        </span>
+      )}
     </section>
   );
 }

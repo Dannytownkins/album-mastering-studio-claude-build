@@ -41,6 +41,13 @@ type RightRailProps = {
   isExporting: boolean;
   isRendering: boolean;
   onExport: () => void;
+  // UI restyle 2026-05-14: the secondary "Render audit WAV" action used
+  // to live in the main StaleBar. Moved here so the playback strip can
+  // become a quiet status indicator, while audit-WAV stays one click
+  // away from Export Master — its natural neighbor.
+  previewStale: boolean;
+  canRenderPreview: boolean;
+  onUpdatePreview: () => void;
 };
 
 const LUFS_SCALE_MIN = -36;
@@ -64,6 +71,9 @@ export function RightRail({
   isExporting,
   isRendering,
   onExport,
+  previewStale,
+  canRenderPreview,
+  onUpdatePreview,
 }: RightRailProps) {
   return (
     <aside className="right-rail">
@@ -91,21 +101,41 @@ export function RightRail({
         </details>
       )}
       <QualityCheckPanel checks={lastChecks} analysis={analysis} />
-      <button
-        type="button"
-        className="primary right-rail-export"
-        onClick={onExport}
-        disabled={!canExport || isExporting || isRendering}
-        title={
-          isRendering && !isExporting
-            ? "Disabled while a render-audit WAV is in progress — they share render state."
-            : !canExport
-            ? "Analyze a track first."
-            : undefined
-        }
-      >
-        {isExporting ? "Exporting…" : "Export Master"}
-      </button>
+      <div className="right-rail-export-group">
+        <button
+          type="button"
+          className="primary right-rail-export"
+          onClick={onExport}
+          disabled={!canExport || isExporting || isRendering}
+          title={
+            isRendering && !isExporting
+              ? "Disabled while a render-audit WAV is in progress — they share render state."
+              : !canExport
+              ? "Analyze a track first."
+              : undefined
+          }
+        >
+          {isExporting ? "Exporting…" : "Export Master"}
+        </button>
+        <details className="right-rail-tools">
+          <summary>Tools</summary>
+          <button
+            type="button"
+            className="ghost-btn right-rail-audit"
+            onClick={onUpdatePreview}
+            disabled={!canRenderPreview || isRendering || isExporting}
+            title={
+              isExporting
+                ? "Disabled while an export is in progress — they share render state."
+                : !canRenderPreview
+                ? "Import a track first."
+                : "Render a temporary WAV with the current settings so you can audit it in another player or DAW. Not required for live audition — the Original/Mastered toggle plays through the chain in real time."
+            }
+          >
+            {previewStale ? "Render audit WAV" : "Re-render audit WAV"}
+          </button>
+        </details>
+      </div>
     </aside>
   );
 }
