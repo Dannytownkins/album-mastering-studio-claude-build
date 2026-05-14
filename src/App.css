@@ -1714,6 +1714,114 @@ button.primary:disabled {
   border-color: var(--accent);
 }
 
+/* UI restyle slice 4b — Visual EQ panel.
+   SVG-rendered log-frequency / linear-dB plot with four draggable EQ
+   nodes (Low / Low-Mid / Mid / High) at the same frequencies the Rust
+   chain uses (200 / 400 / 1500 / 6000 Hz). Sits above the knobs row
+   as the primary "shape the tone" surface; the knobs remain as
+   precision controls underneath. */
+.visual-eq-panel {
+  position: relative;
+  min-height: clamp(220px, 24vh, 320px);
+  border: 1px solid rgba(111, 163, 255, 0.14);
+  border-radius: var(--radius);
+  overflow: hidden;
+  background:
+    linear-gradient(180deg, rgba(8, 12, 20, 0.98) 0%, rgba(5, 8, 14, 0.98) 100%);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.04),
+    0 18px 42px rgba(0, 0, 0, 0.28);
+  padding: 0.65rem 0.9rem 0.5rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.visual-eq-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.visual-eq-hint {
+  font-size: 0.7rem;
+  color: var(--text-2);
+  letter-spacing: 0.04em;
+}
+
+.eq-overlay {
+  width: 100%;
+  height: 100%;
+  flex: 1;
+  min-height: 200px;
+  display: block;
+}
+
+.eq-grid-major {
+  stroke: rgba(132, 154, 205, 0.18);
+  stroke-width: 1;
+  vector-effect: non-scaling-stroke;
+}
+
+.eq-zero-line {
+  stroke: rgba(236, 240, 250, 0.32);
+  stroke-width: 1.2;
+  vector-effect: non-scaling-stroke;
+}
+
+.eq-response-fill {
+  fill: rgba(77, 139, 255, 0.12);
+}
+
+.eq-response-line {
+  fill: none;
+  stroke: var(--accent-bright, #6fa3ff);
+  stroke-width: 2.4;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  filter: drop-shadow(0 0 12px rgba(77, 139, 255, 0.45));
+  vector-effect: non-scaling-stroke;
+}
+
+.eq-node {
+  cursor: ns-resize;
+  filter: drop-shadow(0 0 8px var(--node-color, rgba(255, 255, 255, 0.4)));
+  transition: r 80ms ease;
+}
+
+.eq-node.is-dragging {
+  r: 9;
+}
+
+.eq-node-hit {
+  fill: transparent;
+  pointer-events: all;
+}
+
+.eq-label {
+  fill: var(--text-2);
+  font-size: 9px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  pointer-events: none;
+}
+
+.eq-node-label {
+  font-size: 9px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  font-weight: 600;
+  pointer-events: none;
+}
+
+.eq-node-value {
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+  pointer-events: none;
+}
+
 /* Macros — outer card is just a backdrop now; the .knobs-row inside
    carries the actual visual treatment and grid layout. Kept paddings
    minimal so the row reads as one tight strip, not a card-in-card. */

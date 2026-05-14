@@ -2782,3 +2782,114 @@ data. The node-drag handlers should call the same setter paths
 the existing knobs do, so realtime `update_chain` wiring stays
 intact. After 4b: slice 6 (responsive check).
 
+
+
+## 2026-05-14 — UI restyle slice 4b: VisualEqPanel v1
+
+Goal: Per `docs/UI_CSS_RESTYLE_PLAN_2026-05-14.md` section 5 —
+add a real visual EQ panel that maps to the chain's actual band
+frequencies and exposes vertical-drag gain control. First
+restyle slice that introduces a new React component rather than
+CSS-only changes.
+
+What changed:
+
+- New file `src/components/VisualEqPanel.tsx` (~265 lines):
+  Renders a log-frequency / linear-dB SVG plot (20 Hz to
+  20 kHz, ±12 dB) with four draggable EQ nodes pinned to the
+  Rust chain's actual band frequencies:
+    * Low (200 Hz, low shelf, cyan)
+    * Low-Mid (400 Hz, peak Q≈0.9, green)
+    * Mid (1500 Hz, peak Q≈0.8, purple)
+    * High (6000 Hz, high shelf, blue)
+  Frequencies match `ChainCoeffs::from_settings` in
+  `src-tauri/src/dsp.rs:620-623`. Per-node colors follow the
+  restyle plan's band mapping.
+
+  Response curve is an APPROXIMATION of the chain's filter
+  cascade — Gaussian peaks (FWHM ≈ qOctaves) + sigmoid shelves
+  in log-frequency space — sampled at 180 points across the
+  audio band and rendered as a glowing accent-colored line +
+  a soft fill underneath. The approximation is intentional:
+  the goal is fast visual feedback for shape changes, not a
+  bit-perfect dB-vs-frequency match (the actual Rust chain
+  does the audible work).
+
+  Drag wiring: pointer-down captures the pointer on the node's
+  hit-target circle (18 px radius, transparent — bigger than
+  the 7 px visible node so dragging is forgiving), then
+  translates clientY into local SVG coordinates via
+  `getScreenCTM` so the math is independent of CSS scaling.
+  Vertical drag updates the gain rounded to 0.1 dB and calls
+  `onEq(band, db)`, which flows through the existing
+  `setEqBand` -> `updateSettings` -> live `update_chain`
+  pipeline — so Mastered playback hears the change in
+  realtime. Double-click any node resets that band to 0 dB.
+
+- `src/hooks/useTrackMaster.ts::setEqBand`: extended the band
+  union from `"low" | "mid" | "high"` to
+  `"low" | "low-mid" | "mid" | "high"` so the Low-Mid node has
+  a wiring path. The Macros knobs row didn't expose Low-Mid
+  before (it was preset-calibrated only); the visual panel now
+  surfaces it as a draggable node.
+
+- `src/App.tsx`: imported `VisualEqPanel` and slotted it above
+  `<Macros>` in the workspace flow. The knobs remain
+  underneath as precision controls; the visual EQ becomes the
+  primary "shape the tone" surface per the restyle plan.
+
+- `src/App.css`: ~95 lines of new rules for
+  `.visual-eq-panel`, `.eq-overlay`, `.eq-grid-major`,
+  `.eq-zero-line`, `.eq-response-fill`, `.eq-response-line`,
+  `.eq-node` (per-node-color drop-shadow via
+  `--node-color`), `.eq-node-hit` (transparent hit target),
+  `.eq-label`, `.eq-node-label`, `.eq-node-value`. Panel
+  surface matches the deeper deck gradient from slices 2 and 4
+  so the whole workspace reads as one mastering room.
+
+Verification:
+
+- `npm run build`: clean. CSS chunk 52.42 → 54.21 kB
+  (+1.79 kB for new panel rules). Main JS chunk 280.38 →
+  284.34 kB (+3.96 kB for the new component).
+- Rust untouched.
+
+Real-audio fixture used: None — pure UI change. Dragging a node
+during Mastered playback will exercise the existing
+`update_chain` plumbing.
+
+What failed or remains partial (v1 intentional omissions per
+the restyle plan):
+
+- **No horizontal frequency drag.** The Rust DSP has fixed
+  band frequencies (200 / 400 / 1500 / 6000 Hz); promising
+  draggable frequency in the UI would surface a parameter the
+  audio engine can't honor. Plan section 5 explicitly says:
+  "Do not let users drag nodes left/right until the DSP
+  actually supports adjustable frequency and Q."
+- **No Warmth or Presence/Air nodes.** Those are 0..1
+  saturation/drive parameters, not dB EQ, and would need
+  separate scaling. Plan listed them as v2 candidates.
+- **No live FFT spectrum fill.** Requires plumbing
+  audio-thread FFT to the frontend; v2 work.
+- **Response curve is approximate, not bit-perfect.** The
+  approximation reads correctly for direction-of-tilt and
+  rough magnitude; for exact response a future pass could
+  port `ChainCoeffs::from_settings` magnitude evaluation to
+  TypeScript.
+
+Subjective: cannot eyeball the panel in this autonomous
+session — the drag interaction and curve aesthetics need
+Dan's verification with `npm run tauri dev`. The mechanical
+correctness (build, type safety, no runtime errors caught by
+the build) is verified.
+
+Next recommended slice: **Restyle slice 6 — responsive check**
+per `UI_CSS_RESTYLE_PLAN_2026-05-14.md`. Verify the workspace
+at 1920×1080, 1600×900, 1366×768; ensure preset row doesn't
+overflow, right rail doesn't bury Export, text doesn't overlap
+in buttons/tiles/meter cards. Pure CSS responsive-pass; closes
+out the UI restyle queue. After that: Codex audit slices 6
+(test split into fast/slow lanes) and 7 (background decode for
+first Mastered click latency).
+

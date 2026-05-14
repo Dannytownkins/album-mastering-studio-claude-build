@@ -743,11 +743,12 @@ export function useTrackMaster() {
   );
 
   const setEqBand = useCallback(
-    (band: "low" | "mid" | "high", db: number) => {
+    (band: "low" | "low-mid" | "mid" | "high", db: number) => {
       if (!selectedTrackId) return;
       updateSettings(selectedTrackId, (prev) => {
         const next = { ...prev };
         if (band === "low") next.eq_low_db = db;
+        else if (band === "low-mid") next.eq_low_mid_db = db;
         else if (band === "mid") next.eq_mid_db = db;
         else next.eq_high_db = db;
         return next;

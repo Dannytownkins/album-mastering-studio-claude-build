@@ -9,6 +9,7 @@ import { api } from "./lib/api";
 import { useTrackMaster } from "./hooks/useTrackMaster";
 import { PresetIcon } from "./components/PresetIcon";
 import { RightRail } from "./components/RightRail";
+import { VisualEqPanel } from "./components/VisualEqPanel";
 import { AlbumPanel } from "./components/AlbumPanel";
 import { Knob, intensityLabel } from "./components/Knob";
 import { SignalChain } from "./components/SignalChain";
@@ -579,6 +580,10 @@ function TrackMaster({ tm }: { tm: ReturnType<typeof useTrackMaster> }) {
         onSave={tm.saveUserPreset}
         onDelete={tm.deleteUserPreset}
         onApply={tm.applyUserPreset}
+      />
+      <VisualEqPanel
+        settings={tm.selectedSettings}
+        onEq={tm.setEqBand}
       />
       <Macros
         settings={tm.selectedSettings}
