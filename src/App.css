@@ -987,6 +987,27 @@ button.primary:disabled {
   margin-top: 0.5rem;
 }
 
+/* UI restyle 2026-05-14 slice 5 — when this section is opened inside
+   the 300 px right-rail Advanced details, each per-band column is
+   ~80 px wide. The default `.advanced-slot-body .adv-control` grid
+   `1fr auto 64px` doesn't fit (the 64 px number input alone exceeds
+   the column). Stack the slider above the number input here and drop
+   the redundant `.adv-value` span (the auto-pill on the .adv-label
+   already shows state), so all four fields per band fit cleanly. */
+.compression-per-band-grid .adv-control {
+  grid-template-columns: 1fr;
+  gap: 0.2rem;
+}
+
+.compression-per-band-grid .adv-value {
+  display: none;
+}
+
+.compression-per-band-grid .adv-number {
+  font-size: 0.68rem;
+  padding: 0.1rem 0.25rem;
+}
+
 .compression-band-column {
   display: flex;
   flex-direction: column;

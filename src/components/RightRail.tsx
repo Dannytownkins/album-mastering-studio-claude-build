@@ -77,6 +77,13 @@ export function RightRail({
 }: RightRailProps) {
   return (
     <aside className="right-rail">
+      {/* UI restyle 2026-05-14 slice 5 — rail reads meters → export →
+          quality → advanced (collapsed). The reorder + the collapsed-
+          by-default Advanced details fixes the per-band compressor
+          overflow Dan flagged in the 2026-05-14 screenshot: the rail
+          is 300 px and the per-band 3-column grid only fits when the
+          surrounding Advanced section is given its own breathing room
+          on user demand. */}
       <MasterOutPanel
         analysis={analysis}
         isAnalyzing={isAnalyzing}
@@ -91,16 +98,6 @@ export function RightRail({
         isPlaying={isPlaying}
         compressionGr={compressionGr}
       />
-      {advancedSlot && (
-        <details className="panel advanced-panel-slot" open>
-          <summary className="panel-head panel-head-summary">
-            <span className="panel-title">ADVANCED CONTROLS</span>
-            <span className="panel-chevron" aria-hidden>⌄</span>
-          </summary>
-          <div className="advanced-slot-body">{advancedSlot}</div>
-        </details>
-      )}
-      <QualityCheckPanel checks={lastChecks} analysis={analysis} />
       <div className="right-rail-export-group">
         <button
           type="button"
@@ -136,6 +133,16 @@ export function RightRail({
           </button>
         </details>
       </div>
+      <QualityCheckPanel checks={lastChecks} analysis={analysis} />
+      {advancedSlot && (
+        <details className="panel advanced-panel-slot">
+          <summary className="panel-head panel-head-summary">
+            <span className="panel-title">ADVANCED CONTROLS</span>
+            <span className="panel-chevron" aria-hidden>⌄</span>
+          </summary>
+          <div className="advanced-slot-body">{advancedSlot}</div>
+        </details>
+      )}
     </aside>
   );
 }

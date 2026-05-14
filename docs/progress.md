@@ -2569,3 +2569,73 @@ height bumps to 136 px, text clutter inside each tile drops.
 After that: slice 4 (console controls rebalance), then slice 4b
 (VisualEqPanel v1 — new component, not just CSS).
 
+
+
+## 2026-05-14 — UI restyle slice 5: right-rail reorder + per-band overflow fix
+
+Goal: Dan flagged in the post-slice-1-2 screenshot that "you can
+see some of the advanced controls on the right hand side being
+cut off" — the per-band compressor 3-column grid was clipping
+against the 300 px right-rail width. Slice 5 in the restyle plan
+was always going to handle this; reordered to do it *next*
+(ahead of restyle slice 3 preset tiles) because the friction was
+visible in the live UI.
+
+What changed:
+
+- `src/components/RightRail.tsx`: reordered the aside children so
+  the rail reads `MASTER OUT → LEVELS → EXPORT (+Tools fold-out)
+  → QUALITY CHECK → ADVANCED CONTROLS (collapsed)`. Two specific
+  behavior changes:
+    1. The `right-rail-export-group` now sits between LEVELS and
+       QUALITY CHECK rather than at the very bottom.
+    2. The `<details className="panel advanced-panel-slot">`
+       lost its `open` attribute — Advanced is now collapsed by
+       default. Users open it when they need the sliders;
+       otherwise the rail stays "meters / export / quality"
+       focused. Matches the restyle plan acceptance criterion:
+       "Right rail says 'meter, quality, export' before it says
+       'technical settings'."
+- `src/App.css::.compression-per-band-grid` overrides — when the
+  user *does* open Per-band compressor inside Advanced, the
+  3-column grid now uses a stacked `1fr` layout per
+  `.adv-control` cell (slider above the number input). The
+  redundant `.adv-value` span is hidden in this context (the
+  auto-pill in the label already shows state), and `.adv-number`
+  font-size drops from 0.72 → 0.68 rem with tighter padding.
+  Net result: all four fields per band fit cleanly at ~80 px
+  column width without horizontal clipping.
+- `src/App.tsx`: sample-rate `SelectField` option label
+  shortened from "Source (resampling coming later)" → "Source
+  (SRC later)" so the closed dropdown doesn't truncate at the
+  rail's right edge. The inline comment kept the longer
+  explanation for future maintainers.
+
+Verification:
+
+- `npm run build`: clean. CSS chunk 52.21 → 52.42 kB (+0.21 kB
+  for the per-band overrides); main JS chunk 280.40 kB → 280.38
+  kB (label shortening shaved a hair).
+- Rust untouched — no `cargo test` needed.
+
+Real-audio fixture used: None — pure UI change.
+
+What failed or remains partial:
+
+- The reorder doesn't yet beef up the Export CTA visually (the
+  restyle plan's "Increase export CTA prominence" line). The
+  button is in the right place; styling pass can come later.
+- Restyle slice 3 (preset tiles) was originally next; pushed
+  back one slot to fix the friction Dan saw.
+- Bottom status bar (workspace footer) still reads through
+  PEAK / L / M / H / live: 264/264 chips at the workspace base.
+  In dev builds the `live` chip persists by design; production
+  builds tree-shake it.
+
+Next recommended slice: **Restyle slice 3 — preset tiles** per
+`UI_CSS_RESTYLE_PLAN_2026-05-14.md`. Selected-state floor glow,
+tile minimum height 136 px, per-preset `--tile-accent` colors,
+reduced text clutter. After that: slice 4 (console controls
+rebalance), slice 4b (VisualEqPanel v1), slice 6 (responsive
+check).
+
