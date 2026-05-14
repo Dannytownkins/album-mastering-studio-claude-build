@@ -130,9 +130,14 @@ export function VisualEqPanel({ settings, onEq }: VisualEqPanelProps) {
   const PAD_LEFT = 40;
   const PAD_RIGHT = 12;
   const PAD_TOP = 14;
-  const PAD_BOTTOM = 22;
+  // Bottom padding holds two text rows: the frequency axis (50/100/1k/…)
+  // on the first line, then the colored band labels (LOW / LOW-MID /
+  // MID / HIGH) on the second so they don't overlap the axis ticks.
+  const PAD_BOTTOM = 34;
+  const AXIS_LABEL_Y_OFFSET = 14;
+  const BAND_LABEL_Y_OFFSET = 28;
   const VBW = 720;
-  const VBH = 260;
+  const VBH = 272;
   const plotW = VBW - PAD_LEFT - PAD_RIGHT;
   const plotH = VBH - PAD_TOP - PAD_BOTTOM;
 
@@ -246,13 +251,13 @@ export function VisualEqPanel({ settings, onEq }: VisualEqPanelProps) {
             y2={localDbToY(db)}
           />
         ))}
-        {/* Frequency axis labels along the bottom. */}
+        {/* Frequency axis labels along the bottom (first row). */}
         {GRID_FREQS.map((hz) => (
           <text
             key={`fx-${hz}`}
             className="eq-label"
             x={localFreqToX(hz)}
-            y={PAD_TOP + plotH + 14}
+            y={PAD_TOP + plotH + AXIS_LABEL_Y_OFFSET}
             textAnchor="middle"
           >
             {hz >= 1000 ? `${hz / 1000}k` : `${hz}`}
@@ -304,7 +309,7 @@ export function VisualEqPanel({ settings, onEq }: VisualEqPanelProps) {
               <text
                 className="eq-node-label"
                 x={x}
-                y={PAD_TOP + plotH + 14}
+                y={PAD_TOP + plotH + BAND_LABEL_Y_OFFSET}
                 textAnchor="middle"
                 fill={band.color}
               >

@@ -2893,3 +2893,89 @@ out the UI restyle queue. After that: Codex audit slices 6
 (test split into fast/slow lanes) and 7 (background decode for
 first Mastered click latency).
 
+
+
+## 2026-05-14 — UI restyle slice 6: responsive check + label-overlap fix
+
+Goal: Per `docs/UI_CSS_RESTYLE_PLAN_2026-05-14.md` — sanity pass
+at 1920×1080 / 1600×900 / 1366×768. Also addresses an actual
+overlap bug Dan flagged in the 4K-screenshot review: the
+TONE CURVE band labels (LOW / LOW-MID / MID / HIGH) sat at
+the *same* y as the frequency axis labels (200 / 400 / 1k …)
+and rendered on top of each other.
+
+What changed:
+
+- `src/components/VisualEqPanel.tsx`: split the bottom-of-plot
+  text region into two rows. Frequency axis labels stay at
+  `y = plotH + 14`; band labels move to a new row at
+  `y = plotH + 28`. `PAD_BOTTOM` bumped 22 → 34 to make room;
+  viewBox height 260 → 272. Plot area pixel height stays the
+  same (224 SVG units). Introduced named constants
+  (`AXIS_LABEL_Y_OFFSET`, `BAND_LABEL_Y_OFFSET`) so the two
+  rows are documented at the top of the layout block rather
+  than buried in magic numbers.
+- `src/App.css::.visual-eq-panel`: min-height clamp lower bound
+  bumped 220 → 240 px so the new two-row bottom label region
+  has breathing room at the narrowest target viewport. Upper
+  bound stays at 320 px; vh middle term unchanged.
+- `src/App.css::.tile-row`: preset-tile `minmax(100px, 1fr)`
+  lowered to `minmax(90px, 1fr)`. At 1366×768 the @media
+  trigger at 1400 shrinks the rail layout to 220+1fr+280 px;
+  main column drops to ~870 px usable; previous 100 px floor
+  was 856 px for 8 tiles + 7 gaps, which would overflow under
+  the workspace padding. 8×90 + 7×8 = 776 px — comfortable
+  headroom while wider viewports still expand each tile via
+  the 1fr column rule.
+
+Verification:
+
+Eyeballed Dan's screenshots:
+  * 4K (effective ~2560 logical): waveform deck reads as the
+    hero, transport flows underneath, all 8 preset tiles in
+    one row with Clarity's selected halo crisp, right rail
+    leads with master-out → levels → export (+ Tools fold-out)
+    → quality → collapsed advanced. The pre-fix TONE CURVE
+    label overlap was the only visible defect.
+  * 1080p: all layout invariants hold; preset row fits one
+    line; right rail panels stay inside the rail without
+    horizontal clip; bottom status bar stays compact.
+  * 1366×768 not directly observed but the tile-row math
+    above confirms 8 tiles still fit one row after the
+    minmax change.
+
+`npm run build`: clean. CSS chunk basically flat.
+
+Rust untouched.
+
+Real-audio fixture used: None — pure UI change.
+
+What failed or remains partial:
+
+- The SVG uses `preserveAspectRatio="none"` so it fills its
+  container; at very wide viewports text stretches slightly
+  on the x-axis. Visible in Dan's 4K screenshot but readable.
+  A follow-up could switch to `xMidYMid meet` for letterboxed
+  but proportional rendering, or compute the viewBox width
+  dynamically from the container. Out of scope for this slice.
+- Per-band knob tone colors mentioned in the restyle plan
+  (Width = gold, Warmth = pink, Presence/Air, Compression =
+  blue/cyan) still don't apply — those controls are
+  slider/NumberField in AdvancedPanel rather than Knob
+  components. Promoting them to Knob is a separate change.
+- The `live: 0/0` badge persists in dev builds by design
+  (`import.meta.env.DEV` gate); production tree-shakes it.
+
+Next recommended slice: **Codex audit slice 6 — test split
+into fast/slow lanes.** The `cargo test` slow lane runs the
+~4-minute real-fixture metering snapshot every time. Split
+into a fast `cargo test --lib` daily path (already ~1 s) and
+an opt-in `cargo test --features real-fixture` slow lane gated
+behind a feature flag or env var. Documented in CLAUDE.md as
+the recommended local workflow. After 6: Codex audit slice 7
+(background decode for first Mastered click).
+
+UI restyle queue is now CLOSED — all six planned slices plus
+4b have shipped. Any further UI work picks up from Dan's next
+listening / usage pass.
+

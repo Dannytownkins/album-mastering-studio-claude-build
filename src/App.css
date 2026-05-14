@@ -1445,11 +1445,13 @@ button.primary:disabled {
 
 .tile-row {
   display: grid;
-  /* 8 preset tiles must fit one row at the 1600x940 design canvas. With
-     the right-rail scrollbar eating ~17px the working width drops below
-     the prior minmax(118px) threshold and Loud wraps to row 2. 100px
-     gives headroom even at the smallest design viewport (1280 wide). */
-  grid-template-columns: repeat(auto-fit, minmax(100px, 1fr));
+  /* 8 preset tiles must fit one row at the 1366×768 target viewport, the
+     narrowest in the restyle plan slice 6 responsive check. At 1366 the
+     @media trigger at 1400 px shrinks sidebars to 220+280; main column
+     drops to ~870 px usable; tile row needs 8×min + 7×gap ≤ ~820 px.
+     8×90 + 7×8 = 776 px → comfortable headroom. Wider viewports
+     stretch each tile via the 1fr column rule. */
+  grid-template-columns: repeat(auto-fit, minmax(90px, 1fr));
   gap: 0.5rem;
 }
 
@@ -1722,7 +1724,10 @@ button.primary:disabled {
    precision controls underneath. */
 .visual-eq-panel {
   position: relative;
-  min-height: clamp(220px, 24vh, 320px);
+  /* Bumped from 220 to 240 px min after slice 6 split the bottom of the
+     SVG into two label rows (axis ticks + band names); 220 px squeezed
+     them together at the narrowest target viewport. */
+  min-height: clamp(240px, 24vh, 320px);
   border: 1px solid rgba(111, 163, 255, 0.14);
   border-radius: var(--radius);
   overflow: hidden;
