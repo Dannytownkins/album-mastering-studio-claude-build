@@ -61,3 +61,42 @@ Do not choose a framework without documenting why it can meet:
 - Add tests or smoke checks when behavior is testable.
 - Use private fixtures locally, but do not commit audio.
 - Be honest about partial features. Do not call a phase complete because the UI resembles the goal.
+
+## Test workflow — fast / slow lanes
+
+The Rust suite is split so the daily path stays fast and the slow
+real-audio fixture tests only run when explicitly opted in.
+
+**Fast lane (default — under 30 s):**
+
+```powershell
+# From repo root or src-tauri/
+cargo test --lib       # ~1 s, lib unit tests only
+cargo test             # ~15-25 s, full suite with real-fixture tests skipped
+```
+
+The four real-fixture tests in `src-tauri/tests/contracts.rs`
+(`analyze_tracks_runs_against_real_fixture_if_present`,
+`mastering_render_processes_real_fixture_if_present`,
+`decode_real_fixture_if_present`,
+`phase_12_1_real_fixture_metering_snapshot`) print a skip line and
+return early unless the env var below is set.
+
+**Slow lane (migration / pre-merge gating — ~4 minutes):**
+
+```powershell
+$env:AMS_RUN_REAL_FIXTURE = "1"
+cargo test
+```
+
+Or one-shot:
+
+```powershell
+$env:AMS_RUN_REAL_FIXTURE = "1"; cargo test; Remove-Item Env:\AMS_RUN_REAL_FIXTURE
+```
+
+The slow lane requires `private-audio-fixtures/<some-audio-file>` to
+exist; without a fixture the tests still skip even with the env var
+set. Run the slow lane before merging changes that touch the DSP
+chain, the WAV writer, the LUFS landing math, or anything else where
+audio-output byte-identity matters.

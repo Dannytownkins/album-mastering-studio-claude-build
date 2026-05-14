@@ -3116,3 +3116,77 @@ behind a Cargo feature flag or env var so `cargo test --lib`
 becomes the default daily path. After 6: Codex audit slice 7
 (background decode for first Mastered click latency).
 
+
+
+## 2026-05-14 — Codex audit slice 6: test split into fast / slow lanes
+
+Goal: Codex 2026-05-13 audit P2 — daily `cargo test` ran the two
+~60-second real-fixture tests on every invocation, totalling ~275 s
+for the contracts binary and discouraging frequent local test runs.
+Gate the real-fixture tests behind an env var so they only run when
+explicitly opted in.
+
+What changed:
+
+- `src-tauri/tests/contracts.rs`: new helper `real_fixture_enabled()`
+  returns `true` only when `AMS_RUN_REAL_FIXTURE` is set to a
+  non-empty value.
+- Four real-fixture tests gain an early-return guard with a clear
+  skip message:
+    * `analyze_tracks_runs_against_real_fixture_if_present`
+    * `mastering_render_processes_real_fixture_if_present`
+    * `decode_real_fixture_if_present`
+    * `phase_12_1_real_fixture_metering_snapshot`
+  The existing filesystem-presence skip stays as a second guard so
+  the slow lane still no-ops cleanly on machines without
+  `private-audio-fixtures/`.
+- `CLAUDE.md`: new "Test workflow — fast / slow lanes" section
+  documents the two paths:
+    * Fast lane (default, ~25 s): `cargo test` — real-fixture tests
+      skip with a printed advisory line.
+    * Slow lane (~4-5 min): `AMS_RUN_REAL_FIXTURE=1 cargo test` — the
+      real-fixture tests actually run; required before merging any
+      change that touches the DSP chain, WAV writer, LUFS landing,
+      or audio-output byte-identity surface.
+
+Verification:
+
+- `cargo test --lib`: 80/80 in 0.73 s.
+- `cargo test --tests` (fast lane, env var unset): 138/138 in
+  ~53 s total. Real-fixture tests in `contracts.rs` print
+  `"Skipping real-fixture test (set AMS_RUN_REAL_FIXTURE=1 to run
+  the slow lane)."` and return early. Contracts binary down from
+  ~263 s to 6.47 s.
+- `AMS_RUN_REAL_FIXTURE=1 cargo test --tests` (slow lane): 138/138
+  in ~5 min total. Real-fixture tests actually exercise
+  `mastering_render_processes_real_fixture_if_present` and
+  `phase_12_1_real_fixture_metering_snapshot` (each >60 s).
+- Frontend untouched (no `npm run build` needed for this slice).
+
+Real-audio fixture used: Yes for the slow-lane verification — the
+existing fixture in `private-audio-fixtures/` was exercised end to
+end through `mastering_render` and the analyze pipeline. Output
+matches the pre-split timing within noise (~257 s contracts vs
+historical ~263 s).
+
+What failed or remains partial:
+
+- Verification done in a scratch `target-tests/` directory because
+  Dan had `npm run tauri dev` running and the main binary was
+  locked, blocking the standard `cargo test` rebuild. The scratch
+  dir was deleted after verification; production CI would run
+  `cargo test --tests` against the normal `target/` directory.
+- The four tests still depend on `private-audio-fixtures/<file>`
+  existing on disk — the env var is a SECOND gate, not a
+  replacement. Machines without a fixture skip silently either way.
+
+Next recommended slice: **Codex audit slice 7 — background decode
+for first Mastered click latency**. Currently the first click on
+Mastered after track import blocks on `decode_full(path)` before
+playback starts, which can stall a long WAV for ~1-2 seconds. Plan:
+kick `decode_full` on the audio thread as soon as a track is
+selected, write into the existing decode cache, so the Mastered
+click hits a warm entry. Streaming decode is a separate follow-up.
+That closes the Codex audit's "P1 first Mastered playback can still
+block on full decode" finding.
+

@@ -129,6 +129,12 @@ async fn analyze_tracks_measures_synthetic_wav() {
 
 #[tokio::test]
 async fn analyze_tracks_runs_against_real_fixture_if_present() {
+    if !real_fixture_enabled() {
+        eprintln!(
+            "Skipping real-fixture test (set AMS_RUN_REAL_FIXTURE=1 to run the slow lane)."
+        );
+        return;
+    }
     let Some(path) = real_fixture_path() else {
         eprintln!("Skipping: no real-audio fixture");
         return;
@@ -425,6 +431,12 @@ fn album_render_emits_monotonic_progress_to_completion() {
 
 #[test]
 fn mastering_render_processes_real_fixture_if_present() {
+    if !real_fixture_enabled() {
+        eprintln!(
+            "Skipping real-fixture test (set AMS_RUN_REAL_FIXTURE=1 to run the slow lane)."
+        );
+        return;
+    }
     let Some(path) = real_fixture_path() else {
         eprintln!("Skipping: no real-audio fixture");
         return;
@@ -458,6 +470,12 @@ fn mastering_render_processes_real_fixture_if_present() {
 
 #[tokio::test]
 async fn decode_real_fixture_if_present() {
+    if !real_fixture_enabled() {
+        eprintln!(
+            "Skipping real-fixture test (set AMS_RUN_REAL_FIXTURE=1 to run the slow lane)."
+        );
+        return;
+    }
     let Some(path) = real_fixture_path() else {
         eprintln!("Skipping: no real-audio fixture at private-audio-fixtures/");
         return;
@@ -496,6 +514,12 @@ async fn decode_real_fixture_if_present() {
 /// present so the suite still passes on clean machines / CI.
 #[tokio::test]
 async fn phase_12_1_real_fixture_metering_snapshot() {
+    if !real_fixture_enabled() {
+        eprintln!(
+            "Phase 12.1 snapshot: skipping (set AMS_RUN_REAL_FIXTURE=1 to run the slow lane)."
+        );
+        return;
+    }
     let Some(path) = real_fixture_path() else {
         eprintln!("Phase 12.1 snapshot: no fixture in private-audio-fixtures/, skipping");
         return;
@@ -1730,6 +1754,19 @@ fn write_sine_wav_at_amplitude(
         }
     }
     writer.finalize().expect("wav finalize");
+}
+
+/// Codex audit 2026-05-13 P2 (slice 6) — opt-in gate for the slow
+/// real-fixture tests. The full `cargo test` previously ran the
+/// ~4-minute real-fixture metering snapshot every invocation, which
+/// discouraged frequent local test runs. The gate keeps the daily
+/// `cargo test` path under 30 s by default; pass
+/// `AMS_RUN_REAL_FIXTURE=1` (any non-empty value) to opt back in for
+/// migration / pre-merge gating.
+fn real_fixture_enabled() -> bool {
+    std::env::var("AMS_RUN_REAL_FIXTURE")
+        .map(|v| !v.is_empty())
+        .unwrap_or(false)
 }
 
 fn real_fixture_path() -> Option<PathBuf> {
