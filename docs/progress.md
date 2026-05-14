@@ -2292,3 +2292,51 @@ P1 for Dan's workflow — demoted to a Tools menu "New project"
 action rather than a default change. Full plan + pushback notes
 live in the chat that produced this slice.
 
+
+
+## 2026-05-14 — Codex audit slice 2: sample-rate honesty
+
+Goal: Kill the Codex 2026-05-13 audit P2 — the Advanced UI exposed
+44.1 / 48 / 88.2 / 96 kHz options that the renderer silently
+ignored (`types.rs` DeliveryProfile docstring confirms "A3 does
+NOT resample; the renderer writes at the source's sample rate
+regardless"). A user could pick "96 kHz" and receive 44.1.
+
+What changed:
+
+- `src/App.tsx::AdvancedSection`: The `target_sample_rate`
+  `SelectField` is collapsed to a single option,
+  `{ value: null, label: "Source (resampling coming later)" }`,
+  with an inline comment explaining the regression-style restore
+  path once high-quality SRC ships. The DeliveryProfile dropdown
+  was checked and does *not* claim sample rate in its display
+  labels (only LUFS and a "(16-bit)" CD suffix), so the SR lie was
+  isolated to this one control.
+
+Verification:
+
+- `npm run build`: clean.
+- Rust untouched — no `cargo test` run needed for this slice.
+
+Real-audio fixture used: None — pure UI change.
+
+What failed or remains partial:
+
+- Users with a persisted `target_sample_rate` of 44100 / 48000 /
+  88200 / 96000 in their autosaved session will keep that value in
+  state until they re-select the "Source" option. Harmless because
+  the renderer ignored those values anyway, but worth knowing if
+  Dan inspects `track_settings.advanced.target_sample_rate` in a
+  saved session JSON.
+- DeliveryProfile docstrings in `types.rs` still describe profiles
+  in terms of their *future* SR (e.g. StreamingUniversal "48 kHz").
+  This is internal documentation, not UI-facing, and the comment
+  already notes "A3 does NOT resample" — leaving as-is.
+
+Next recommended slice: **Codex audit slice 3 — delete the unused
+`prepare_ab_preview` and `prepare_master_playback` Tauri commands**
+plus their TS wrappers (`api.ts:96` and `api.ts:107`). No
+hooks/App.tsx callers; only `preview-mock.ts` references remain.
+After deleting commands, scan `contracts.rs` for any tests touching
+them and either remove or repoint.
+

@@ -1875,15 +1875,17 @@ function AdvancedPanel({
           ]}
           onChange={(v) => update("bit_depth", v)}
         />
+        {/* Codex audit 2026-05-13 P2: the renderer writes `pcm.sample_rate`
+            regardless of this control (see `types.rs` DeliveryProfile doc:
+            "A3 does NOT resample"). Until high-quality SRC ships, the field
+            is collapsed to a single honest option so a user can't pick 96 kHz
+            and silently receive 44.1. Restore full options once
+            `mastering_render_with_progress` honors target SR. */}
         <SelectField
           label="Sample rate"
           value={a.target_sample_rate}
           options={[
-            { value: null, label: "Source" },
-            { value: 44100, label: "44.1 kHz" },
-            { value: 48000, label: "48 kHz" },
-            { value: 88200, label: "88.2 kHz" },
-            { value: 96000, label: "96 kHz" },
+            { value: null, label: "Source (resampling coming later)" },
           ]}
           onChange={(v) => update("target_sample_rate", v)}
         />
