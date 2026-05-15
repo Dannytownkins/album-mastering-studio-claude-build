@@ -1009,16 +1009,21 @@ fn export_landing_gain_lin_for_preview(
         -60.0
     };
 
-    let delta_db = target_lufs - measured;
+    // Route through the shared ceiling-bounded math (engine.rs) so the
+    // live-preview path applies exactly the same delta as the offline
+    // render paths — preview-to-export parity is the load-bearing
+    // property here. The helper returns the applied delta in dB; the
+    // preview path converts that to a linear gain scalar (rather than
+    // mutating samples) because it ships through `ChainCoeffs` for the
+    // live audio thread to apply per frame.
     let ceiling_dbtp = render_settings.effective_ceiling_dbtp();
-    let headroom_db = (ceiling_dbtp - measured_true_peak_dbtp).max(0.0);
-    let applied_delta_db = if delta_db < 0.0 {
-        delta_db
-    } else {
-        delta_db.min(headroom_db)
-    };
-
-    if applied_delta_db.abs() > 1.0e-4 {
+    let applied_delta_db = crate::engine::ceiling_bounded_landing_delta_db(
+        measured,
+        measured_true_peak_dbtp,
+        target_lufs,
+        ceiling_dbtp,
+    );
+    if applied_delta_db != 0.0 {
         Ok(10.0_f32.powf(applied_delta_db / 20.0))
     } else {
         Ok(1.0)

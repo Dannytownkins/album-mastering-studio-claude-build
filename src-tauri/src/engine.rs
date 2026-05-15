@@ -292,6 +292,159 @@ fn sanitize_lufs(v: f32) -> f32 {
     }
 }
 
+// ============================================================================
+// Ceiling-bounded LUFS landing — shared helpers used by every render path.
+//
+// Pre-extraction, this math was duplicated across three render paths
+// (mastering_render_with_progress, album_render_with_progress,
+// render_album_plan_impl) plus a fourth shape variant in
+// audio.rs::export_landing_gain_lin_for_preview. The B6 ceiling-bounded
+// behavior shipped as three near-identical blocks, and the album-plan
+// copy was missed for almost a full session — exactly the drift the
+// extraction is meant to prevent.
+//
+// Two-tier API:
+//   * `ceiling_bounded_landing_delta_db`: pure math. Computes the
+//     applied delta in dB given pre-measured LUFS+TP and the target/
+//     ceiling. Returned value is 0.0 when the landing is a no-op
+//     (silent signal, near-zero delta, or no headroom for upward push).
+//   * `apply_ceiling_bounded_landing_with_measurements`: math + in-place
+//     gain multiply. Returns the applied delta in dB so callers that
+//     track post-landing measurements (e.g. the track-export receipt)
+//     can shift their tracked LUFS+TP by the same amount.
+//   * `measure_and_apply_ceiling_bounded_landing`: full ebur128 pass +
+//     apply. For callers that don't already have LUFS+TP measurements
+//     in hand (album-simple, album-plan).
+//
+// The audio.rs live-preview helper uses the pure-math tier directly
+// because it returns a gain scalar rather than mutating samples, and
+// because its ebur128 setup is measured on a 8 s window (perf
+// optimization that the offline render paths intentionally don't share).
+// ============================================================================
+
+/// Compute the LUFS-landing delta in dB given pre-measured loudness +
+/// true peak. Downward delta applies in full (the limiter already
+/// capped peaks at ceiling, so attenuating only moves them further
+/// away). Upward delta is bounded by the residual true-peak headroom
+/// below the user's ceiling. Returns 0.0 when:
+///
+///   * the target or measurement is non-finite, or the signal is
+///     effectively silent (measured_lufs <= -70 LUFS),
+///   * the applied delta would be within ±1e-4 dB of zero (numerical
+///     no-op — skip the gain multiply entirely).
+///
+/// The earlier refuse-upward policy (citing the Sonible / Ozone /
+/// Mastering The Mix industry survey) was retired during B6 in favor
+/// of letting the user push toward their stated target. The live
+/// Export LUFS preview shows the resulting level in real time, so
+/// what the user hears is what export writes — no hidden cap.
+pub(crate) fn ceiling_bounded_landing_delta_db(
+    measured_lufs: f32,
+    measured_true_peak_dbtp: f32,
+    target_lufs: f32,
+    ceiling_dbtp: f32,
+) -> f32 {
+    if !target_lufs.is_finite() || !measured_lufs.is_finite() || measured_lufs <= -70.0 {
+        return 0.0;
+    }
+    let delta_db = target_lufs - measured_lufs;
+    let headroom_db = (ceiling_dbtp - measured_true_peak_dbtp).max(0.0);
+    let applied_delta_db = if delta_db < 0.0 {
+        delta_db
+    } else {
+        delta_db.min(headroom_db)
+    };
+    if applied_delta_db.abs() > 1.0e-4 {
+        applied_delta_db
+    } else {
+        0.0
+    }
+}
+
+/// Apply ceiling-bounded LUFS landing in-place to a sample slice given
+/// pre-measured loudness + true peak. Returns the applied delta in
+/// dB (0.0 if no gain was applied) so callers that track post-landing
+/// measurements can shift them by the same amount via
+/// `measured_lufs += applied; measured_true_peak_dbtp += applied;`.
+///
+/// Under a uniform linear gain `g`, integrated LUFS and true-peak
+/// both shift by exactly `20·log10(g)` dB — so callers never need to
+/// re-run the ebur128 pass after scaling.
+fn apply_ceiling_bounded_landing_with_measurements(
+    samples: &mut [f32],
+    measured_lufs: f32,
+    measured_true_peak_dbtp: f32,
+    target_lufs: f32,
+    ceiling_dbtp: f32,
+) -> f32 {
+    let applied_delta_db = ceiling_bounded_landing_delta_db(
+        measured_lufs,
+        measured_true_peak_dbtp,
+        target_lufs,
+        ceiling_dbtp,
+    );
+    if applied_delta_db != 0.0 {
+        let gain_lin = 10.0_f32.powf(applied_delta_db / 20.0);
+        for s in samples.iter_mut() {
+            *s *= gain_lin;
+        }
+    }
+    applied_delta_db
+}
+
+/// Full-stack ceiling-bounded LUFS landing: measure integrated LUFS +
+/// BS.1770 true peak via ebur128, compute the bounded delta, apply in
+/// place. Used by render paths that don't already have measurements
+/// in hand (album-simple, album-plan). The track-export path measures
+/// separately so it can also feed the receipt's `RenderedMeasurements`,
+/// and routes through `apply_ceiling_bounded_landing_with_measurements`
+/// directly.
+fn measure_and_apply_ceiling_bounded_landing(
+    samples: &mut [f32],
+    sample_rate: u32,
+    channels: u16,
+    settings: &MasteringSettings,
+) -> CommandResult<()> {
+    let Some(target_lufs) = settings.effective_target_lufs() else {
+        return Ok(());
+    };
+    if !target_lufs.is_finite() {
+        return Ok(());
+    }
+    let channels_u32 = u32::from(channels.max(1));
+    let mut ebu = EbuR128::new(channels_u32, sample_rate, Mode::I | Mode::TRUE_PEAK)
+        .map_err(|e| CommandError::Render(format!("ebur128 init: {e}")))?;
+    ebu.add_frames_f32(samples)
+        .map_err(|e| CommandError::Render(format!("ebur128 feed: {e}")))?;
+    let measured_lufs = sanitize_lufs(
+        ebu.loudness_global()
+            .map_err(|e| CommandError::Render(format!("ebur128 global: {e}")))? as f32,
+    );
+    let mut peak_lin: f64 = 0.0;
+    for ch in 0..channels_u32 {
+        let tp = ebu
+            .true_peak(ch)
+            .map_err(|e| CommandError::Render(format!("ebur128 tp: {e}")))?;
+        if tp > peak_lin {
+            peak_lin = tp;
+        }
+    }
+    let measured_true_peak_dbtp = if peak_lin > 0.0 {
+        (20.0 * peak_lin.log10()) as f32
+    } else {
+        -60.0
+    };
+    let ceiling_dbtp = settings.effective_ceiling_dbtp();
+    apply_ceiling_bounded_landing_with_measurements(
+        samples,
+        measured_lufs,
+        measured_true_peak_dbtp,
+        target_lufs,
+        ceiling_dbtp,
+    );
+    Ok(())
+}
+
 /// Measure post-render integrated loudness (BS.1770) of an interleaved f32
 /// buffer. Returns the raw ebur128 reading — callers should treat values
 /// below -70 LUFS as "effectively silent" and skip downstream gain math, the
@@ -919,56 +1072,14 @@ pub fn album_render_with_progress(
         // B5: per-track ceiling-bounded LUFS landing. Pre-B5 this path
         // skipped LUFS landing entirely — album-simple exports rendered
         // at whatever the chain happened to produce, ignoring the user's
-        // delivery-profile / advanced.lufs_offset_db target. Mirrors the
-        // block in mastering_render_with_progress; downward gain applies
-        // in full, upward gain is bounded by true-peak headroom below the
-        // user's ceiling (B6 policy).
-        if let Some(target_lufs) = render_settings.effective_target_lufs() {
-            if target_lufs.is_finite() {
-                let channels_u32 = u32::from(pcm.channels.max(1));
-                let mut ebu =
-                    EbuR128::new(channels_u32, pcm.sample_rate, Mode::I | Mode::TRUE_PEAK)
-                        .map_err(|e| CommandError::Render(format!("ebur128 init: {e}")))?;
-                ebu.add_frames_f32(&samples)
-                    .map_err(|e| CommandError::Render(format!("ebur128 feed: {e}")))?;
-                let measured_lufs = sanitize_lufs(
-                    ebu.loudness_global()
-                        .map_err(|e| CommandError::Render(format!("ebur128 global: {e}")))?
-                        as f32,
-                );
-                if measured_lufs.is_finite() && measured_lufs > -70.0 {
-                    let mut peak_lin: f64 = 0.0;
-                    for ch in 0..channels_u32 {
-                        let tp = ebu
-                            .true_peak(ch)
-                            .map_err(|e| CommandError::Render(format!("ebur128 tp: {e}")))?;
-                        if tp > peak_lin {
-                            peak_lin = tp;
-                        }
-                    }
-                    let measured_true_peak_dbtp = if peak_lin > 0.0 {
-                        (20.0 * peak_lin.log10()) as f32
-                    } else {
-                        -60.0
-                    };
-                    let delta_db = target_lufs - measured_lufs;
-                    let ceiling_dbtp = render_settings.effective_ceiling_dbtp();
-                    let headroom_db =
-                        (ceiling_dbtp - measured_true_peak_dbtp).max(0.0);
-                    let applied_delta_db = if delta_db < 0.0 {
-                        delta_db
-                    } else {
-                        delta_db.min(headroom_db)
-                    };
-                    if applied_delta_db.abs() > 1.0e-4 {
-                        let gain_lin = 10.0_f32.powf(applied_delta_db / 20.0);
-                        for s in samples.iter_mut() {
-                            *s *= gain_lin;
-                        }
-                    }
-                }
-            }
-        }
+        // delivery-profile / advanced.lufs_offset_db target. Now routes
+        // through the shared helper alongside the other two render paths.
+        measure_and_apply_ceiling_bounded_landing(
+            &mut samples,
+            pcm.sample_rate,
+            pcm.channels,
+            &render_settings,
+        )?;
 
         let individual = unique_output_path(out_dir, path, &input.id, RenderKind::Master)?;
         write_wav(&individual, &samples, pcm.sample_rate, pcm.channels, bit_depth)?;
@@ -1309,72 +1420,19 @@ pub fn render_album_plan_impl(
             }
         }
 
-        // B6 follow-up — ceiling-bounded LUFS landing for the album-plan
-        // path. Pre-fix this was the third surviving refuse-upward block
-        // (`if delta_db < 0.0`), so user-facing Album Master exports
-        // ignored upward LUFS targets even after B6 landed for
-        // track-render and album-simple. Brought into lockstep here.
-        //
-        // `shadowed.effective_target_lufs()` is the arc-modulated target
-        // (per-track LUFS offset baked into the shadow), so each track
-        // lands at its arc-curve-determined target rather than the raw
-        // album-intent target — preserving the album-arc story.
-        //
-        // The chunk has been moved to a single ebur128 `I | TRUE_PEAK`
-        // pass so headroom is computed from the proper BS.1770 true peak
-        // rather than sample peak, matching the export-path math.
-        //
-        // TODO: extract the three identical landing blocks (this one,
-        // mastering_render_with_progress, album_render_with_progress)
-        // into a shared `apply_ceiling_bounded_landing` helper. Three
-        // copies is two too many — drift between them is exactly what
-        // got us here.
-        if let Some(target_lufs) = shadowed.effective_target_lufs() {
-            if target_lufs.is_finite() {
-                let channels_u32 = u32::from(pcm.channels.max(1));
-                let mut ebu =
-                    EbuR128::new(channels_u32, pcm.sample_rate, Mode::I | Mode::TRUE_PEAK)
-                        .map_err(|e| CommandError::Render(format!("ebur128 init: {e}")))?;
-                ebu.add_frames_f32(&samples)
-                    .map_err(|e| CommandError::Render(format!("ebur128 feed: {e}")))?;
-                let measured_lufs = sanitize_lufs(
-                    ebu.loudness_global()
-                        .map_err(|e| CommandError::Render(format!("ebur128 global: {e}")))?
-                        as f32,
-                );
-                if measured_lufs.is_finite() && measured_lufs > -70.0 {
-                    let mut peak_lin: f64 = 0.0;
-                    for ch in 0..channels_u32 {
-                        let tp = ebu
-                            .true_peak(ch)
-                            .map_err(|e| CommandError::Render(format!("ebur128 tp: {e}")))?;
-                        if tp > peak_lin {
-                            peak_lin = tp;
-                        }
-                    }
-                    let measured_true_peak_dbtp = if peak_lin > 0.0 {
-                        (20.0 * peak_lin.log10()) as f32
-                    } else {
-                        -60.0
-                    };
-                    let delta_db = target_lufs - measured_lufs;
-                    let ceiling_dbtp = shadowed.effective_ceiling_dbtp();
-                    let headroom_db =
-                        (ceiling_dbtp - measured_true_peak_dbtp).max(0.0);
-                    let applied_delta_db = if delta_db < 0.0 {
-                        delta_db
-                    } else {
-                        delta_db.min(headroom_db)
-                    };
-                    if applied_delta_db.abs() > 1.0e-4 {
-                        let gain_lin = 10.0_f32.powf(applied_delta_db / 20.0);
-                        for s in samples.iter_mut() {
-                            *s *= gain_lin;
-                        }
-                    }
-                }
-            }
-        }
+        // Per-track ceiling-bounded LUFS landing on the album-plan
+        // path. `shadowed.effective_target_lufs()` is the arc-modulated
+        // target (per-track LUFS offset baked into the shadow), so each
+        // track lands at its arc-curve-determined target rather than
+        // the raw album-intent target — preserving the album-arc story.
+        // The B6 ceiling-bounded math is shared with the track-export
+        // and album-simple paths via the helper.
+        measure_and_apply_ceiling_bounded_landing(
+            &mut samples,
+            pcm.sample_rate,
+            pcm.channels,
+            &shadowed,
+        )?;
 
         // Per-track WAV named NN-<sanitized_title>.wav.
         let stem = path
@@ -1778,44 +1836,25 @@ pub fn mastering_render_with_progress(
         -60.0
     };
 
-    // LUFS landing — ceiling-bounded. Downward gain applies in full (the
-    // limiter already capped peaks at ceiling, so attenuating only moves
-    // them further away). Upward gain is permitted up to the residual
-    // true-peak headroom below the user's ceiling, so the slider feels
-    // alive on quieter material where the limiter wasn't fully engaged
-    // and a real push is safe. Once the chain is already driving the
-    // limiter to the ceiling, residual headroom is ~0 and upward push
-    // clamps to zero — the user needs more Intensity / Input Gain /
-    // denser preset to reach the target.
-    //
-    // The earlier refuse-upward policy (citing Sonible / Ozone / MTM
-    // industry survey) was retired in favor of letting the user push
-    // toward their stated target. The live "Export LUFS" preview shows
-    // the resulting level in real time, so what the user hears is what
-    // export writes — no hidden cap.
+    // Ceiling-bounded LUFS landing. Routes through the shared helper
+    // with the LUFS+TP we already measured for the receipt. The
+    // helper returns the applied delta in dB so we can shift the
+    // tracked measurements (which feed `RenderedMeasurements`) in
+    // lockstep — under a uniform linear gain, integrated LUFS and
+    // true-peak both shift by exactly the same dB amount, so no
+    // second ebur128 pass is needed.
     if let Some(target_lufs) = render_settings.effective_target_lufs() {
-        if target_lufs.is_finite() && measured_lufs.is_finite() && measured_lufs > -70.0 {
-            let delta_db = target_lufs - measured_lufs;
-            let ceiling_dbtp = render_settings.effective_ceiling_dbtp();
-            let headroom_db = (ceiling_dbtp - measured_true_peak_dbtp).max(0.0);
-            let applied_delta_db = if delta_db < 0.0 {
-                delta_db
-            } else {
-                delta_db.min(headroom_db)
-            };
-            if applied_delta_db.abs() > 1.0e-4 {
-                let gain_lin = 10.0_f32.powf(applied_delta_db / 20.0);
-                for s in samples.iter_mut() {
-                    *s *= gain_lin;
-                }
-                // Uniform-gain shift of pre-scale measurements onto the
-                // post-scale samples that are about to be written.
-                measured_lufs += applied_delta_db;
-                measured_true_peak_dbtp += applied_delta_db;
-            }
-            // Upward push wanted but ceiling fully consumed → samples and
-            // measurements unchanged. The receipt's measured LUFS will
-            // surface the gap so the user knows to push the chain harder.
+        let ceiling_dbtp = render_settings.effective_ceiling_dbtp();
+        let applied_delta_db = apply_ceiling_bounded_landing_with_measurements(
+            &mut samples,
+            measured_lufs,
+            measured_true_peak_dbtp,
+            target_lufs,
+            ceiling_dbtp,
+        );
+        if applied_delta_db != 0.0 {
+            measured_lufs += applied_delta_db;
+            measured_true_peak_dbtp += applied_delta_db;
         }
     }
 
@@ -2184,6 +2223,165 @@ mod tests {
             "dither on silence should never exceed ±2 LSB; saw {}",
             max_abs
         );
+    }
+
+    // ========================================================================
+    // ceiling_bounded_landing_delta_db — mechanical gates for the shared
+    // landing math now used by all four render/preview paths. Tests
+    // exercise the pure math via input/output pairs so a future change
+    // to the formula can't silently shift behavior on any single caller.
+    // ========================================================================
+
+    /// Downward delta applies in full (the limiter has already capped
+    /// peaks at ceiling, so attenuating only moves them further away).
+    #[test]
+    fn ceiling_bounded_landing_downward_applies_full_delta() {
+        // measured -10 LUFS, peak -1 dBTP, target -14 LUFS, ceiling -1.
+        // delta = target - measured = -4. Should apply in full.
+        let applied =
+            ceiling_bounded_landing_delta_db(-10.0, -1.0, -14.0, -1.0);
+        assert!(
+            (applied - -4.0).abs() < 1.0e-6,
+            "downward delta should apply in full; got {applied}"
+        );
+    }
+
+    /// Upward delta applies in full when there's headroom below ceiling.
+    /// Verifies the post-B6 "let the slider push upward when safe"
+    /// behavior is preserved through the extraction.
+    #[test]
+    fn ceiling_bounded_landing_upward_uses_full_headroom_when_available() {
+        // measured -23 LUFS, peak -15 dBTP, target -14, ceiling -1.
+        // delta = +9; headroom = 14. Push the full +9.
+        let applied =
+            ceiling_bounded_landing_delta_db(-23.0, -15.0, -14.0, -1.0);
+        assert!(
+            (applied - 9.0).abs() < 1.0e-6,
+            "upward delta should apply in full when headroom > delta; got {applied}"
+        );
+    }
+
+    /// Upward delta is clamped by ceiling headroom — verifies the cap
+    /// fires when the chain already pushed peaks near the ceiling.
+    #[test]
+    fn ceiling_bounded_landing_upward_clamped_by_ceiling_headroom() {
+        // measured -10 LUFS, peak -3 dBTP, target -6, ceiling -1.
+        // delta = +4; headroom = 2. Push only +2.
+        let applied =
+            ceiling_bounded_landing_delta_db(-10.0, -3.0, -6.0, -1.0);
+        assert!(
+            (applied - 2.0).abs() < 1.0e-6,
+            "upward delta should clamp to ceiling headroom; got {applied}"
+        );
+    }
+
+    /// Upward delta with zero headroom (post-chain peak already at
+    /// ceiling) clamps to zero — no push, no change. This is the
+    /// "slider feels inert on already-limiter-slammed material" case,
+    /// which is the spec-correct behavior.
+    #[test]
+    fn ceiling_bounded_landing_upward_zero_when_no_headroom() {
+        // measured -10 LUFS, peak -1 dBTP (at ceiling), target -6.
+        // delta = +4; headroom = 0. Push zero.
+        let applied = ceiling_bounded_landing_delta_db(-10.0, -1.0, -6.0, -1.0);
+        assert_eq!(
+            applied, 0.0,
+            "no headroom should produce zero applied delta; got {applied}"
+        );
+    }
+
+    /// Silent signal (-70 LUFS gate) bypasses landing entirely.
+    /// Pre-extraction, every duplicate copy of the math had the
+    /// `measured_lufs > -70.0` guard. Verifies the extracted helper
+    /// inherits it.
+    #[test]
+    fn ceiling_bounded_landing_skips_silent_signal() {
+        let applied = ceiling_bounded_landing_delta_db(-80.0, -60.0, -14.0, -1.0);
+        assert_eq!(
+            applied, 0.0,
+            "silent signal (-70 LUFS gate) should produce zero delta; got {applied}"
+        );
+    }
+
+    /// Non-finite target or measurement bypasses landing — silent
+    /// guard against NaN propagation into the gain stage.
+    #[test]
+    fn ceiling_bounded_landing_skips_non_finite_inputs() {
+        assert_eq!(
+            ceiling_bounded_landing_delta_db(f32::NAN, -1.0, -14.0, -1.0),
+            0.0,
+            "NaN measured_lufs should produce zero delta"
+        );
+        assert_eq!(
+            ceiling_bounded_landing_delta_db(-10.0, -1.0, f32::NAN, -1.0),
+            0.0,
+            "NaN target should produce zero delta"
+        );
+        assert_eq!(
+            ceiling_bounded_landing_delta_db(-10.0, -1.0, f32::INFINITY, -1.0),
+            0.0,
+            "infinite target should produce zero delta"
+        );
+    }
+
+    /// Near-zero delta (chain already lands at target within 1e-4 dB)
+    /// produces zero so the gain multiply is skipped entirely.
+    /// Prevents tiny floating-point noise from triggering a
+    /// near-identity gain pass over every sample.
+    #[test]
+    fn ceiling_bounded_landing_skips_negligible_delta() {
+        // measured -14.00005, target -14. Delta = -5e-5, abs < 1e-4.
+        let applied =
+            ceiling_bounded_landing_delta_db(-14.00005, -1.0, -14.0, -1.0);
+        assert_eq!(
+            applied, 0.0,
+            "delta below the ±1e-4 dB noise threshold should produce zero; got {applied}"
+        );
+    }
+
+    /// Apply-in-place returns the same delta the math core would
+    /// compute and ALSO mutates the sample buffer by the corresponding
+    /// linear gain. Wraps the math core's contract plus the in-place
+    /// step the render paths depend on.
+    #[test]
+    fn apply_with_measurements_mutates_samples_and_returns_delta() {
+        // Construct a sample buffer at uniform amplitude 0.5. Apply
+        // a -6 dB landing (measured -10 LUFS, target -16, plenty of
+        // headroom — but delta is downward so headroom doesn't bind).
+        let mut samples = vec![0.5_f32; 1024];
+        let applied = apply_ceiling_bounded_landing_with_measurements(
+            &mut samples, -10.0, -1.0, -16.0, -1.0,
+        );
+        assert!(
+            (applied - -6.0).abs() < 1.0e-6,
+            "expected -6 dB applied delta; got {applied}"
+        );
+        // -6 dB linear ≈ 0.501. Each sample = 0.5 * 0.501 ≈ 0.2506.
+        let expected_lin = 10.0_f32.powf(-6.0 / 20.0);
+        let expected_sample = 0.5_f32 * expected_lin;
+        for s in &samples {
+            assert!(
+                (s - expected_sample).abs() < 1.0e-5,
+                "sample mutation should match the linear-gain of applied delta; \
+                 got {s}, expected {expected_sample}"
+            );
+        }
+    }
+
+    /// Apply-in-place returns 0.0 and leaves samples untouched when
+    /// the math core would no-op. Verifies the contract: callers can
+    /// use `if applied != 0.0` to decide whether to mutate downstream
+    /// state (e.g. the track-export receipt's tracked LUFS).
+    #[test]
+    fn apply_with_measurements_is_a_noop_when_delta_is_zero() {
+        let mut samples = vec![0.5_f32; 32];
+        let original = samples.clone();
+        // Silent signal → math returns 0.
+        let applied = apply_ceiling_bounded_landing_with_measurements(
+            &mut samples, -80.0, -60.0, -14.0, -1.0,
+        );
+        assert_eq!(applied, 0.0);
+        assert_eq!(samples, original, "samples must not be mutated on no-op");
     }
 
     /// B4: every production *_iso field now reads from `now_iso()` instead
