@@ -1,6 +1,6 @@
 # Handoff — YES Master — 2026-05-14 evening session
 
-> **One-paragraph snapshot.** The app was renamed Album Mastering Studio → **YES Master** (HEAD `6a441d9`). All seven UI restyle slices and the post-restyle UX restructure landed earlier in the day; Codex then did a console-layout pass (`a3fcc25`) that locks the Track Master surface to a 5-row CSS grid above `1280×820`, adds a real-PCM Original-playback path with matched metering + FFT spectrum, and removes the Levels + Stereo Width panels from the deck meters column. The **next workstream is preset character retuning** per `docs/PRESET_REFERENCE_ANALYSIS_2026-05-14.md` — the missing piece that makes presets feel like creative directions instead of tonal cousins. Everything else is queued behind it.
+> **One-paragraph snapshot.** App renamed Album Mastering Studio → **YES Master** (current HEAD `4878140`). All seven UI restyle slices + the post-restyle UX restructure landed earlier in the day; Codex then shipped four more commits: a console-layout pass (`a3fcc25`) that locks Track Master to a 5-row CSS grid + adds a real-PCM Original-playback path with matched metering / FFT spectrum, the rename itself (`6a441d9`), a default-window bump to 1920×1080 with minWidth 1440 / minHeight 860 (`1ea2fa5`), and a zoom-reset (`4878140`) that forces 100% on every launch and reverts the variable-zoom keybindings from `4f1e53d`. A second-opinion DSP audit ran against this HEAD; verified items are in the new "DSP Debt — Audit findings" section below. The **next workstream is preset character retuning** per `docs/PRESET_REFERENCE_ANALYSIS_2026-05-14.md` — the missing piece that makes presets feel like creative directions instead of tonal cousins. Everything else is queued behind it.
 
 ## Read first (in order)
 
@@ -15,10 +15,10 @@ Do not read by default: `docs/reference/`, `docs/research/`. They're context for
 
 ## Current branch state
 
-- **HEAD**: `6a441d9 Rename app to YES Master`
+- **HEAD**: `4878140 Reset app zoom to 100 percent on launch`
 - **Remote**: pushed to `origin/master`
 - **Local tree**: clean at session-end
-- **Tests** (from session memory): `cargo test --lib` 80/80; `cargo test` 138/138 with the real-fixture tests skipping by default (set `AMS_RUN_REAL_FIXTURE=1` for the slow lane). `npm run build` clean. After Codex's `a3fcc25` audio.rs changes (Original-playback `MeteredPcmSource` + decode cache), rerun `cargo test --lib` as a first move next session to confirm nothing regressed — the integration tests for `MasteringSource` paths still apply but a new constructor signature got added.
+- **Tests** (from session memory, last run before Codex's three post-handoff commits): `cargo test --lib` 80/80; `cargo test` 138/138 with the real-fixture tests skipping by default (set `AMS_RUN_REAL_FIXTURE=1` for the slow lane). `npm run build` clean. After Codex's `a3fcc25` audio.rs changes (Original-playback `MeteredPcmSource` + decode cache), `1ea2fa5` (window dimensions + 177 lines of new App.css), and `4878140` (zoom-reset), rerun `cargo test --lib` and `npm run build` as a first move next session — `a3fcc25` added a new `MeteredPcmSource` constructor signature and the layout-bump rewrote large CSS regions, both worth confirming.
 
 ### What just landed (this session)
 
@@ -30,6 +30,9 @@ Do not read by default: `docs/reference/`, `docs/research/`. They're context for
 | `cc360e4` | `docs/PRESET_REFERENCE_ANALYSIS_2026-05-14.md` tracked. |
 | `a3fcc25` | **Codex** — console-mode layout pass. Adds `@media (min-width: 1280px) and (min-height: 820px)` CSS grid that locks the workspace to the viewport (no main-canvas scroll, rail-only scroll). New `MeteredPcmSource` for Original playback so peak / LUFS / spectrum populate during A/B (not just Mastered). `MasterOutPanel` keeps the deck meters column; `LevelsPanel` + `StereoWidthGauge` are `display: none` in console mode. |
 | `6a441d9` | **Codex** — rename Album Mastering Studio → YES Master in `productName`, window title, brand name, README, PRODUCT.md, etc. Tauri `identifier` stays `com.albummasteringstudio.app` (changing it would break installs); the Cargo package name and repo folder also stay for the same reason. |
+| `2ba39b2` | This handoff doc itself — queues preset retuning as the next workstream and documents Codex's file-ownership lane. |
+| `1ea2fa5` | **Codex** — Tauri window default bumped to **1920×1080**, `minWidth` 1440 / `minHeight` 860. App.css gained 177 lines retuned for the higher-resolution canvas. Closes the "1920×1080 canvas decision" open-queue item from the previous handoff revision. |
+| `4878140` | **Codex** — `useWebviewZoomShortcuts` simplified to **force 100% zoom on every launch**. Reverts the variable-zoom behavior shipped at `4f1e53d`; `Ctrl+=` / `Ctrl+-` keybindings are removed. `Ctrl+0` still resets to 100% (effectively a no-op now). Rationale (inferred): with the design canvas at 1920×1080, in-app zoom is no longer needed for the primary 4K display. If Dan wants per-monitor scaling later this would need to come back. |
 
 ### Codex's parallel lane
 
@@ -168,25 +171,70 @@ After all six slices ship, the workstream is done when **all of these hold simul
 - **`MasteringSource::new` signature**: gained a 9th argument (`spectrum_ring: Arc<SpectrumRing>`) in L4b. Codex's `a3fcc25` introduced a sibling `MeteredPcmSource` for Original playback. Any new audio-thread integration test needs both source types.
 - **Preset calibration is the source of truth**: do not retune via the user-facing advanced sliders. Update `PresetCalibration` values directly so the audible identity follows the preset, not the user override.
 
+## DSP Debt — Audit findings (verified 2026-05-14)
+
+A second-opinion DSP / security audit (separate Opus session) was run against the code at HEAD `4878140`. Every claim was checked against source. Verified items are real and slot-able; overstated items are clarified; refuted items are listed so they don't show up in a future audit and re-trigger the same investigation. The headline item is item 1 — a literal correctness bug. Items 2–8 are refinements, not bugs.
+
+### Verified — slot into a future slice
+
+1. **engine.rs:1188 — `let energy_density = 0.5_f32` hardcoded in `render_album_plan_impl`.** The album EXPORT path discards per-track energy density and passes neutral 0.5 to `apply_album_shadow`. The plumbing exists everywhere else: `compute_energy_density_score` at engine.rs:670, `AnalysisResult.energy_density_score` populated at engine.rs:243, `album.rs` threads `analyses[i].energy_density_score.unwrap_or(0.5)` through its planner at album.rs:425, and `apply_album_shadow` at album.rs:345 accepts `energy_density: Option<f32>` and uses it in `source_comp = (0.5 - energy_density) * 0.45` (album.rs:336). The album export render loop is the one place that throws it away. Net effect: the album-arc character bias's presence-band energy-gate is dead in the export path. **Priority: real correctness bug, separate slice (item 1 in the open queue).** Fix shape: the PCM is already decoded in the loop at engine.rs:1152 — call `crate::engine::compute_energy_density_score` against `&pcm` and pass that instead of the literal. ~10 lines.
+
+2. **engine.rs:1437-1438 — Dither quantization range asymmetric.** `INT16_SCALE = 32_767.0`, `INT24_SCALE = 8_388_607.0`. TPDF dither is symmetric around 0; int16 range is `[-32_768, 32_767]`; the most-negative value is unreachable. Audibly inconsequential — <1 LSB DC offset, well under -90 dB — but technically incorrect. Fix is one line per scale: use `32_768.0` / `8_388_608.0`, keep the existing `clamp(-1.0, 1.0)` to prevent positive overflow.
+
+3. **dsp.rs:1042-1065 — Limiter peak scan is O(lookahead × channels) per output frame.** Every frame, the limiter does a linear pass over the full lookahead ring (line 1042), then runs Lagrange-4 ISP interpolation across every adjacent frame pair × 3 positions × channels (line 1049). At 192 kHz / 5 ms lookahead / stereo that's ~960 frames × 3 positions × 2 channels of work per output sample. A monotonic-queue max would amortize the raw-peak pass to O(1); the Lagrange pass can fold into the same windowed-max structure. Pure perf, not correctness.
+
+4. **dsp.rs:992-996 / 1081 — Limiter release is plain one-pole, single time constant.** `release_coef = exp(-1 / (release_ms * sample_rate / 1000))`. No program-dependent attack/release, no dual time constants. Releases sound the same regardless of material. DSP refinement, not a bug — Dan can tune `release_ms` per-preset if a specific character needs it.
+
+5. **engine.rs:1403-1422 — Dither RNG is a single shared xorshift32 across L/R.** `DitherRng` carries one `u32`; the offline render loop draws sequentially for L then R, so left/right TPDF samples are one xorshift32 step apart — mathematically correlated. Audibly inconsequential at -90 dB FS; textbook practice is per-channel RNG or 64-bit state.
+
+6. **No noise-shaped dither.** Pure TPDF at the LSB (grep confirms zero `noise_shap` / `shaped_dither` symbols anywhere in `src-tauri/src`). Comments at engine.rs:1390-1395 confirm this is intentional — flat noise floor, ~3 dB extra noise, "inaudible at 16-bit; below hearing at 24-bit." F-weighted or SBM-family shaping would push quantization energy above ~16 kHz. Optional refinement.
+
+7. **engine.rs:1162-1171 — Album mode hard-stops on SR / channel mismatch.** "(resampling not yet supported)" is in the error string. For Dan's own album where every track is the same SR + channel count this is fine; for a generic user it's a hard fail. Lower priority than item 1.
+
+8. **engine.rs:1130-1152 — Album mode loads all decoded PCM in RAM.** `decode_full(path)` per track, results held through the render loop. For Dan's own album (10 tracks × ~4 min × 44.1 kHz × 24-bit stereo decoded to f32) this is roughly ~840 MB — comfortable on Dan's machine. Pre-emptive concern, not current.
+
+### Overstated by the audit — clarified
+
+9. **"Limiter has no inter-sample-peak detection."** Refuted by dsp.rs:1049-1065. The limiter does Lagrange-4 polynomial interpolation at x ∈ {0.25, 0.5, 0.75} between every adjacent frame pair — a real ISP estimator, just not a polyphase ×4 oversampler. Phase 11.2.b's x=0.5-only check was expanded specifically to catch sign-asymmetric patterns where the true peak falls near x=0.25 / x=0.75 (see the comment block at dsp.rs:1033-1040). A textbook ×4 oversample would catch ~0.1 dB more on pathological waveforms; otherwise the Lagrange estimator is within a fraction of a dB. Not worth re-architecting.
+
+10. **"files.rs `has_parent_dir_component` is cosmetic."** Partial. It DOES reject the `..` traversal pattern (`Component::ParentDir` match at files.rs:15) — that's real path-traversal defense, not cosmetic. What it doesn't do is restrict reads to a specific allowlist root. In Tauri's threat model (frontend = trusted source code, paths come from the user's native file picker), this is acceptable defense-in-depth. Worth a one-line clarification in a docstring; not a slice.
+
+11. **"`open_output` is a command injection risk."** Refuted by behavior. Windows: `explorer /select,` highlights the file — doesn't execute it. macOS: `open -R` reveals in Finder. Linux: `xdg-open` is called on the **parent directory**, not the file (exports.rs:150), so even a `.desktop` payload wouldn't auto-execute. `path.exists()` and `has_parent_dir_component` are also pre-checks. An extension allowlist would add defense-in-depth but the active surface is small.
+
+### Frontend debt — Codex's lane, do not refactor from Claude side
+
+- **`src/App.tsx`** — 2,438 lines (verified). Should split into `src/components/AlbumColumn.tsx`, `src/components/DeckMeters.tsx`, `src/components/TransportBar.tsx`, etc. Codex is actively iterating this file; any refactor from Claude would clobber in-flight work.
+- **`src/hooks/useTrackMaster.ts`** — 1,501 lines, ~88 hook calls (verified). Single mega-hook returns the full app state; every consumer re-renders on every state change. Splitting into `useTransport`, `useAnalysis`, `usePresets`, `useAlbum` would localize re-renders.
+- **No `React.memo` anywhere** — grep returns zero matches in `src/`. High-traffic display components (meters, waveform, spectrum) re-render on every snapshot tick. Memo-ing them is a low-risk win.
+
+### Tauri config — `tauri.conf.json` (verified)
+
+- **`security.csp: null`** (line 24). Acceptable for development with `frontendDist: ../dist` and Tauri 2's same-origin model. A production build for anyone other than Dan should land a proper CSP first.
+- **`bundle.active: false`** (line 28). **Important context:** no installer is being built. `npm run tauri build` produces the `.exe` only — no `.msi` / `.app` / `.dmg` / `.deb`. Fine for Dan running locally; the gate for ever distributing the app.
+
 ## Open queue (NOT for this session)
 
 Listed in priority order. Each is a self-contained slice; pick up in this order once preset retuning is closed.
 
-1. **Codex audit slice 7** — first-Mastered-click decode stall (~1–2 s freeze on long WAVs). Last open audit finding. With Codex's `a3fcc25` introducing `MeteredPcmSource` + the decode cache for Original playback, the architecture for this slice is now mostly there — `handle_play_master` already uses the decode cache. The remaining work: kick `decode_full` on the audio thread when a track is selected (not on first play) so the cache is warm before the user clicks Mastered.
+1. **Album export `energy_density` bug** — engine.rs:1188 fix per DSP Debt item 1 above. Real correctness bug: the album EXPORT path hardcodes `let energy_density = 0.5_f32` instead of using the per-track analysis value, dead-coding the album-arc character bias's energy-gate. Fix shape: the PCM is already decoded at engine.rs:1152; call `crate::engine::compute_energy_density_score` against it and pass that to `apply_album_shadow`. New regression test in `src-tauri/tests/album_*.rs` asserting that two tracks with different spectral energy distributions get different `presence_db` shadow values through the same album plan.
 
-2. **Album-master export receipt** — Slice 1 left `RenderJob.measurements = None` for the album path. Album exports still surface source-analysis numbers, not rendered. The fix needs a multi-segment EbuR128 collector that spans the per-track segments the album writer emits, then publishes the aggregate on the returned `RenderJob`.
+2. **Codex audit slice 7** — first-Mastered-click decode stall (~1–2 s freeze on long WAVs). With Codex's `a3fcc25` introducing `MeteredPcmSource` + the decode cache for Original playback, the architecture for this slice is now mostly there — `handle_play_master` already uses the decode cache. The remaining work: kick `decode_full` on the audio thread when a track is selected (not on first play) so the cache is warm before the user clicks Mastered.
 
-3. **Album-mode UI polish** — per-transition Gap-seconds spinner, drag-to-reorder inside the album panel, "Album: –1.05 LUFS / ×0.94 intensity" workspace badge per track. Codex's lane (UI).
+3. **Album-master export receipt** — Slice 1 left `RenderJob.measurements = None` for the album path. Album exports still surface source-analysis numbers, not rendered. The fix needs a multi-segment EbuR128 collector that spans the per-track segments the album writer emits, then publishes the aggregate on the returned `RenderJob`.
 
-4. **"New project" menu action** — demoted from Codex audit P1 #2 (was: auto-restore → make clean-boot default). The agreed approach was to leave auto-restore in place and add a Tools-menu "New project (close current)" action. Small slice, ~30 min.
+4. **Album-mode UI polish** — per-transition Gap-seconds spinner, drag-to-reorder inside the album panel, "Album: –1.05 LUFS / ×0.94 intensity" workspace badge per track. Codex's lane (UI).
 
-5. **1920×1080 canvas decision** — Dan was contemplating bumping the Tauri window default from `1600×940` to `1920×1080` (`src-tauri/tauri.conf.json` lines 17–18 still say 1600×940 even after the YES Master rename). Codex's console mode already sets a `1700×960` breakpoint for the "wider console" tier; bumping the default to 1920×1080 puts the design canvas firmly inside that tier. Wait for Dan's explicit go-ahead before changing this — it's a product/UX decision, not a routine config bump.
+5. **"New project" menu action** — demoted from Codex audit P1 #2 (was: auto-restore → make clean-boot default). The agreed approach was to leave auto-restore in place and add a Tools-menu "New project (close current)" action. Small slice, ~30 min.
 
-6. **Preset PNG optimization** — each preset PNG is 1.0–1.8 MB. Converting to WebP / AVIF could cut ~70% off the ~13 MB bundle weight. Cosmetic, low priority.
+6. **Limiter perf — monotonic-queue max** — DSP Debt item 3. Replace the O(N) per-frame peak scan + Lagrange ISP loop with a monotonic-queue windowed-max so the limiter cost is O(1) per output frame. Existing limiter tests must still pass (this is a perf refactor, not a behavior change). Add a microbench under `src-tauri/benches/` to confirm the speedup.
 
-7. **Top-bar version string + user avatar** — mockup at `docs/UI_LAYOUT_REVISION_1600x940.md` shows "YES Master v1.2.0" + an "SM" avatar circle. Cosmetic; skipped in L5. Codex's lane.
+7. **Dither correctness pass** — DSP Debt items 2, 5, 6 batched. (a) Bump `INT16_SCALE` / `INT24_SCALE` to the correct power-of-two so the most-negative integer value is reachable. (b) Split `DitherRng` into per-channel state so L/R draws are independent. (c) Optional: F-weighted noise-shaping behind a `MasteringSettings.advanced.noise_shaping: bool` flag (default false for now; Dan can A/B against TPDF). All three are tiny edits; group them so the existing dither tests get touched once.
 
-8. **Tone-shape per-knob frequency dropdowns** — mockup shows "120 Hz / 2.5 kHz / 10.0 kHz" under each Low/Mid/High knob. DSP frequencies are currently fixed at 200/400/1500/6000 Hz; the UI labels could clarify this without enabling user-adjustable frequencies (the Visual EQ comment already documents why frequency drag is deferred — DSP doesn't support variable band frequency yet).
+8. **Preset PNG optimization** — each preset PNG is 1.0–1.8 MB. Converting to WebP / AVIF could cut ~70% off the ~13 MB bundle weight. Cosmetic, low priority.
+
+9. **Top-bar version string + user avatar** — mockup at `docs/UI_LAYOUT_REVISION_1600x940.md` shows "YES Master v1.2.0" + an "SM" avatar circle. Cosmetic; skipped in L5. Codex's lane.
+
+10. **Tone-shape per-knob frequency dropdowns** — mockup shows "120 Hz / 2.5 kHz / 10.0 kHz" under each Low/Mid/High knob. DSP frequencies are currently fixed at 200/400/1500/6000 Hz; the UI labels could clarify this without enabling user-adjustable frequencies (the Visual EQ comment already documents why frequency drag is deferred — DSP doesn't support variable band frequency yet).
 
 ## Memory carried forward
 
