@@ -14,10 +14,10 @@
       {
         "label": "main",
         "title": "YES Master",
-        "width": 1920,
-        "height": 1080,
-        "minWidth": 1440,
-        "minHeight": 860
+        "width": 1280,
+        "height": 720,
+        "minWidth": 960,
+        "minHeight": 573
       }
     ],
     "security": {

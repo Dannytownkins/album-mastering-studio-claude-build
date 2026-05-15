@@ -14,7 +14,16 @@ pub use types::*;
 use std::sync::Arc;
 use std::time::Duration;
 
-use tauri::{Emitter, Manager};
+use tauri::{Emitter, Manager, PhysicalSize, Size};
+
+const TARGET_WINDOW_PHYSICAL: PhysicalSize<u32> = PhysicalSize {
+    width: 1920,
+    height: 1080,
+};
+const MIN_WINDOW_PHYSICAL: PhysicalSize<u32> = PhysicalSize {
+    width: 1440,
+    height: 860,
+};
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -24,6 +33,7 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .manage(player)
         .setup(|app| {
+            configure_main_window_physical_target(app);
             let app_handle = app.handle().clone();
             let player_state = app.state::<Arc<audio::AudioPlayer>>().inner().clone();
             std::thread::spawn(move || {
@@ -80,4 +90,20 @@ pub fn run() {
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+fn configure_main_window_physical_target(app: &tauri::App) {
+    let Some(window) = app.get_webview_window("main") else {
+        return;
+    };
+    let scale_factor = window.scale_factor().unwrap_or(1.0).max(1.0);
+
+    // Tauri config dimensions are logical pixels. On Dan's 150% Windows
+    // display, a 1920x1080 logical window captures as ~2880x1620 physical.
+    // Force the real client area to the target physical size, then zoom the
+    // WebView out by the DPI scale so CSS/layout still sees the intended
+    // 1920x1080 design canvas.
+    let _ = window.set_min_size(Some(Size::Physical(MIN_WINDOW_PHYSICAL)));
+    let _ = window.set_size(Size::Physical(TARGET_WINDOW_PHYSICAL));
+    let _ = window.set_zoom(1.0 / scale_factor);
 }
