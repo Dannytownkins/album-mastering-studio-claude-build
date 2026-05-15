@@ -813,3 +813,210 @@ pub struct LoopRegion {
     pub start_sec: f64,
     pub end_sec: f64,
 }
+
+#[cfg(test)]
+mod effective_settings_tests {
+    //! Direct unit tests for `MasteringSettings::effective_*` accessors —
+    //! the foundation behavior the live audio chain and the frontend
+    //! display logic both depend on. Pre-existing tests cover the
+    //! accessors indirectly through `delivery_profile_render.rs` (which
+    //! renders and measures landing values), but no direct gate sat on
+    //! the shadowing rule itself. These tests are that gate: if
+    //! `effective_target_lufs` ever stops honoring the profile-over-
+    //! advanced precedence, every downstream caller — landing block,
+    //! ceiling-bounded math, LoudnessTarget readout — would drift in
+    //! sync, and only render-time tests would catch it.
+    use super::*;
+
+    fn settings_with_profile_and_advanced(
+        profile: DeliveryProfile,
+        advanced: AdvancedSettings,
+    ) -> MasteringSettings {
+        MasteringSettings {
+            preset: Preset::Universal,
+            intensity: 0.5,
+            eq_low_db: 0.0,
+            eq_low_mid_db: 0.0,
+            eq_mid_db: 0.0,
+            eq_high_db: 0.0,
+            volume_match: false,
+            source_lufs_integrated: None,
+            input_gain_db: 0.0,
+            output_gain_db: 0.0,
+            delivery_profile: profile,
+            album: None,
+            advanced,
+        }
+    }
+
+    // ----- effective_target_lufs ---------------------------------------
+
+    /// Non-Custom profile wins over advanced.lufs_offset_db. This is the
+    /// load-bearing rule that the LoudnessTarget UI readout must mirror —
+    /// when the user picks a profile, the chain targets the profile's
+    /// value regardless of any leftover advanced.lufs_offset_db.
+    #[test]
+    fn effective_target_lufs_profile_overrides_advanced() {
+        let advanced = AdvancedSettings {
+            lufs_offset_db: Some(-9.0), // user typed -9 but...
+            ..Default::default()
+        };
+        let s = settings_with_profile_and_advanced(
+            DeliveryProfile::StreamingUniversal, // ...profile says -14
+            advanced,
+        );
+        assert_eq!(
+            s.effective_target_lufs(),
+            Some(-14.0),
+            "non-Custom profile must shadow advanced.lufs_offset_db"
+        );
+    }
+
+    /// Custom profile defers to advanced.lufs_offset_db. The fall-through
+    /// path is what makes a manual LUFS target actually apply.
+    #[test]
+    fn effective_target_lufs_custom_uses_advanced_value() {
+        let advanced = AdvancedSettings {
+            lufs_offset_db: Some(-9.0),
+            ..Default::default()
+        };
+        let s = settings_with_profile_and_advanced(DeliveryProfile::Custom, advanced);
+        assert_eq!(
+            s.effective_target_lufs(),
+            Some(-9.0),
+            "Custom profile must fall through to advanced.lufs_offset_db"
+        );
+    }
+
+    /// Custom + None advanced → no target. Verifies the "no landing at
+    /// all" path (the chain will skip the landing block entirely).
+    #[test]
+    fn effective_target_lufs_custom_with_none_advanced_returns_none() {
+        let s = settings_with_profile_and_advanced(
+            DeliveryProfile::Custom,
+            AdvancedSettings::default(),
+        );
+        assert_eq!(s.effective_target_lufs(), None);
+    }
+
+    /// Every non-Custom profile reports a concrete target. Discriminator
+    /// test that confirms each variant's `target_lufs()` is wired into
+    /// the accessor.
+    #[test]
+    fn effective_target_lufs_known_for_every_non_custom_profile() {
+        let cases: &[(DeliveryProfile, f32)] = &[
+            (DeliveryProfile::StreamingUniversal, -14.0),
+            (DeliveryProfile::AppleMusic, -16.0),
+            (DeliveryProfile::Cd, -14.0),
+            (DeliveryProfile::VinylPremaster, -18.0),
+            (DeliveryProfile::LoudRock, -10.5),
+            (DeliveryProfile::BroadcastEu, -23.0),
+            (DeliveryProfile::BroadcastUs, -24.0),
+        ];
+        for (profile, expected) in cases {
+            let s = settings_with_profile_and_advanced(
+                profile.clone(),
+                AdvancedSettings::default(),
+            );
+            assert_eq!(
+                s.effective_target_lufs(),
+                Some(*expected),
+                "profile {:?} must report {} LUFS",
+                profile,
+                expected
+            );
+        }
+    }
+
+    // ----- effective_ceiling_dbtp --------------------------------------
+
+    /// Profile ceiling shadows advanced.ceiling_dbtp.
+    #[test]
+    fn effective_ceiling_dbtp_profile_overrides_advanced() {
+        let advanced = AdvancedSettings {
+            ceiling_dbtp: Some(-0.5), // user typed -0.5 but...
+            ..Default::default()
+        };
+        let s = settings_with_profile_and_advanced(
+            DeliveryProfile::VinylPremaster, // ...profile says -3.0
+            advanced,
+        );
+        assert!(
+            (s.effective_ceiling_dbtp() - -3.0).abs() < 1.0e-6,
+            "VinylPremaster ceiling -3.0 must shadow advanced -0.5; got {}",
+            s.effective_ceiling_dbtp()
+        );
+    }
+
+    /// Custom defers to advanced.ceiling_dbtp.
+    #[test]
+    fn effective_ceiling_dbtp_custom_uses_advanced_value() {
+        let advanced = AdvancedSettings {
+            ceiling_dbtp: Some(-0.5),
+            ..Default::default()
+        };
+        let s = settings_with_profile_and_advanced(DeliveryProfile::Custom, advanced);
+        assert!(
+            (s.effective_ceiling_dbtp() - -0.5).abs() < 1.0e-6,
+            "Custom ceiling falls through to advanced -0.5; got {}",
+            s.effective_ceiling_dbtp()
+        );
+    }
+
+    /// Custom + None advanced → -1.0 dBTP default. The unwrap_or fallback
+    /// is what the chain assumes when nothing else is set; verifying it
+    /// here keeps the default from silently shifting.
+    #[test]
+    fn effective_ceiling_dbtp_custom_with_none_advanced_defaults_to_minus_one() {
+        let s = settings_with_profile_and_advanced(
+            DeliveryProfile::Custom,
+            AdvancedSettings::default(),
+        );
+        assert!(
+            (s.effective_ceiling_dbtp() - -1.0).abs() < 1.0e-6,
+            "default ceiling must be -1.0 dBTP; got {}",
+            s.effective_ceiling_dbtp()
+        );
+    }
+
+    // ----- effective_bit_depth -----------------------------------------
+
+    /// Profile bit depth shadows advanced.bit_depth.
+    #[test]
+    fn effective_bit_depth_profile_overrides_advanced() {
+        let advanced = AdvancedSettings {
+            bit_depth: Some(32), // user picked 32 but...
+            ..Default::default()
+        };
+        let s = settings_with_profile_and_advanced(
+            DeliveryProfile::Cd, // ...CD profile says 16
+            advanced,
+        );
+        assert_eq!(
+            s.effective_bit_depth(),
+            16,
+            "CD profile must shadow advanced 32-bit choice"
+        );
+    }
+
+    /// Custom defers to advanced.bit_depth.
+    #[test]
+    fn effective_bit_depth_custom_uses_advanced_value() {
+        let advanced = AdvancedSettings {
+            bit_depth: Some(32),
+            ..Default::default()
+        };
+        let s = settings_with_profile_and_advanced(DeliveryProfile::Custom, advanced);
+        assert_eq!(s.effective_bit_depth(), 32);
+    }
+
+    /// Custom + None advanced → 24-bit default.
+    #[test]
+    fn effective_bit_depth_custom_with_none_advanced_defaults_to_24() {
+        let s = settings_with_profile_and_advanced(
+            DeliveryProfile::Custom,
+            AdvancedSettings::default(),
+        );
+        assert_eq!(s.effective_bit_depth(), 24);
+    }
+}

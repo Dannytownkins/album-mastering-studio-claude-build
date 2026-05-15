@@ -600,6 +600,7 @@ function TrackMaster({ tm }: { tm: ReturnType<typeof useTrackMaster> }) {
         onIntensity={tm.setIntensity}
         onEq={tm.setEqBand}
         onAdvanced={tm.setAdvanced}
+        onDeliveryProfile={tm.setDeliveryProfile}
         spectrumDb={tm.transport.spectrumDb}
       />
       </div>
@@ -1474,6 +1475,7 @@ function Macros({
   onIntensity,
   onEq,
   onAdvanced,
+  onDeliveryProfile,
   spectrumDb,
 }: {
   settings: MasteringSettings;
@@ -1482,6 +1484,12 @@ function Macros({
   // can drive eq_low_mid_db via the same setter the knobs use.
   onEq: (band: "low" | "low-mid" | "mid" | "high", db: number) => void;
   onAdvanced: (adv: MasteringSettings["advanced"]) => void;
+  // Used by the LoudnessTarget quick-select so explicit picks atomically
+  // switch the DeliveryProfile alongside the underlying lufs_offset_db
+  // — without this the "Off / Natural" option while on a non-Custom
+  // profile would be a silent no-op (the profile keeps shadowing the
+  // null advanced value).
+  onDeliveryProfile: (profile: MasteringSettings["delivery_profile"]) => void;
   // L4b — live FFT spectrum forwarded from PlaybackTick. Empty array
   // means no spectrum yet (idle / Original playback); VisualEqPanel
   // simply omits the spectrum layer in that case.
@@ -1562,20 +1570,45 @@ function Macros({
           spectrumDb={spectrumDb}
         />
       </div>
-      <LoudnessTarget settings={settings} onAdvanced={onAdvanced} />
+      <LoudnessTarget
+        settings={settings}
+        onAdvanced={onAdvanced}
+        onDeliveryProfile={onDeliveryProfile}
+      />
     </section>
   );
 }
 
 // Delivery profiles — short names + their canonical LUFS targets. Matched on
-// the current `lufs_offset_db` so the dropdown reflects what the chain is
-// actually doing. Anything outside the known set reads as "Custom".
+// the current EFFECTIVE LUFS target so the dropdown reflects what the chain
+// is actually doing, even when the DeliveryProfile is shadowing
+// advanced.lufs_offset_db. Anything outside the known set reads as "Custom".
 const LOUDNESS_PROFILES: { id: string; label: string; lufs: number | null }[] = [
   { id: "streaming", label: "Streaming (-14)", lufs: -14 },
   { id: "loud-streaming", label: "Loud streaming (-11)", lufs: -11 },
   { id: "cd-master", label: "CD master (-9)", lufs: -9 },
   { id: "off", label: "Off / Natural", lufs: null },
 ];
+
+/// Mirror of `MasteringSettings::effective_target_lufs` in
+/// `src-tauri/src/types.rs`. The Rust accessor is the source of truth
+/// (tested in `types.rs::effective_settings_tests`); this helper exists
+/// so the UI readout doesn't lie about what the chain is targeting when
+/// a non-Custom DeliveryProfile is shadowing `advanced.lufs_offset_db`.
+///
+/// Pre-fix, the readout displayed raw `advanced.lufs_offset_db`, which
+/// is `null` whenever the user is on a non-Custom profile and hasn't
+/// manually entered a target. The chain WAS targeting the profile's
+/// value (-14 LUFS on StreamingUniversal, -10.5 on LoudRock, etc.), but
+/// the LoudnessTarget block showed "—" — same trust failure mode as
+/// VM-in-export (B3) and the auto-flip-to-Custom (B7), read direction.
+function effectiveLoudnessTarget(settings: MasteringSettings): number | null {
+  const profileTarget = DELIVERY_PROFILE_TARGET_LUFS[settings.delivery_profile];
+  if (profileTarget !== null && profileTarget !== undefined) {
+    return profileTarget;
+  }
+  return settings.advanced.lufs_offset_db ?? null;
+}
 
 function profileIdFor(lufs: number | null): string {
   if (lufs === null) return "off";
@@ -1588,17 +1621,33 @@ function profileIdFor(lufs: number | null): string {
 function LoudnessTarget({
   settings,
   onAdvanced,
+  onDeliveryProfile,
 }: {
   settings: MasteringSettings;
   onAdvanced: (adv: MasteringSettings["advanced"]) => void;
+  onDeliveryProfile: (profile: MasteringSettings["delivery_profile"]) => void;
 }) {
-  const current = settings.advanced.lufs_offset_db;
-  const profileId = profileIdFor(current ?? null);
+  // Display + dropdown selection track the EFFECTIVE target so the UI
+  // never lies about what the chain is targeting. When a non-Custom
+  // DeliveryProfile is active, the profile's target wins regardless of
+  // any leftover advanced.lufs_offset_db value.
+  const current = effectiveLoudnessTarget(settings);
+  const profileId = profileIdFor(current);
 
   const handleProfileChange = (id: string) => {
     if (id === "custom") return; // Custom stays at current value (Advanced edits).
     const profile = LOUDNESS_PROFILES.find((p) => p.id === id);
     if (!profile) return;
+    // Picking ANY quick-select option is a deliberate user intent to
+    // override the current profile's shadowing. Force-flip the
+    // DeliveryProfile to Custom so the picked lufs_offset_db is
+    // actually applied — without this, picking "Off / Natural" while
+    // on a non-Custom profile would be a silent no-op because the
+    // B7 auto-flip in setAdvanced relies on the value DIFFING (and
+    // null -> null is a no-op even if the user's intent changed).
+    if (settings.delivery_profile !== "custom") {
+      onDeliveryProfile("custom");
+    }
     onAdvanced({ ...settings.advanced, lufs_offset_db: profile.lufs });
   };
 
