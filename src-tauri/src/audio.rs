@@ -1052,35 +1052,94 @@ fn live_preview_coeffs(
     Ok(coeffs)
 }
 
-/// Split a buffered batch of audio commands into (in-order non-UpdateChain
-/// commands, latest UpdateChain). Used by the audio command loop to
-/// coalesce knob-spam: redundant intermediate UpdateChains have stale
-/// settings the user has already moved past, and dropping them keeps
-/// latency-sensitive commands (Seek / Play / Pause) from being trapped
-/// behind preview-LUFS measurements.
+/// True for commands that change which track is loaded into the audio
+/// thread. UpdateChain coalescing MUST NOT cross these — a stale
+/// UpdateChain queued before a track switch would otherwise apply old
+/// settings to the new master once the coalescer reorders it after the
+/// barrier (Codex review, the playback-boundary bug).
+fn is_playback_barrier(cmd: &AudioCommand) -> bool {
+    matches!(
+        cmd,
+        AudioCommand::Play { .. } | AudioCommand::PlayMaster { .. } | AudioCommand::Stop
+    )
+}
+
+/// Coalesce a buffered batch of audio commands into the sequence the
+/// audio thread should actually dispatch.
 ///
-/// Properties:
-/// * Non-UpdateChain commands retain their submission order.
-/// * Among UpdateChains, only the LAST one in the buffer survives (its
-///   payload is the freshest settings snapshot).
-/// * Empty input yields `(vec![], None)`.
+/// The audio command loop drains every command currently waiting on the
+/// channel before processing, so a knob-spam burst typically arrives
+/// as multiple UpdateChains alongside one or two latency-sensitive
+/// commands (Seek / Pause / Resume). Inside each "segment" — a stretch
+/// of buffered commands bounded by `is_playback_barrier` — the
+/// coalescer keeps the LATEST UpdateChain and drops the older
+/// intermediates (their payloads are stale; the user has already moved
+/// past them). Non-UpdateChain commands retain their submission order
+/// within the segment, with the surviving UpdateChain dispatched LAST
+/// so live playback ends up reflecting the freshest settings.
 ///
-/// Exposed at module scope (rather than inline in `audio_thread`) so
-/// the partition logic is testable in isolation without spinning up
-/// a real audio device.
-fn partition_for_coalescing(
-    buffered: Vec<AudioCommand>,
-) -> (Vec<AudioCommand>, Option<AudioCommand>) {
-    let mut latest_update: Option<AudioCommand> = None;
-    let mut in_order: Vec<AudioCommand> = Vec::with_capacity(buffered.len());
-    for c in buffered {
-        if matches!(c, AudioCommand::UpdateChain { .. }) {
-            latest_update = Some(c);
+/// **Playback-barrier semantic.** Play / PlayMaster / Stop split the
+/// buffer into segments. UpdateChains never cross a barrier: a stale
+/// pre-barrier UpdateChain applies to the OLD track (or harmlessly
+/// drops into a soon-to-be-replaced live_coeffs_tx), and a fresh
+/// post-barrier UpdateChain applies to the NEW track. Without this
+/// split the reorder rule "non-UpdateChain first, latest UpdateChain
+/// last" would carry stale pre-switch settings across the boundary and
+/// apply them to the wrong track.
+///
+/// Pause / Resume / Seek / SetLoop are NOT barriers — they don't
+/// change the loaded track, so UpdateChains can safely coalesce across
+/// them.
+///
+/// Empty input yields an empty vec.
+fn coalesced_command_sequence(buffered: Vec<AudioCommand>) -> Vec<AudioCommand> {
+    let mut result: Vec<AudioCommand> = Vec::with_capacity(buffered.len());
+    let mut segment_in_order: Vec<AudioCommand> = Vec::new();
+    let mut segment_latest_update: Option<AudioCommand> = None;
+
+    for cmd in buffered {
+        if is_playback_barrier(&cmd) {
+            // Flush current segment, then the barrier itself. The
+            // barrier MUST stay between the segments to preserve
+            // submission-time ordering relative to other commands.
+            result.extend(segment_in_order.drain(..));
+            if let Some(c) = segment_latest_update.take() {
+                result.push(c);
+            }
+            result.push(cmd);
+        } else if matches!(cmd, AudioCommand::UpdateChain { .. }) {
+            segment_latest_update = Some(cmd);
         } else {
-            in_order.push(c);
+            segment_in_order.push(cmd);
         }
     }
-    (in_order, latest_update)
+
+    // Flush trailing segment (everything after the last barrier, or the
+    // entire buffer if no barriers were present).
+    result.extend(segment_in_order);
+    if let Some(c) = segment_latest_update {
+        result.push(c);
+    }
+
+    result
+}
+
+/// True when the landing-gain cache must be cleared before processing
+/// a new play_master / play call. The cache is scoped to the
+/// currently-loaded decoded PCM, so it goes stale on:
+///   * canonical-path change (different track),
+///   * mtime change (same path but the file was re-saved or replaced),
+///   * no prior cache entry (first load — empty cache anyway, but
+///     the predicate returns `true` so callers don't have to special-case).
+fn should_invalidate_landing_cache(
+    prior_entry: Option<&DecodedCacheEntry>,
+    new_canonical: &Path,
+    new_mtime: Option<std::time::SystemTime>,
+) -> bool {
+    match prior_entry {
+        Some(entry) => entry.canonical_path != new_canonical || entry.mtime != new_mtime,
+        None => true,
+    }
 }
 
 /// Dispatch a single audio command. Returns `true` when Shutdown is
@@ -1249,14 +1308,8 @@ fn audio_thread(rx: mpsc::Receiver<AudioCommand>, snapshot: Arc<RwLock<PlaybackS
                 buffered.push(more);
             }
 
-            let (in_order, latest_update) = partition_for_coalescing(buffered);
-
-            for c in in_order {
-                if process_audio_command(c, &mut state) {
-                    shutdown_requested = true;
-                }
-            }
-            if let Some(c) = latest_update {
+            let sequenced = coalesced_command_sequence(buffered);
+            for c in sequenced {
                 if process_audio_command(c, &mut state) {
                     shutdown_requested = true;
                 }
@@ -1482,17 +1535,19 @@ fn handle_play_master(
         }
     };
 
-    // Cache invalidation: clear the landing-gain cache when the
-    // canonical path differs from the prior decoded cache entry's.
-    // Same-path replays (Original/Mastered toggle, repeated play on
-    // the same track) preserve the cache because the PCM is
-    // unchanged. New track → entries were computed against the OLD
-    // PCM and would mis-land the new one.
-    let path_changed = state
-        .as_ref()
-        .and_then(|s| s.decoded_cache.as_ref())
-        .map_or(true, |entry| entry.canonical_path != canonical);
-    if path_changed {
+    // Cache invalidation: clear the landing-gain cache when canonical
+    // path OR mtime differs from the prior decoded cache entry. Same-
+    // path replays at the same mtime (Original/Mastered toggle,
+    // repeated play_master on the same track) preserve the cache
+    // because the PCM is unchanged. New track OR re-saved file →
+    // entries were computed against the OLD PCM and would mis-land
+    // the new one.
+    let cache_stale = should_invalidate_landing_cache(
+        state.as_ref().and_then(|s| s.decoded_cache.as_ref()),
+        &canonical,
+        mtime,
+    );
+    if cache_stale {
         if let Some(s) = state.as_mut() {
             s.landing_gain_cache.clear();
         }
@@ -2236,145 +2291,342 @@ mod tests {
     }
 
     // ========================================================================
-    // Coalescing partition — mechanical gate for the "audio seek reply
-    // timeout" fix. partition_for_coalescing() is the entire knob-spam
-    // protection layer; if it ever stops dropping intermediate UpdateChains
-    // or starts losing non-UpdateChain commands, Seeks will stall behind
-    // expensive preview-LUFS measurements again. These tests are the
-    // regression gate, no human listening required.
+    // Coalescing — mechanical gates for the knob-spam-protection layer.
+    // coalesced_command_sequence() is the entire flow. If it stops
+    // dropping intermediate UpdateChains, Seeks stall behind expensive
+    // preview-LUFS measurements again. If it lets UpdateChains CROSS
+    // playback barriers (Play / PlayMaster / Stop), stale settings
+    // apply to the newly-loaded master. These tests gate both.
     // ========================================================================
 
-    /// Empty input never panics and returns the canonical empty result.
+    // ----- Test helpers ----------------------------------------------------
+
+    fn dummy_play_master(track_id: &str) -> AudioCommand {
+        let (reply, _rx) = mpsc::channel();
+        AudioCommand::PlayMaster {
+            track_id: TrackId(track_id.to_string()),
+            path: std::path::PathBuf::from(format!("/tmp/{track_id}.wav")),
+            settings: settings_with_intensity(0.5),
+            start_position_sec: 0.0,
+            preview_lufs_landing: true,
+            reply,
+        }
+    }
+
+    fn dummy_play(track_id: &str) -> AudioCommand {
+        let (reply, _rx) = mpsc::channel();
+        AudioCommand::Play {
+            track_id: TrackId(track_id.to_string()),
+            path: std::path::PathBuf::from(format!("/tmp/{track_id}.wav")),
+            start_position_sec: 0.0,
+            reply,
+        }
+    }
+
+    fn update_chain_with_intensity(intensity: f32, preview: bool) -> AudioCommand {
+        AudioCommand::UpdateChain {
+            settings: settings_with_intensity(intensity),
+            preview_lufs_landing: preview,
+        }
+    }
+
+    fn update_chain_intensity(cmd: &AudioCommand) -> Option<f32> {
+        match cmd {
+            AudioCommand::UpdateChain { settings, .. } => Some(settings.intensity),
+            _ => None,
+        }
+    }
+
+    // ----- Basic coalescing properties -------------------------------------
+
+    /// Empty input never panics and yields an empty sequence.
     #[test]
-    fn partition_handles_empty_buffer() {
-        let (in_order, latest_update) = partition_for_coalescing(vec![]);
-        assert!(in_order.is_empty());
-        assert!(latest_update.is_none());
+    fn coalesce_handles_empty_buffer() {
+        let result = coalesced_command_sequence(vec![]);
+        assert!(result.is_empty());
     }
 
     /// A single non-UpdateChain command passes through unmodified.
     #[test]
-    fn partition_single_non_update_chain_passes_through() {
-        let (in_order, latest_update) = partition_for_coalescing(vec![AudioCommand::Pause]);
-        assert!(latest_update.is_none());
-        assert_eq!(in_order.len(), 1);
-        assert!(matches!(in_order[0], AudioCommand::Pause));
+    fn coalesce_single_non_update_chain_passes_through() {
+        let result = coalesced_command_sequence(vec![AudioCommand::Pause]);
+        assert_eq!(result.len(), 1);
+        assert!(matches!(result[0], AudioCommand::Pause));
     }
 
-    /// A single UpdateChain ends up as latest_update with no
-    /// non-UpdateChain output. Verifies the trivial case isn't
-    /// accidentally dropping the command.
+    /// A single UpdateChain survives at the tail of the sequence.
     #[test]
-    fn partition_single_update_chain_becomes_latest() {
-        let buffered = vec![AudioCommand::UpdateChain {
-            settings: settings_with_intensity(0.42),
-            preview_lufs_landing: true,
-        }];
-        let (in_order, latest_update) = partition_for_coalescing(buffered);
-        assert!(in_order.is_empty());
-        let latest = latest_update.expect("single UpdateChain should land in latest_update");
-        match latest {
-            AudioCommand::UpdateChain { settings, preview_lufs_landing } => {
-                assert!((settings.intensity - 0.42).abs() < 1e-6);
-                assert!(preview_lufs_landing);
-            }
-            _ => panic!("latest_update should be the UpdateChain"),
-        }
+    fn coalesce_single_update_chain_survives_at_end() {
+        let result = coalesced_command_sequence(vec![update_chain_with_intensity(0.42, true)]);
+        assert_eq!(result.len(), 1);
+        assert_eq!(update_chain_intensity(&result[0]), Some(0.42));
     }
 
-    /// The core coalescing contract: intermediate UpdateChains are dropped,
-    /// the LATEST UpdateChain payload wins, and non-UpdateChain commands
-    /// retain submission order. This is exactly the queue shape that
-    /// produced the "audio seek reply timeout" toast — knob-spam +
-    /// interleaved seeks — and verifies the drained queue dispatches
-    /// in the order [non-UpdateChain commands in submission order,
-    /// latest UpdateChain].
+    /// Within a segment (no barrier), intermediate UpdateChains are
+    /// dropped, the latest survives, and non-UpdateChain commands keep
+    /// their submission order with the UpdateChain dispatched LAST.
+    /// This is Dan's original knob-spam repro shape.
     #[test]
-    fn partition_drops_intermediate_update_chains_and_keeps_seeks_in_order() {
-        // Simulate Dan's repro: rapid knob nudges (UpdateChain payloads
-        // with intensity 0.1 -> 0.5 -> 0.9) interleaved with a Seek and
-        // a Pause. Pre-fix, all three UpdateChains plus the Seek and
-        // Pause would dispatch in submission order, with the Seek waiting
-        // behind two expensive preview-LUFS measurements before its
-        // reply went out and the frontend's 2 s timeout fired. Post-fix,
-        // the Seek and Pause go through first (immediate reply), and
-        // only the LATEST UpdateChain (intensity 0.9, preview_lufs_landing
-        // = true) survives.
-        let (seek_reply_tx, _seek_reply_rx) = mpsc::channel();
+    fn coalesce_drops_intermediates_and_keeps_seeks_before_latest_update() {
+        let (seek_reply, _rx) = mpsc::channel();
         let buffered = vec![
-            AudioCommand::UpdateChain {
-                settings: settings_with_intensity(0.1),
-                preview_lufs_landing: false,
-            },
+            update_chain_with_intensity(0.1, false),
             AudioCommand::Pause,
-            AudioCommand::UpdateChain {
-                settings: settings_with_intensity(0.5),
-                preview_lufs_landing: false,
-            },
+            update_chain_with_intensity(0.5, false),
             AudioCommand::Seek {
                 position_sec: 42.0,
-                reply: seek_reply_tx,
+                reply: seek_reply,
             },
-            AudioCommand::UpdateChain {
-                settings: settings_with_intensity(0.9),
-                preview_lufs_landing: true,
-            },
+            update_chain_with_intensity(0.9, true),
         ];
-        let (in_order, latest_update) = partition_for_coalescing(buffered);
+        let result = coalesced_command_sequence(buffered);
 
-        // Non-UpdateChain commands kept in submission order.
-        assert_eq!(in_order.len(), 2);
-        assert!(matches!(in_order[0], AudioCommand::Pause));
-        match &in_order[1] {
+        // Pause, Seek (in submission order), then the latest UpdateChain.
+        assert_eq!(result.len(), 3);
+        assert!(matches!(result[0], AudioCommand::Pause));
+        match &result[1] {
             AudioCommand::Seek { position_sec, .. } => {
                 assert!((*position_sec - 42.0).abs() < 1e-9);
             }
-            _ => panic!("expected Seek at position 1, got a different command variant"),
+            _ => panic!("expected Seek at position 1"),
         }
-
-        // Latest UpdateChain wins — both settings.intensity AND the
-        // preview_lufs_landing flag are from the FINAL queued payload,
-        // not the first one.
-        let latest = latest_update.expect("latest UpdateChain must survive coalescing");
-        match latest {
+        match &result[2] {
             AudioCommand::UpdateChain { settings, preview_lufs_landing } => {
-                assert!(
-                    (settings.intensity - 0.9).abs() < 1e-6,
-                    "coalescing must keep the LATEST settings; got intensity {}",
-                    settings.intensity
-                );
-                assert!(
-                    preview_lufs_landing,
-                    "coalescing must keep the LATEST preview_lufs_landing flag (should be true)"
-                );
+                assert!((settings.intensity - 0.9).abs() < 1e-6);
+                assert!(*preview_lufs_landing);
             }
-            _ => panic!("latest_update should be the LATEST UpdateChain"),
+            _ => panic!("expected latest UpdateChain at position 2"),
         }
     }
 
-    /// Many UpdateChains in a row → only the last survives, regardless of
-    /// queue depth. Bounds the knob-spam case where 10+ UpdateChains
-    /// accumulate between scheduler ticks.
+    /// Long run of UpdateChains collapses to the last one.
     #[test]
-    fn partition_collapses_long_run_of_update_chains_to_last() {
+    fn coalesce_collapses_long_run_of_update_chains_to_last() {
         let buffered: Vec<AudioCommand> = (0..20)
-            .map(|i| AudioCommand::UpdateChain {
-                settings: settings_with_intensity(i as f32 / 20.0),
-                preview_lufs_landing: i % 2 == 0,
-            })
+            .map(|i| update_chain_with_intensity(i as f32 / 20.0, i % 2 == 0))
             .collect();
-        let (in_order, latest_update) = partition_for_coalescing(buffered);
+        let result = coalesced_command_sequence(buffered);
+        assert_eq!(result.len(), 1);
+        assert_eq!(update_chain_intensity(&result[0]), Some(0.95)); // i=19
+    }
 
-        assert!(in_order.is_empty(), "no non-UpdateChain commands fed in");
-        let latest = latest_update.expect("at least one UpdateChain in the queue");
-        match latest {
-            AudioCommand::UpdateChain { settings, preview_lufs_landing } => {
-                // i=19 → intensity 19/20 = 0.95, preview_lufs_landing = false (odd).
-                assert!((settings.intensity - 0.95).abs() < 1e-6);
-                assert!(!preview_lufs_landing);
-            }
-            _ => panic!("latest_update must be the final UpdateChain"),
-        }
+    // ----- Playback-barrier semantics (Codex review fix) -------------------
+
+    /// PlayMaster is a barrier — UpdateChains do NOT cross it. A stale
+    /// UpdateChain queued before PlayMaster must apply BEFORE the track
+    /// switch (so it lands on the soon-to-be-replaced live_coeffs_tx),
+    /// and a fresh UpdateChain queued after PlayMaster must apply to
+    /// the newly-loaded master. This is the killer test: pre-fix, the
+    /// "latest UpdateChain wins" rule was global across the entire
+    /// drained batch, so a pre-PlayMaster UpdateChain could be reordered
+    /// to dispatch AFTER PlayMaster and clobber the new track's chain
+    /// with stale settings from the OLD track.
+    #[test]
+    fn coalesce_does_not_cross_play_master_barrier() {
+        let buffered = vec![
+            update_chain_with_intensity(0.1, false), // OLD track
+            dummy_play_master("new-track"),
+            update_chain_with_intensity(0.9, true), // NEW track
+        ];
+        let result = coalesced_command_sequence(buffered);
+        assert_eq!(result.len(), 3);
+        assert_eq!(
+            update_chain_intensity(&result[0]),
+            Some(0.1),
+            "pre-barrier UpdateChain must stay BEFORE PlayMaster"
+        );
+        assert!(
+            matches!(result[1], AudioCommand::PlayMaster { .. }),
+            "PlayMaster must stay between the two segments"
+        );
+        assert_eq!(
+            update_chain_intensity(&result[2]),
+            Some(0.9),
+            "post-barrier UpdateChain must stay AFTER PlayMaster"
+        );
+    }
+
+    /// Play is a barrier too (Source playback can be started on a new
+    /// track; UpdateChains shouldn't carry across).
+    #[test]
+    fn coalesce_does_not_cross_play_barrier() {
+        let buffered = vec![
+            update_chain_with_intensity(0.1, false),
+            dummy_play("new-track"),
+            update_chain_with_intensity(0.9, true),
+        ];
+        let result = coalesced_command_sequence(buffered);
+        assert_eq!(result.len(), 3);
+        assert_eq!(update_chain_intensity(&result[0]), Some(0.1));
+        assert!(matches!(result[1], AudioCommand::Play { .. }));
+        assert_eq!(update_chain_intensity(&result[2]), Some(0.9));
+    }
+
+    /// Stop is a barrier — clears current_track. UpdateChains after
+    /// Stop (e.g., the user prepping new settings before pressing Play)
+    /// MUST stay after the Stop, not be reordered before it.
+    #[test]
+    fn coalesce_does_not_cross_stop_barrier() {
+        let buffered = vec![
+            update_chain_with_intensity(0.1, false),
+            AudioCommand::Stop,
+            update_chain_with_intensity(0.9, true),
+        ];
+        let result = coalesced_command_sequence(buffered);
+        assert_eq!(result.len(), 3);
+        assert_eq!(update_chain_intensity(&result[0]), Some(0.1));
+        assert!(matches!(result[1], AudioCommand::Stop));
+        assert_eq!(update_chain_intensity(&result[2]), Some(0.9));
+    }
+
+    /// Each segment coalesces independently. A long run of UpdateChains
+    /// before PlayMaster collapses to its own latest; same for after.
+    /// Verifies the per-segment coalescing rule fires on both sides of
+    /// a barrier instead of treating the whole buffer as one segment.
+    #[test]
+    fn coalesce_collapses_each_segment_independently_around_barrier() {
+        let buffered = vec![
+            update_chain_with_intensity(0.1, false),
+            update_chain_with_intensity(0.2, false),
+            update_chain_with_intensity(0.3, false),
+            dummy_play_master("track-b"),
+            update_chain_with_intensity(0.7, false),
+            update_chain_with_intensity(0.8, false),
+            update_chain_with_intensity(0.9, true),
+        ];
+        let result = coalesced_command_sequence(buffered);
+        // Pre-barrier segment collapses to the last of (0.1, 0.2, 0.3) = 0.3
+        // Then PlayMaster
+        // Post-barrier segment collapses to the last of (0.7, 0.8, 0.9) = 0.9
+        assert_eq!(result.len(), 3);
+        assert_eq!(update_chain_intensity(&result[0]), Some(0.3));
+        assert!(matches!(result[1], AudioCommand::PlayMaster { .. }));
+        assert_eq!(update_chain_intensity(&result[2]), Some(0.9));
+    }
+
+    /// Pause / Resume / Seek / SetLoop are NOT barriers — they don't
+    /// change the loaded track. UpdateChains can coalesce across them
+    /// (subject to the "non-UpdateChain commands keep submission order,
+    /// latest UpdateChain dispatched LAST" rule within the segment).
+    #[test]
+    fn coalesce_does_treat_pause_resume_seek_as_non_barriers() {
+        let (seek_reply, _rx) = mpsc::channel();
+        let buffered = vec![
+            update_chain_with_intensity(0.1, false),
+            AudioCommand::Pause,
+            update_chain_with_intensity(0.5, false),
+            AudioCommand::Resume,
+            update_chain_with_intensity(0.7, false),
+            AudioCommand::Seek {
+                position_sec: 12.0,
+                reply: seek_reply,
+            },
+            update_chain_with_intensity(0.9, true),
+            AudioCommand::SetLoop(None),
+        ];
+        let result = coalesced_command_sequence(buffered);
+        // All non-UpdateChain commands keep their order (Pause, Resume,
+        // Seek, SetLoop), and the latest UpdateChain (0.9) dispatches
+        // last after all of them.
+        assert_eq!(result.len(), 5);
+        assert!(matches!(result[0], AudioCommand::Pause));
+        assert!(matches!(result[1], AudioCommand::Resume));
+        assert!(matches!(result[2], AudioCommand::Seek { .. }));
+        assert!(matches!(result[3], AudioCommand::SetLoop(None)));
+        assert_eq!(update_chain_intensity(&result[4]), Some(0.9));
+    }
+
+    // ----- Landing-cache invalidation (Codex review fix) -------------------
+
+    /// No prior entry → always invalidate. First load needs to fall
+    /// through the predicate's positive branch.
+    #[test]
+    fn invalidate_landing_cache_when_no_prior_entry() {
+        let path = std::path::PathBuf::from("/tmp/a.wav");
+        assert!(should_invalidate_landing_cache(None, &path, None));
+    }
+
+    /// Same canonical path AND same mtime → DO NOT invalidate. This
+    /// is the Original/Mastered toggle case where the cache should be
+    /// preserved.
+    #[test]
+    fn keep_landing_cache_when_path_and_mtime_match() {
+        let path = std::path::PathBuf::from("/tmp/a.wav");
+        let mtime = Some(std::time::SystemTime::UNIX_EPOCH);
+        let prior = DecodedCacheEntry {
+            canonical_path: path.clone(),
+            mtime,
+            pcm: DecodedPcm {
+                samples: vec![],
+                sample_rate: 48_000,
+                channels: 2,
+            },
+        };
+        assert!(!should_invalidate_landing_cache(Some(&prior), &path, mtime));
+    }
+
+    /// Different canonical path → invalidate. User switched tracks.
+    #[test]
+    fn invalidate_landing_cache_on_path_change() {
+        let prior_path = std::path::PathBuf::from("/tmp/a.wav");
+        let new_path = std::path::PathBuf::from("/tmp/b.wav");
+        let mtime = Some(std::time::SystemTime::UNIX_EPOCH);
+        let prior = DecodedCacheEntry {
+            canonical_path: prior_path,
+            mtime,
+            pcm: DecodedPcm {
+                samples: vec![],
+                sample_rate: 48_000,
+                channels: 2,
+            },
+        };
+        assert!(should_invalidate_landing_cache(Some(&prior), &new_path, mtime));
+    }
+
+    /// Same path BUT different mtime → invalidate. The file was
+    /// re-saved or replaced; cached landing gains were computed
+    /// against the OLD PCM and would mis-land the new one. Pre-fix,
+    /// only path-change invalidation existed, so a same-path /
+    /// different-mtime case would silently mis-land.
+    #[test]
+    fn invalidate_landing_cache_on_mtime_change_same_path() {
+        let path = std::path::PathBuf::from("/tmp/a.wav");
+        let old_mtime = Some(std::time::SystemTime::UNIX_EPOCH);
+        let new_mtime = Some(
+            std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(60),
+        );
+        let prior = DecodedCacheEntry {
+            canonical_path: path.clone(),
+            mtime: old_mtime,
+            pcm: DecodedPcm {
+                samples: vec![],
+                sample_rate: 48_000,
+                channels: 2,
+            },
+        };
+        assert!(
+            should_invalidate_landing_cache(Some(&prior), &path, new_mtime),
+            "same-path / different-mtime must invalidate — pre-fix this slipped through"
+        );
+    }
+
+    /// Same path with prior mtime Some and new mtime None (file no
+    /// longer reports mtime — e.g. filesystem doesn't support it
+    /// after a path swap) → invalidate. The Option mismatch IS a
+    /// mtime mismatch under PartialEq.
+    #[test]
+    fn invalidate_landing_cache_on_mtime_disappearing() {
+        let path = std::path::PathBuf::from("/tmp/a.wav");
+        let prior = DecodedCacheEntry {
+            canonical_path: path.clone(),
+            mtime: Some(std::time::SystemTime::UNIX_EPOCH),
+            pcm: DecodedPcm {
+                samples: vec![],
+                sample_rate: 48_000,
+                channels: 2,
+            },
+        };
+        assert!(should_invalidate_landing_cache(Some(&prior), &path, None));
     }
 
     /// 8 s preview window still produces accurate landing on sources
