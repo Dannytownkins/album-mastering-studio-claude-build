@@ -160,6 +160,32 @@ export function useTrackMaster() {
   const HISTORY_MAX = 100;
   const HISTORY_COALESCE_MS = 300;
 
+  // Volume Match wiring: the DSP chain attenuates Mastered playback to the
+  // SOURCE's measured integrated LUFS when `volume_match` is on, but it can
+  // only do that if `source_lufs_integrated` rides along on the settings
+  // payload. The Rust fallback (no source LUFS → "undo input gain only")
+  // doesn't account for the preset compressor's makeup gain, EQ boosts, or
+  // saturation, so the fallback path leaves Mastered audibly louder than
+  // Source — which reads as "VM is broken" during a listening pass.
+  //
+  // This helper centralizes the injection so every code path that hands
+  // settings to the backend (play, updateSettings, undo/redo, analysis-
+  // arrival re-push) stays in sync. Returns the original settings object
+  // when analysis hasn't completed yet so the legacy fallback still
+  // engages — the analysis-arrival useEffect below will re-push the chain
+  // with the real LUFS the moment it lands.
+  const withSourceLufs = useCallback(
+    (id: TrackId | null, settings: MasteringSettings): MasteringSettings => {
+      if (!id) return settings;
+      const sourceLufs = analysisMap[id]?.lufs_integrated;
+      if (sourceLufs !== undefined && Number.isFinite(sourceLufs)) {
+        return { ...settings, source_lufs_integrated: sourceLufs };
+      }
+      return settings;
+    },
+    [analysisMap],
+  );
+
   useEffect(() => {
     let unlistenTick: (() => void) | undefined;
     let unlistenProgress: (() => void) | undefined;
@@ -213,6 +239,38 @@ export function useTrackMaster() {
       cancelled = true;
     };
   }, []);
+
+  // Re-push the chain when an analysis result arrives for the track that's
+  // currently playing as Mastered. Without this, hitting Play before the
+  // import-time auto-analyze finishes leaves the chain stuck on the
+  // no-source-LUFS fallback path for the entire playback session — Volume
+  // Match would only "work" after the user toggles a setting (which forces
+  // updateSettings to re-push). The first auto-analyze pass populates
+  // analysisMap[id]; this effect catches that arrival and refreshes the
+  // chain so VM math swaps to the proper source-vs-target attenuation.
+  useEffect(() => {
+    if (!loadedTrackId) return;
+    const kind = loadedKindByTrack[loadedTrackId];
+    if (kind !== "master") return;
+    const sourceLufs = analysisMap[loadedTrackId]?.lufs_integrated;
+    if (sourceLufs === undefined || !Number.isFinite(sourceLufs)) return;
+    const followingAlbum = mode === "album" && !overrideAlbum.has(loadedTrackId);
+    const effective = followingAlbum
+      ? albumIntent
+      : settingsMap[loadedTrackId] ?? DEFAULT_SETTINGS;
+    api
+      .updateChain(withSourceLufs(loadedTrackId, effective))
+      .catch((err) => setError(String(err)));
+  }, [
+    analysisMap,
+    loadedTrackId,
+    loadedKindByTrack,
+    mode,
+    overrideAlbum,
+    albumIntent,
+    settingsMap,
+    withSourceLufs,
+  ]);
 
   // Phase 7.2: load the autosaved session on mount, then enable autosave.
   useEffect(() => {
@@ -379,12 +437,7 @@ export function useTrackMaster() {
           applied: s.applied,
           lastAt: Date.now(),
         }));
-        // Volume Match source-LUFS injection (see updateSettings above).
-        const sourceLufs = analysisMap[id as string]?.lufs_integrated;
-        const effectiveForChain =
-          sourceLufs !== undefined && Number.isFinite(sourceLufs)
-            ? { ...effective, source_lufs_integrated: sourceLufs }
-            : effective;
+        const effectiveForChain = withSourceLufs(id as TrackId, effective);
         api
           .updateChain(effectiveForChain)
           .then(() => {
@@ -397,7 +450,7 @@ export function useTrackMaster() {
           .catch((err) => setError(String(err)));
       }
     },
-    [selectedTrackId, loadedKindByTrack, loadedTrackId, mode, analysisMap],
+    [selectedTrackId, loadedKindByTrack, loadedTrackId, mode, withSourceLufs],
   );
 
   const undo = useCallback(() => {
@@ -486,15 +539,9 @@ export function useTrackMaster() {
           applied: s.applied,
           lastAt: Date.now(),
         }));
-        // Volume Match needs the current track's source-LUFS to attenuate
-        // mastered playback to the source's measured loudness. Injecting it
-        // on every updateChain call keeps the chain in sync even if the
-        // user switches tracks while VM is on.
-        const sourceLufs = analysisMap[id]?.lufs_integrated;
-        const settingsForChain =
-          sourceLufs !== undefined && Number.isFinite(sourceLufs)
-            ? { ...nextSettings, source_lufs_integrated: sourceLufs }
-            : nextSettings;
+        // Volume Match needs the current track's source-LUFS — see the
+        // `withSourceLufs` helper at the top of this hook.
+        const settingsForChain = withSourceLufs(id, nextSettings);
         api
           .updateChain(settingsForChain)
           .then(() => {
@@ -517,7 +564,7 @@ export function useTrackMaster() {
       loadedTrackId,
       albumIntent,
       settingsMap,
-      analysisMap,
+      withSourceLufs,
       commitToHistory,
     ],
   );
@@ -955,16 +1002,22 @@ export function useTrackMaster() {
         // Phase 5: mastered playback streams the source through the live DSP
         // chain — no offline render required, settings changes are audible
         // immediately via updateChain.
+        //
+        // Inject source-LUFS so Volume Match resolves to the proper
+        // "match the source's measured loudness" path on the FIRST chain
+        // build, not just on subsequent updateSettings calls. The
+        // analysis-arrival useEffect below covers the case where Play
+        // beat the auto-analyze.
         await api.playMaster(
           selectedTrackId,
           selectedTrack.path,
-          selectedSettings,
+          withSourceLufs(selectedTrackId, selectedSettings),
           positionSec,
         );
       }
       setLoadedKindByTrack((prev) => ({ ...prev, [selectedTrackId]: kind }));
     },
-    [selectedTrack, selectedTrackId, selectedSettings],
+    [selectedTrack, selectedTrackId, selectedSettings, withSourceLufs],
   );
 
   const togglePlay = useCallback(async () => {
