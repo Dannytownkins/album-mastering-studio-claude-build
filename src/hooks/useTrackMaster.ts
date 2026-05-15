@@ -240,37 +240,11 @@ export function useTrackMaster() {
     };
   }, []);
 
-  // Re-push the chain when an analysis result arrives for the track that's
-  // currently playing as Mastered. Without this, hitting Play before the
-  // import-time auto-analyze finishes leaves the chain stuck on the
-  // no-source-LUFS fallback path for the entire playback session — Volume
-  // Match would only "work" after the user toggles a setting (which forces
-  // updateSettings to re-push). The first auto-analyze pass populates
-  // analysisMap[id]; this effect catches that arrival and refreshes the
-  // chain so VM math swaps to the proper source-vs-target attenuation.
-  useEffect(() => {
-    if (!loadedTrackId) return;
-    const kind = loadedKindByTrack[loadedTrackId];
-    if (kind !== "master") return;
-    const sourceLufs = analysisMap[loadedTrackId]?.lufs_integrated;
-    if (sourceLufs === undefined || !Number.isFinite(sourceLufs)) return;
-    const followingAlbum = mode === "album" && !overrideAlbum.has(loadedTrackId);
-    const effective = followingAlbum
-      ? albumIntent
-      : settingsMap[loadedTrackId] ?? DEFAULT_SETTINGS;
-    api
-      .updateChain(withSourceLufs(loadedTrackId, effective))
-      .catch((err) => setError(String(err)));
-  }, [
-    analysisMap,
-    loadedTrackId,
-    loadedKindByTrack,
-    mode,
-    overrideAlbum,
-    albumIntent,
-    settingsMap,
-    withSourceLufs,
-  ]);
+  // (Phase A4 hotfix-2 removed an analysis-arrival re-push effect here.
+  // The VM math no longer needs `source_lufs_integrated` — it estimates
+  // chain loudness push from the deterministic gain stages — so there's
+  // nothing for an analysis result to "unblock" anymore. Centralized in
+  // dsp.rs::ChainCoeffs::from_settings.)
 
   // Phase 7.2: load the autosaved session on mount, then enable autosave.
   useEffect(() => {
