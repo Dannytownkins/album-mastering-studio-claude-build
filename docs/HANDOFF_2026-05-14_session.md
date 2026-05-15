@@ -282,3 +282,23 @@ Subject under 70 characters. Push to `origin/master` after every passing slice.
 - The preset distinctness contract test (P4) reveals a structural DSP issue rather than a calibration miss (e.g., a band the chain doesn't actually have).
 
 When you stop, append a `progress.md` entry that clearly states the blocker — same convention as every other session-end.
+
+## Review checkpoint findings (2026-05-14)
+
+First checkpoint of this build. Full report at `docs/checkpoints/checkpoint-2026-05-14-pre-preset-retune.md`. Build verified read-only (`cargo test --lib` 81/81; handoff said 80 — count drifted by one, refresh on next edit). No drift between handoff claims and source; every verified DSP-debt item still holds against current code.
+
+### Real bugs (carried into next session as-is)
+
+- **B1.** `engine.rs:1188` — album-export discards per-track `energy_density` and passes literal `0.5` to `apply_album_shadow`. Already in open queue as item #1; reaffirmed.
+- **B2.** `engine.rs:1437–1438` — `INT16_SCALE` / `INT24_SCALE` use `32_767.0` / `8_388_607.0`; with `clamp(-1.0, 1.0)*scale` the most-negative integer is unreachable. Audibly inconsequential. Already in open queue as item #7a.
+
+No new broken-broken bugs found this pass.
+
+### Top priorities for next session
+
+1. **Continue with P1–P6 preset retune as planned** — checkpoint reaffirms the workstream is well-targeted and the data shows `compressor_threshold_dbfs` / `compressor_ratio` truly are not consumed by `ChainCoeffs::from_settings`.
+2. **Suggested ordering refinement: write P4 (`preset_distinctness.rs`) first as a failing test, then retune until it passes.** Makes the contract the gate exactly per "the test is the spec."
+3. **Resolve before P4: does the Punch-vs-Loud crest-factor assertion ship in this pass (with only compressor movement available), or does it wait until a transient shaper exists?** `transient_punch` has been "captured but not applied" alongside `compressor_*` since Phase A2; P4's transient-distinctness assertion can't fully land without a shaper. Make the call up front so the contract is honest.
+
+(Push-back item PB1 — routing PlaybackTick through a smaller subscriber to break the `useTrackMaster` mega-rerender — is filed in the checkpoint but is Codex's lane to act on, not Claude's.)
+

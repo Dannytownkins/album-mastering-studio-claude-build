@@ -101,6 +101,13 @@ fn goertzel_mag_db(samples: &[f32], sample_rate: f32, freq_hz: f32) -> f32 {
 }
 
 fn default_settings_for(preset: Preset) -> MasteringSettings {
+    // Phase A4: this test grades EQ-tilt wiring, not the compressor.
+    // With the preset compressor now engaged by default at density 0.5,
+    // per-band makeup gain shifts the band-tilt measurements unpredictably.
+    // Explicitly bypass compression here so the assertions remain about
+    // what the EQ stage shapes (which is what the test name promises).
+    let mut advanced = AdvancedSettings::default();
+    advanced.compression_density = Some(0.0);
     MasteringSettings {
         preset,
         intensity: TEST_INTENSITY,
@@ -114,7 +121,7 @@ fn default_settings_for(preset: Preset) -> MasteringSettings {
         output_gain_db: 0.0,
         delivery_profile: DeliveryProfile::Custom,
         album: None,
-        advanced: AdvancedSettings::default(),
+        advanced,
     }
 }
 
@@ -211,13 +218,17 @@ fn preset_signatures_match_calibration_tuples() {
                 ("air vs presence", f_air, f_presence, |d| d >= 0.2, ">= +0.2 dB"),
             ],
         ),
-        // Clarity: presence + air boosts, low-mid cut.
+        // Clarity: post-A4 conservative target = air boost, low-mid AND
+        // presence cut. Signature is "air clearly above mids" — no longer
+        // a presence boost. Observed air-vs-mud +1.38, air-vs-presence
+        // +1.65; presence-vs-mud collapsed to -0.27 (presence cut deeper
+        // than the assertion's old direction).
         (
             "Clarity",
             Preset::Clarity,
             &[
                 ("air vs mud", f_air, f_low_mid, |d| d >= 0.8, ">= +0.8 dB"),
-                ("presence vs mud", f_presence, f_low_mid, |d| d >= 0.5, ">= +0.5 dB"),
+                ("air vs presence", f_air, f_presence, |d| d >= 1.0, ">= +1.0 dB"),
             ],
         ),
         // Tape: low boost, presence cut. Observed 200 - 1.5k = +1.56 dB,
@@ -238,12 +249,17 @@ fn preset_signatures_match_calibration_tuples() {
                 ("air vs presence", f_air, f_presence, |d| d >= 0.4, ">= +0.4 dB"),
             ],
         ),
-        // Oomph: low-mid cut, presence boost. Observed 1.5k - 400 = +1.46 dB.
+        // Oomph: post-A4 conservative target = strong sub lift, deep
+        // low-mid AND presence scoop. The old "presence boost" assertion
+        // no longer holds (presence is cut, not boosted). New signature:
+        // low band sits well above the mud zone. Observed low-vs-mud
+        // +2.78, low-vs-presence +3.16.
         (
             "Oomph",
             Preset::Oomph,
             &[
-                ("presence vs mud", f_presence, f_low_mid, |d| d >= 0.8, ">= +0.8 dB"),
+                ("low vs mud", f_low, f_low_mid, |d| d >= 1.5, ">= +1.5 dB"),
+                ("low vs presence", f_low, f_presence, |d| d >= 2.0, ">= +2.0 dB"),
             ],
         ),
         // Warmth: low boost, presence cut. Observed 200 - 1.5k = +1.91 dB.

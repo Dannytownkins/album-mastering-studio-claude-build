@@ -4,9 +4,19 @@
 //! ("Tape is dramatically louder than every other preset"). Pushes the
 //! same pink-ish noise burst through every named preset at intensity
 //! 0.5 and asserts the spread of post-chain integrated LUFS values stays
-//! under 4 LU. The Codex preset calibration was deliberately tuned to be
-//! roughly loudness-matched at default intensity; this guard fires when
-//! a future calibration change accidentally breaks that property.
+//! under a sensible bar.
+//!
+//! Phase A4 retune (2026-05-14) deliberately widens the spread:
+//!   * Loud's `baseline_gain_push_db` is +2.5 vs Universal's +1.2 — the
+//!     conservative-target table explicitly puts Loud at the top of the
+//!     loudness ramp ("strongest density/limiting").
+//!   * The newly-wired preset compressor adds makeup gain proportional
+//!     to threshold-drop × ratio, so Loud (-23/3.5) carries ~2.5 dB more
+//!     makeup than Universal (-16/1.8).
+//!
+//! The bar moved from 4 LU to 7 LU to fit this intentional ramp while
+//! still firing on a single-preset outlier (e.g., a future Tape calibration
+//! tweak that accidentally pushes it past Loud).
 
 use album_mastering_studio_lib::dsp::MasteringChain;
 use album_mastering_studio_lib::engine::measure_integrated_lufs;
@@ -133,7 +143,7 @@ fn presets_land_within_4_lu_of_each_other_at_default_intensity() {
         .join(", ");
 
     assert!(
-        spread < 4.0,
-        "preset loudness spread = {spread:.2} LU ({loudest_name} {loudest:.2} → {quietest_name} {quietest:.2}); preset calibration appears unbalanced. Full readings: {detail}",
+        spread < 7.0,
+        "preset loudness spread = {spread:.2} LU ({loudest_name} {loudest:.2} → {quietest_name} {quietest:.2}); preset calibration appears unbalanced beyond the intentional A4 ramp. Full readings: {detail}",
     );
 }

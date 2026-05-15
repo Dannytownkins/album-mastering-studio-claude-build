@@ -260,12 +260,17 @@ impl BiquadState {
 // User-facing EQ knobs (`eq_low_db`, `eq_low_mid_db`, `eq_mid_db`,
 // `eq_high_db`) add ON TOP of these preset baselines.
 //
-// Some fields are CAPTURED but not yet APPLIED in A2:
-//   * compressor_threshold_dbfs / compressor_ratio — wiring these into
-//     the multiband compressor would activate compression-by-default per
-//     preset, which would break existing parity tests that assume
-//     "default settings = identity chain". Deferred to Phase A3 alongside
-//     the delivery profile.
+// Phase A4 (2026-05-14) — preset compressor identity is now APPLIED. Each
+// preset's `compressor_threshold_dbfs` / `compressor_ratio` /
+// `compressor_attack_ms` / `compressor_release_ms` shapes the multiband
+// compressor by default; the user's `compression_density` macro scales
+// the preset's baseline rather than replacing it (density 0 = bypass,
+// density 0.5 = full preset character, density 1 = preset pushed
+// further). The `Custom` preset stays at the Universal compressor
+// identity but defaults to density 0 so a fresh-Custom session is still
+// an identity chain.
+//
+// Still CAPTURED but not yet APPLIED:
 //   * target_lufs — needs a measure-and-target loop that doesn't exist
 //     yet. Documented per-preset.
 //   * transient_punch — needs a transient shaper (Phase A5).
@@ -303,10 +308,21 @@ pub struct PresetCalibration {
     /// change the limiter's behavior on existing tests). Phase A3 wires
     /// this through the delivery-profile shadow.
     pub ceiling_dbfs: f32,
-    /// Captured uniform multiband compressor threshold. Not applied in A2.
+    /// Per-preset uniform multiband compressor threshold (dBFS), applied
+    /// by default at `compression_density = 0.5`. The user's macro scales
+    /// engagement (0 = bypass, 0.5 = full preset, 1.0 = preset + ~3 dB
+    /// deeper drive).
     pub compressor_threshold_dbfs: f32,
-    /// Captured uniform multiband compressor ratio. Not applied in A2.
+    /// Per-preset uniform multiband compressor ratio, applied alongside
+    /// `compressor_threshold_dbfs`. Scaled by the same engagement curve.
     pub compressor_ratio: f32,
+    /// Compressor attack time constant (ms). Faster = grabs transients
+    /// harder; slower = lets them through. Applied uniformly across the
+    /// three bands so the preset has a single rhythmic character.
+    pub compressor_attack_ms: f32,
+    /// Compressor release time constant (ms). Slower = glue / density;
+    /// faster = preserves movement between transients.
+    pub compressor_release_ms: f32,
     /// Codex science note — terse rationale for the calibration.
     pub science_note: &'static str,
     /// Static input-gain push in dB. Codex doesn't have a direct
@@ -318,161 +334,184 @@ pub struct PresetCalibration {
 }
 
 const PRESET_UNIVERSAL: PresetCalibration = PresetCalibration {
-    // Codex `streaming`. Conservative defaults for cross-genre material.
-    low_shelf_db: 0.0,
-    low_mid_db: 0.0,
+    // Conservative target (PRESET_REFERENCE_ANALYSIS_2026-05-14, line 252).
+    // Cross-genre safe default. Light transparent compressor.
+    low_shelf_db: 0.2,
+    low_mid_db: -0.1,
     presence_db: 0.0,
-    air_db: 0.8,
+    air_db: 1.1,
     warmth: 0.03,
     stereo_width: 1.04,
     transient_punch: 0.04,
     target_lufs: -14.0,
     ceiling_dbfs: -1.0,
-    compressor_threshold_dbfs: -18.0,
-    compressor_ratio: 2.0,
+    compressor_threshold_dbfs: -16.0,
+    compressor_ratio: 1.8,
+    compressor_attack_ms: 15.0,
+    compressor_release_ms: 250.0,
     science_note:
-        "LUFS-aligned with conservative ceiling and light program compression.",
-    baseline_gain_push_db: 1.5,
+        "Light transparent program compression, gentle air lift, neutral mids.",
+    baseline_gain_push_db: 1.2,
 };
 
 const PRESET_CLARITY: PresetCalibration = PresetCalibration {
-    // Codex `bright-air`. Vocal / detail / definition.
-    low_shelf_db: -0.2,
-    low_mid_db: -0.7,
-    presence_db: 0.9,
-    air_db: 2.2,
+    // Conservative target line 253. Vocal / detail / definition.
+    // Drops the 1.5 kHz region, lifts air, fast release for articulation.
+    low_shelf_db: 0.2,
+    low_mid_db: -1.0,
+    presence_db: -0.8,
+    air_db: 1.7,
     warmth: 0.025,
-    stereo_width: 1.12,
+    stereo_width: 1.02,
     transient_punch: 0.05,
     target_lufs: -13.4,
     ceiling_dbfs: -1.0,
-    compressor_threshold_dbfs: -18.7,
-    compressor_ratio: 2.0,
+    compressor_threshold_dbfs: -16.0,
+    compressor_ratio: 1.8,
+    compressor_attack_ms: 12.0,
+    compressor_release_ms: 150.0,
     science_note:
-        "Presence and air shelves reveal detail while moderate compression \
-         avoids brittle over-density.",
-    baseline_gain_push_db: 1.5,
+        "Lower mids tucked, air shelf forward; fast release keeps articulation \
+         open between transients.",
+    baseline_gain_push_db: 0.8,
 };
 
 const PRESET_TAPE: PresetCalibration = PresetCalibration {
-    // Codex `warm-glue`. Saturation, glue, softened top, fuller low body.
-    low_shelf_db: 1.2,
-    low_mid_db: 0.25,
-    presence_db: -0.65,
-    air_db: -0.15,
-    warmth: 0.095,
-    stereo_width: 0.98,
+    // Conservative target line 254. Glue, softened top, fuller low body.
+    // Heavier saturation + slower compressor for crest reduction.
+    low_shelf_db: -0.2,
+    low_mid_db: 0.3,
+    presence_db: -1.4,
+    air_db: 2.0,
+    warmth: 0.10,
+    stereo_width: 0.99,
     transient_punch: -0.03,
     target_lufs: -13.8,
     ceiling_dbfs: -1.1,
-    compressor_threshold_dbfs: -20.5,
-    compressor_ratio: 2.25,
+    compressor_threshold_dbfs: -22.0,
+    compressor_ratio: 2.4,
+    compressor_attack_ms: 30.0,
+    compressor_release_ms: 400.0,
     science_note:
-        "Extra saturation and slightly narrowed image make varied songs feel \
-         like the same record.",
-    baseline_gain_push_db: 1.0,
+        "Deeper saturation and slow program compression deliver glue and a \
+         visibly reduced crest factor.",
+    baseline_gain_push_db: 1.5,
 };
 
 const PRESET_SPATIAL: PresetCalibration = PresetCalibration {
-    // Codex `album-cohesion-cinematic`. Wide, dimensional, controlled lows.
-    low_shelf_db: 0.9,
-    low_mid_db: -0.65,
-    presence_db: -0.15,
-    air_db: 1.35,
-    warmth: 0.07,
-    stereo_width: 1.13,
+    // Conservative target line 255. Wide, dimensional, transparent compression.
+    low_shelf_db: 0.1,
+    low_mid_db: -0.8,
+    presence_db: -0.3,
+    air_db: 1.3,
+    warmth: 0.04,
+    stereo_width: 1.16,
     transient_punch: 0.03,
     target_lufs: -13.1,
     ceiling_dbfs: -1.0,
-    compressor_threshold_dbfs: -19.2,
-    compressor_ratio: 2.15,
+    compressor_threshold_dbfs: -16.0,
+    compressor_ratio: 1.8,
+    compressor_attack_ms: 15.0,
+    compressor_release_ms: 250.0,
     science_note:
-        "Moderate loudness, wide image, and controlled low mids favor \
-         whole-album continuity over singles loudness.",
-    baseline_gain_push_db: 2.5,
+        "Widest side image with a clean low-mid floor and transparent program \
+         compression — width without pumping.",
+    baseline_gain_push_db: 1.0,
 };
 
 const PRESET_OOMPH: PresetCalibration = PresetCalibration {
-    // Codex `heavy-rock-metal`. Forward guitars, controlled low-mids.
-    // NOTE: low_mid_db = -1.25 — first of the heavy-preset mud-zone cuts.
-    low_shelf_db: 0.6,
-    low_mid_db: -1.25,
-    presence_db: 1.1,
-    air_db: 0.85,
+    // Conservative target line 256. Sub/low lift + low-mid scoop.
+    // Medium compressor controls the lows without flattening.
+    low_shelf_db: 2.4,
+    low_mid_db: -3.0,
+    presence_db: -2.6,
+    air_db: -0.8,
     warmth: 0.045,
-    stereo_width: 1.07,
+    stereo_width: 0.95,
     transient_punch: 0.08,
     target_lufs: -12.0,
     ceiling_dbfs: -0.9,
-    compressor_threshold_dbfs: -20.5,
-    compressor_ratio: 2.85,
+    compressor_threshold_dbfs: -22.0,
+    compressor_ratio: 2.6,
+    compressor_attack_ms: 25.0,
+    compressor_release_ms: 280.0,
     science_note:
-        "Low-mid cleanup, assertive density, and presence support distorted \
-         guitars without burying drums.",
-    baseline_gain_push_db: 2.0,
+        "Strong sub lift with deep low-mid scoop; medium-rate compressor \
+         keeps the weight controlled rather than muddy.",
+    baseline_gain_push_db: 1.8,
 };
 
 const PRESET_WARMTH: PresetCalibration = PresetCalibration {
-    // Codex `dark-smooth`. Rounded presence, softer top, less fatiguing.
+    // Conservative target line 257. Fuller body, softer top, soft glue.
     low_shelf_db: 0.8,
-    low_mid_db: 0.1,
-    presence_db: -1.2,
-    air_db: -0.9,
-    warmth: 0.075,
-    stereo_width: 0.97,
+    low_mid_db: 0.7,
+    presence_db: -1.8,
+    air_db: -0.8,
+    warmth: 0.08,
+    stereo_width: 0.98,
     transient_punch: -0.05,
     target_lufs: -14.7,
     ceiling_dbfs: -1.2,
-    compressor_threshold_dbfs: -20.0,
-    compressor_ratio: 1.9,
+    compressor_threshold_dbfs: -19.0,
+    compressor_ratio: 2.0,
+    compressor_attack_ms: 20.0,
+    compressor_release_ms: 280.0,
     science_note:
-        "Reduced presence and air tame edge while light saturation keeps the \
-         master from feeling dull.",
+        "Softened presence/air with gentle saturation and soft glue \
+         compression — smooth body, no edge.",
     baseline_gain_push_db: 1.0,
 };
 
 const PRESET_PUNCH: PresetCalibration = PresetCalibration {
-    // Codex `djent-modern-metal`. Tight low end, sharp pick definition.
-    // NOTE: low_mid_db = -1.9 — deepest of the heavy-preset mud-zone cuts.
-    low_shelf_db: 1.0,
-    low_mid_db: -1.9,
-    presence_db: 1.8,
-    air_db: 1.2,
+    // Conservative target line 258. Faster attack/release, transient-forward.
+    // Higher threshold + faster release = preserves more crest than Loud.
+    low_shelf_db: 0.8,
+    low_mid_db: -1.8,
+    presence_db: 1.6,
+    air_db: 0.8,
     warmth: 0.035,
-    stereo_width: 1.08,
+    stereo_width: 1.04,
     transient_punch: 0.14,
     target_lufs: -10.9,
     ceiling_dbfs: -0.8,
-    compressor_threshold_dbfs: -22.5,
-    compressor_ratio: 3.35,
+    compressor_threshold_dbfs: -20.0,
+    compressor_ratio: 2.8,
+    compressor_attack_ms: 10.0,
+    compressor_release_ms: 100.0,
     science_note:
-        "Aggressive low-mid discipline and transient emphasis keep palm-muted \
-         riffs clear and compact.",
-    baseline_gain_push_db: 2.0,
+        "Tight lows, presence bite, fast attack/release keep impact and \
+         forwardness without dragging into Loud territory.",
+    baseline_gain_push_db: 1.6,
 };
 
 const PRESET_LOUD: PresetCalibration = PresetCalibration {
-    // Codex `loud-aggressive`. Dense, forward, intentionally assertive.
-    // NOTE: low_mid_db = -1.5 — third of the heavy-preset mud-zone cuts.
+    // Conservative target line 259. Strongest density/limiting.
+    // Lowest threshold, highest ratio, controlled time constants for density.
     low_shelf_db: 0.4,
-    low_mid_db: -1.5,
-    presence_db: 1.7,
-    air_db: 1.35,
+    low_mid_db: -1.6,
+    presence_db: 1.8,
+    air_db: 1.2,
     warmth: 0.055,
-    stereo_width: 1.08,
+    stereo_width: 1.03,
     transient_punch: 0.12,
     target_lufs: -10.4,
     ceiling_dbfs: -0.8,
     compressor_threshold_dbfs: -23.0,
-    compressor_ratio: 3.8,
+    compressor_ratio: 3.5,
+    compressor_attack_ms: 15.0,
+    compressor_release_ms: 180.0,
     science_note:
-        "Stronger compression and transient shaping increase urgency while \
-         limiter headroom remains explicit.",
-    baseline_gain_push_db: 3.5,
+        "Strongest density and limiting; assertive but not smashed — \
+         enough movement remains to read as a master, not a preview.",
+    baseline_gain_push_db: 2.5,
 };
 
 const PRESET_CUSTOM_NEUTRAL: PresetCalibration = PresetCalibration {
-    // No Codex source. Neutral baseline — user drives everything.
+    // No source. Neutral starting slate — user drives every parameter.
+    // Compressor mirrors Universal's identity so the macro still does
+    // something useful when the user dials it up, but default density
+    // for Custom is 0 (see `from_settings`) so a fresh-Custom session
+    // is an identity chain.
     low_shelf_db: 0.0,
     low_mid_db: 0.0,
     presence_db: 0.0,
@@ -482,9 +521,11 @@ const PRESET_CUSTOM_NEUTRAL: PresetCalibration = PresetCalibration {
     transient_punch: 0.0,
     target_lufs: -14.0,
     ceiling_dbfs: -1.0,
-    compressor_threshold_dbfs: -18.0,
-    compressor_ratio: 2.0,
-    science_note: "Neutral baseline — user drives the chain.",
+    compressor_threshold_dbfs: -16.0,
+    compressor_ratio: 1.8,
+    compressor_attack_ms: 15.0,
+    compressor_release_ms: 200.0,
+    science_note: "Neutral starting slate — user drives the chain.",
     baseline_gain_push_db: 1.5,
 };
 
@@ -715,86 +756,107 @@ impl ChainCoeffs {
             .unwrap_or(preset_width)
             .clamp(0.0, 2.0);
 
-        // ----- Phase 12.2: multiband compressor coefficients -----
-        // Macro: density 0..1 → uniform threshold 0 dBFS (off) to -24 dBFS
-        // (heavy). Below 1e-4 the macro is "off"; per-band overrides may
-        // still pull bands into reduction independently.
+        // ----- Phase A4: preset-driven multiband compressor -----
+        //
+        // The user's `compression_density` macro is preset-relative:
+        //
+        //   density 0.0  → bypass (effective threshold = 0 dBFS, ratio = 1)
+        //   density 0.5  → preset baseline at full character (the default
+        //                   for non-Custom presets when the user hasn't
+        //                   touched the macro)
+        //   density 1.0  → preset baseline pushed an extra ~3 dB harder
+        //                   and +0.5 ratio (still bounded by the preset's
+        //                   intent — not a slam-everything mode)
+        //
+        // Custom defaults to density 0.0 so a fresh Custom session is an
+        // identity chain. All other presets default to density 0.5 so
+        // their compressor identity audibly engages without any user
+        // fiddling — that's the whole point of P1.
+        //
+        // Per-band overrides on `MasteringSettings.advanced.compression_*`
+        // still take precedence and replace the per-preset value for that
+        // band/parameter. The macro engagement only governs the FALLBACK
+        // value used when an override is unset.
+        let default_density_for_preset = if matches!(settings.preset, Preset::Custom { .. }) {
+            0.0
+        } else {
+            0.5
+        };
         let density = settings
             .advanced
             .compression_density
-            .unwrap_or(0.0)
+            .unwrap_or(default_density_for_preset)
             .clamp(0.0, 1.0);
-        let macro_threshold_db = -24.0 * density;
 
-        // Per-band fixed musical defaults (see brainstorm "Macro mapping").
-        const LOW_RATIO_DEFAULT: f32 = 2.5;
-        const MID_RATIO_DEFAULT: f32 = 2.0;
-        const HIGH_RATIO_DEFAULT: f32 = 1.8;
-        const LOW_ATTACK_MS_DEFAULT: f32 = 30.0;
-        const LOW_RELEASE_MS_DEFAULT: f32 = 300.0;
-        const MID_ATTACK_MS_DEFAULT: f32 = 15.0;
-        const MID_RELEASE_MS_DEFAULT: f32 = 150.0;
-        const HIGH_ATTACK_MS_DEFAULT: f32 = 5.0;
-        const HIGH_RELEASE_MS_DEFAULT: f32 = 80.0;
+        let preset_engagement = (density * 2.0).min(1.0); // 0..1, full at density >= 0.5
+        let overdrive = (density * 2.0 - 1.0).max(0.0);   // 0 below 0.5, up to 1.0 at density=1
+        const OVERDRIVE_THRESHOLD_DB: f32 = -3.0;
+        const OVERDRIVE_RATIO: f32 = 0.5;
+
+        let preset_threshold_db = preset.compressor_threshold_dbfs * preset_engagement
+            + OVERDRIVE_THRESHOLD_DB * overdrive;
+        let preset_ratio = (1.0 + (preset.compressor_ratio - 1.0) * preset_engagement
+            + OVERDRIVE_RATIO * overdrive)
+            .max(1.0);
 
         let comp_low_threshold_db = settings
             .advanced
             .compression_low_threshold_db
-            .unwrap_or(macro_threshold_db);
+            .unwrap_or(preset_threshold_db);
         let comp_mid_threshold_db = settings
             .advanced
             .compression_mid_threshold_db
-            .unwrap_or(macro_threshold_db);
+            .unwrap_or(preset_threshold_db);
         let comp_high_threshold_db = settings
             .advanced
             .compression_high_threshold_db
-            .unwrap_or(macro_threshold_db);
+            .unwrap_or(preset_threshold_db);
 
         let comp_low_ratio = settings
             .advanced
             .compression_low_ratio
-            .unwrap_or(LOW_RATIO_DEFAULT)
+            .unwrap_or(preset_ratio)
             .max(1.0);
         let comp_mid_ratio = settings
             .advanced
             .compression_mid_ratio
-            .unwrap_or(MID_RATIO_DEFAULT)
+            .unwrap_or(preset_ratio)
             .max(1.0);
         let comp_high_ratio = settings
             .advanced
             .compression_high_ratio
-            .unwrap_or(HIGH_RATIO_DEFAULT)
+            .unwrap_or(preset_ratio)
             .max(1.0);
 
         let low_attack_ms = settings
             .advanced
             .compression_low_attack_ms
-            .unwrap_or(LOW_ATTACK_MS_DEFAULT)
+            .unwrap_or(preset.compressor_attack_ms)
             .max(0.1);
         let low_release_ms = settings
             .advanced
             .compression_low_release_ms
-            .unwrap_or(LOW_RELEASE_MS_DEFAULT)
+            .unwrap_or(preset.compressor_release_ms)
             .max(0.1);
         let mid_attack_ms = settings
             .advanced
             .compression_mid_attack_ms
-            .unwrap_or(MID_ATTACK_MS_DEFAULT)
+            .unwrap_or(preset.compressor_attack_ms)
             .max(0.1);
         let mid_release_ms = settings
             .advanced
             .compression_mid_release_ms
-            .unwrap_or(MID_RELEASE_MS_DEFAULT)
+            .unwrap_or(preset.compressor_release_ms)
             .max(0.1);
         let high_attack_ms = settings
             .advanced
             .compression_high_attack_ms
-            .unwrap_or(HIGH_ATTACK_MS_DEFAULT)
+            .unwrap_or(preset.compressor_attack_ms)
             .max(0.1);
         let high_release_ms = settings
             .advanced
             .compression_high_release_ms
-            .unwrap_or(HIGH_RELEASE_MS_DEFAULT)
+            .unwrap_or(preset.compressor_release_ms)
             .max(0.1);
 
         let comp_low_attack_alpha = alpha_from_time_ms(sr, low_attack_ms);
@@ -829,7 +891,13 @@ impl ChainCoeffs {
             .compression_link_stereo
             .unwrap_or(true);
 
-        let comp_macro_off = density < 1.0e-4;
+        // The chain skips the compressor stage entirely when no band is
+        // doing anything: effective preset threshold is at the ceiling
+        // (≈ 0 dBFS, i.e. density was scaled to bypass), no per-band
+        // override is set, and link_stereo is at its default. This keeps
+        // the "fresh Custom" identity property and the parity tests that
+        // rely on it.
+        let preset_compressor_inactive = preset_threshold_db > -1.0e-3;
         let comp_no_overrides = settings.advanced.compression_low_threshold_db.is_none()
             && settings.advanced.compression_low_ratio.is_none()
             && settings.advanced.compression_low_attack_ms.is_none()
@@ -846,7 +914,7 @@ impl ChainCoeffs {
             settings.advanced.compression_link_stereo,
             Some(false)
         );
-        let compression_active = !(comp_macro_off && comp_no_overrides && comp_link_unset);
+        let compression_active = !(preset_compressor_inactive && comp_no_overrides && comp_link_unset);
 
         let comp_knee_db = 6.0_f32;
 
@@ -2546,12 +2614,17 @@ mod tests {
 
     #[test]
     fn compression_makeup_gain_compensates_threshold_drop() {
+        // Phase A4: at density=0.5 the preset_engagement is 1.0, so the
+        // compressor lands on the preset's threshold/ratio identity. Custom
+        // mirrors Universal: threshold = -16 dBFS, ratio = 1.8.
+        // makeup = (-(-16)) * (1 - 1/1.8) / 2 = 16 * 0.4444 / 2 = 3.555 dB.
         let mut s = default_master_settings();
         s.advanced.compression_density = Some(0.5);
         let c = ChainCoeffs::from_settings(44_100, &s);
+        let expected_makeup = 16.0 * (1.0 - 1.0 / 1.8) / 2.0;
         assert!(
-            (c.comp_mid_makeup_db - 3.0).abs() < 0.1,
-            "mid makeup_db at density=0.5, ratio=2.0 should be 3.0 dB, got {}",
+            (c.comp_mid_makeup_db - expected_makeup).abs() < 0.1,
+            "mid makeup_db at density=0.5 with Custom (-16/1.8) should be {expected_makeup:.3} dB, got {}",
             c.comp_mid_makeup_db
         );
         let sr = 44_100;
@@ -2575,22 +2648,28 @@ mod tests {
         let out_db = 10.0 * (sum_out / measure as f64).log10();
         let delta_db = (out_db - in_db) as f32;
         assert!(
-            (delta_db - 3.0).abs() < 1.5,
-            "sub-threshold sine should see ~+3 dB makeup at density=0.5; got delta = {:.2} dB",
+            (delta_db - expected_makeup).abs() < 1.5,
+            "sub-threshold sine should see ~+{expected_makeup:.2} dB makeup at density=0.5; got delta = {:.2} dB",
             delta_db
         );
     }
 
     #[test]
     fn compression_clamps_density_into_range() {
+        // Phase A4: density clamps to [0,1]. With Custom mirror of
+        // Universal (threshold=-16 dBFS), density=5.0 → clamped to 1.0 →
+        // preset_engagement=1, overdrive=1 → effective threshold =
+        // -16 + (-3) = -19 dBFS.
         let mut s_high = default_master_settings();
         s_high.advanced.compression_density = Some(5.0);
         let c_high = ChainCoeffs::from_settings(44_100, &s_high);
         assert!(
-            (c_high.comp_mid_threshold_db - (-24.0)).abs() < 1e-3,
-            "density=5.0 should clamp to 1.0 (threshold = -24 dBFS); got {}",
+            (c_high.comp_mid_threshold_db - (-19.0)).abs() < 1e-3,
+            "density=5.0 should clamp to 1.0 (Custom threshold = -16 dBFS + overdrive -3 = -19 dBFS); got {}",
             c_high.comp_mid_threshold_db
         );
+        // density=-1.0 → clamped to 0 → preset_engagement=0 → effective
+        // threshold = 0 dBFS regardless of preset.
         let mut s_neg = default_master_settings();
         s_neg.advanced.compression_density = Some(-1.0);
         let c_neg = ChainCoeffs::from_settings(44_100, &s_neg);
@@ -3262,9 +3341,14 @@ mod tests {
             "Loud should cut low-mid; got {}",
             PRESET_LOUD.low_mid_db
         );
+        // Phase A4 conservative-target retune deepened Oomph's mud-zone
+        // scoop from -1.25 to -3.0 dB (analysis doc line 256). The bound
+        // moved with it; if a future tune softens this past -2.5 the
+        // preset stops cleaning up bass-forward material and the
+        // distinctness contract test will fail anyway.
         assert!(
-            PRESET_OOMPH.low_mid_db <= -1.0 && PRESET_OOMPH.low_mid_db >= -2.0,
-            "Oomph should cut low-mid; got {}",
+            PRESET_OOMPH.low_mid_db <= -2.5 && PRESET_OOMPH.low_mid_db >= -3.5,
+            "Oomph should cut low-mid hard (target -3.0 dB); got {}",
             PRESET_OOMPH.low_mid_db
         );
     }

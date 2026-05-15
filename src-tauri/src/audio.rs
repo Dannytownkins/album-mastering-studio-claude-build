@@ -1606,6 +1606,14 @@ mod tests {
     use crate::dsp::{ChainCoeffs, MasteringChain};
 
     fn settings_with_intensity(intensity: f32) -> MasteringSettings {
+        // Phase A4: with the preset compressor wired in (engaged by
+        // default at density 0.5), the live-coeff RMS jump test would
+        // see the compressor eat part of the input-gain delta when
+        // intensity climbs. The test is grading the live-coeff plumbing,
+        // not the compressor, so we explicitly bypass compression here
+        // (density 0) to keep the RMS comparison clean.
+        let mut advanced = AdvancedSettings::default();
+        advanced.compression_density = Some(0.0);
         MasteringSettings {
             preset: Preset::Universal,
             intensity,
@@ -1619,7 +1627,7 @@ mod tests {
             output_gain_db: 0.0,
             delivery_profile: DeliveryProfile::Custom,
             album: None,
-            advanced: AdvancedSettings::default(),
+            advanced,
         }
     }
 

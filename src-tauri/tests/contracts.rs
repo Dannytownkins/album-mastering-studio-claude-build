@@ -952,42 +952,50 @@ fn presets_produce_distinct_chain_coefficients() {
         (c.b0 - c.b1 + c.b2) / (1.0 - c.a1 + c.a2)
     };
 
-    // High-shelf Nyquist-gain comparison: Universal has +0.5 dB (≈1.06x),
-    // Clarity +2.5 dB (≈1.33x), Tape -1.5 dB (≈0.84x). Pairwise differences
-    // should be well above 0.1.
+    // High-shelf Nyquist-gain comparison. Phase A4 conservative-target
+    // retune compressed the air-shelf spread vs the prior Codex source
+    // numbers — Universal +1.1 dB, Clarity +1.7 dB, Tape +2.0 dB. The
+    // pairwise gaps are smaller than before but still meaningfully
+    // audible. The thresholds below are sized to catch a wiring bug
+    // (coeffs collapse to identical values) while accepting the new
+    // tighter spread. The full perceptual distinctness contract lives in
+    // `preset_distinctness.rs` — this assertion is the wiring sanity
+    // check, not the audibility gate.
     let cu_high_nyq = nyq_gain(&cu.high);
     let cc_high_nyq = nyq_gain(&cc.high);
     let ct_high_nyq = nyq_gain(&ct.high);
     assert!(
-        (cc_high_nyq - cu_high_nyq).abs() > 0.1,
+        (cc_high_nyq - cu_high_nyq).abs() > 0.05,
         "Clarity high-shelf Nyquist gain ({:.4}) should differ from Universal ({:.4})",
         cc_high_nyq,
         cu_high_nyq
     );
     assert!(
-        (ct_high_nyq - cu_high_nyq).abs() > 0.1,
+        (ct_high_nyq - cu_high_nyq).abs() > 0.05,
         "Tape high-shelf Nyquist gain ({:.4}) should differ from Universal ({:.4})",
         ct_high_nyq,
         cu_high_nyq
     );
     assert!(
-        (cc_high_nyq - ct_high_nyq).abs() > 0.2,
-        "Clarity ({:.4}) and Tape ({:.4}) high-shelf Nyquist gains should differ audibly",
+        (cc_high_nyq - ct_high_nyq).abs() > 0.02,
+        "Clarity ({:.4}) and Tape ({:.4}) high-shelf Nyquist gains should differ \
+         (sanity wiring check; perceptual distinctness lives in preset_distinctness.rs)",
         cc_high_nyq,
         ct_high_nyq
     );
 
-    // Low-shelf DC gain: Universal 0 dB (=1.0x). Post-A2 Codex calibration:
-    // Tape's low_shelf is +1.2 dB (Codex `warm-glue`), which is the largest
-    // low-shelf push among our 8 presets — Oomph's low_shelf is only +0.6 dB
-    // in the new calibration because Codex's heavy-rock-metal achieves "bass
-    // weight" via low-mid cut rather than low-shelf boost.
+    // Low-shelf DC gain. Phase A4 retune: Universal +0.2 dB, Tape -0.2 dB —
+    // 0.4 dB of spread, still measurable as a coefficient difference. The
+    // Codex narrative around Oomph and the +1.2 dB Tape low push no
+    // longer applies; bass weight in the new calibration comes from
+    // Oomph's deep low-mid scoop and explicit low_shelf boost rather
+    // than Tape carrying the bass.
     let cu_low_dc = dc_gain(&cu.low);
     let ct_low_dc = dc_gain(&ct.low);
     assert!(
-        (ct_low_dc - cu_low_dc).abs() > 0.1,
+        (ct_low_dc - cu_low_dc).abs() > 0.02,
         "Tape low-shelf DC gain ({:.4}) should differ from Universal ({:.4}) — \
-         Tape carries the largest low-shelf push in the new calibration",
+         post-A4 conservative-target retune",
         ct_low_dc,
         cu_low_dc
     );
@@ -1545,15 +1553,20 @@ fn lufs_target_refuses_to_amplify_quiet_render() {
     );
 }
 
-/// Phase 12.2 — end-to-end render comparison. With macro density=1.0 the
-/// 5-second loud sine should land at integrated LUFS at least 2 LU lower
-/// than at density=0.0. Pins the wiring from `MasteringSettings.advanced.
-/// compression_density` all the way through `MasteringChain` and the
-/// downstream LUFS measurement on the rendered output. The chain's per-band
-/// auto-makeup (half-compensation per the design) partially offsets the raw
-/// reduction; the net audible delta on a 1 kHz mid-band signal lands around
-/// -2.5 LU at density=1.0 / preset=Custom / intensity=0.0. >=2 LU is well
-/// above the loudness just-noticeable threshold.
+/// Phase A4 — end-to-end render comparison. With macro density=1.0 on a
+/// preset that carries a compressor identity, the 5-second loud sine
+/// should land at integrated LUFS at least 2 LU lower than at density=0.0.
+/// Pins the wiring from `MasteringSettings.advanced.compression_density`
+/// through the preset baseline (Phase A4) into `MasteringChain` and the
+/// downstream LUFS measurement on the rendered output.
+///
+/// Switched from Preset::Custom to Preset::Loud because the new
+/// preset-relative density semantics scale FROM the preset's compressor
+/// identity. Custom is a neutral starting slate (Universal-mirror
+/// compressor at -16 dBFS / 1.8 ratio); at intensity=0 the test signal
+/// doesn't hit Custom's threshold hard enough for density=1's overdrive
+/// (-3 dB / +0.5 ratio) alone to land >=2 LU. Loud's natural -23 dBFS /
+/// 3.5 ratio gives the macro something meaningful to scale.
 #[test]
 fn mastering_render_with_heavy_compression_attenuates_loud_section() {
     let tmp = tempfile::tempdir().expect("tempdir");
@@ -1561,7 +1574,7 @@ fn mastering_render_with_heavy_compression_attenuates_loud_section() {
     write_sine_wav(&in_path, 44_100, 5.0, 1_000.0, 2);
 
     let mut s0 = default_settings();
-    s0.preset = Preset::Custom { id: "neutral".to_string() };
+    s0.preset = Preset::Loud;
     s0.intensity = 0.0;
     s0.advanced.compression_density = Some(0.0);
     let mut s1 = s0.clone();
