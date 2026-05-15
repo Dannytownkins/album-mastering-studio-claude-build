@@ -735,10 +735,24 @@ impl ChainCoeffs {
         // source from the actual deterministic gain stages — input gain,
         // average compressor makeup, a small saturation correction, and
         // the user's output trim — and attenuates by that estimate.
-        // Source LUFS isn't needed: if estimated_push ≈ actual push,
-        // (mastered − estimated_push) ≈ source regardless of source level.
-        // Empirically lands within ~1 dB of true source loudness across
-        // all eight presets (vs the old approach's 0.5–4.3 dB error).
+        // For normal settings the estimate is independent of source LUFS:
+        // if estimated_push ≈ actual push, (mastered − estimated_push) ≈
+        // source regardless of source level. Empirically lands within
+        // ~1 dB of true source loudness across all eight presets (vs the
+        // old `source_lufs - target_lufs` approach's 0.5–4.3 dB error).
+        //
+        // A LATER REFINEMENT (the VM cap) DOES consult
+        // source_lufs_integrated — see the comment block immediately
+        // before the volume_match_gain_lin computation below. The cap
+        // bounds the estimate by what the limiter could plausibly let
+        // through, which requires knowing the source LUFS. Without
+        // source_lufs_integrated the cap can't fire and the raw
+        // estimate is used unbounded. Dan reported the un-capped
+        // estimate over-attenuating by 11 dB on aggressive settings
+        // (Tape Intensity 100% + +13 dB input gain); the cap fixes
+        // that. Most everyday settings stay below the cap threshold
+        // and behave identically to the source-LUFS-independent
+        // formulation.
 
         // Width: None means "neutral" (1.0 = leave the stereo image alone).
         // Clamp to [0, 2] so a stray slider value can't invert phase or push
@@ -3160,11 +3174,24 @@ mod tests {
         );
     }
 
-    /// VM attenuation no longer depends on `source_lufs_integrated` at
-    /// all — the new estimate is a property of the chain's own gain
-    /// stages. Same chain settings, different source LUFS, same VM gain.
+    /// VM attenuation is independent of `source_lufs_integrated`
+    /// WHEN THE CAP DOESN'T FIRE. The raw chain-push estimate is
+    /// purely a function of the chain's own gain stages (input gain,
+    /// makeup, saturation, output trim). For the test's specific
+    /// scenario — default_master_settings + intensity 0 — raw_push
+    /// is small (~0.6 dB) and stays well below the limiter-bounded
+    /// cap, so the cap doesn't kick in and source_lufs doesn't
+    /// influence the result.
+    ///
+    /// **Do NOT use this test as evidence that VM is globally
+    /// source-LUFS-independent.** It isn't. The cap (added after
+    /// Dan's "VM lands 11 dB below source on aggressive settings"
+    /// repro) DOES consult source_lufs_integrated; see the
+    /// `volume_match_caps_attenuation_at_limiter_bound` test for
+    /// the dependent case. This test gates the un-capped path
+    /// specifically.
     #[test]
-    fn volume_match_independent_of_source_lufs() {
+    fn volume_match_uncapped_estimate_independent_of_source_lufs() {
         let mut a = default_master_settings();
         a.volume_match = true;
         a.source_lufs_integrated = Some(-10.0);
@@ -3174,8 +3201,9 @@ mod tests {
         let cb = ChainCoeffs::from_settings(48_000, &b);
         assert!(
             (ca.volume_match_gain_lin - cb.volume_match_gain_lin).abs() < 1e-6,
-            "VM gain should be independent of source LUFS in the estimation \
-             approach; got a={}, b={}",
+            "uncapped VM estimate must be source-LUFS-independent on \
+             default_master_settings + intensity 0 (raw_push small \
+             enough that the cap never fires); got a={}, b={}",
             ca.volume_match_gain_lin,
             cb.volume_match_gain_lin
         );

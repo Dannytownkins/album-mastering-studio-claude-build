@@ -30,7 +30,10 @@ import {
   DELIVERY_PROFILE_TARGET_LUFS,
 } from "./bindings";
 import type { ExportReceipt, PlaybackKindUI } from "./hooks/useTrackMaster";
-import { effectiveLoudnessTarget } from "./lib/effective-settings";
+import {
+  LOUDNESS_PROFILES,
+  loudnessTargetDisplay,
+} from "./lib/effective-settings";
 import { shouldFlipToCustomOnLoudnessPick } from "./lib/settings-transitions";
 import "./App.css";
 
@@ -1581,24 +1584,10 @@ function Macros({
   );
 }
 
-// Delivery profiles — short names + their canonical LUFS targets. Matched on
-// the current EFFECTIVE LUFS target so the dropdown reflects what the chain
-// is actually doing, even when the DeliveryProfile is shadowing
-// advanced.lufs_offset_db. Anything outside the known set reads as "Custom".
-const LOUDNESS_PROFILES: { id: string; label: string; lufs: number | null }[] = [
-  { id: "streaming", label: "Streaming (-14)", lufs: -14 },
-  { id: "loud-streaming", label: "Loud streaming (-11)", lufs: -11 },
-  { id: "cd-master", label: "CD master (-9)", lufs: -9 },
-  { id: "off", label: "Off / Natural", lufs: null },
-];
-
-function profileIdFor(lufs: number | null): string {
-  if (lufs === null) return "off";
-  for (const p of LOUDNESS_PROFILES) {
-    if (p.lufs !== null && Math.abs(p.lufs - lufs) < 1e-3) return p.id;
-  }
-  return "custom";
-}
+// LOUDNESS_PROFILES + the effective-target / profileId / displayText
+// computation are sourced from src/lib/effective-settings (Vitest-tested
+// pure helpers). Single source of truth for both the rendered dropdown
+// options AND the readout the LoudnessTarget block shows.
 
 function LoudnessTarget({
   settings,
@@ -1609,12 +1598,10 @@ function LoudnessTarget({
   onAdvanced: (adv: MasteringSettings["advanced"]) => void;
   onDeliveryProfile: (profile: MasteringSettings["delivery_profile"]) => void;
 }) {
-  // Display + dropdown selection track the EFFECTIVE target so the UI
-  // never lies about what the chain is targeting. When a non-Custom
-  // DeliveryProfile is active, the profile's target wins regardless of
-  // any leftover advanced.lufs_offset_db value.
-  const current = effectiveLoudnessTarget(settings);
-  const profileId = profileIdFor(current);
+  // Display state from the Vitest-tested pure helper — single
+  // source of truth for the readout's effective target, dropdown
+  // selected value, and formatted display string.
+  const { profileId, displayText } = loudnessTargetDisplay(settings);
 
   const handleProfileChange = (id: string) => {
     const profile = LOUDNESS_PROFILES.find((p) => p.id === id);
@@ -1630,15 +1617,11 @@ function LoudnessTarget({
     onAdvanced({ ...settings.advanced, lufs_offset_db: profile.lufs });
   };
 
-  const display = current !== null && current !== undefined
-    ? `${current.toFixed(1)}`
-    : "—";
-
   return (
     <div className="loudness-target-block">
       <span className="section-label">LOUDNESS TARGET</span>
       <div className="loudness-readout">
-        <span className="loudness-number">{display}</span>
+        <span className="loudness-number">{displayText}</span>
         <span className="loudness-unit">LUFS</span>
       </div>
       <select
@@ -1650,7 +1633,7 @@ function LoudnessTarget({
           <option key={p.id} value={p.id}>{p.label}</option>
         ))}
         {profileId === "custom" && (
-          <option value="custom">Custom ({display} LUFS)</option>
+          <option value="custom">Custom ({displayText} LUFS)</option>
         )}
       </select>
     </div>

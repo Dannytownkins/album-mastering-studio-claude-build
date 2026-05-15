@@ -289,6 +289,13 @@ export function useTrackMaster() {
         if (restoredTracks.length > 0) {
           setTracks(restoredTracks);
           setSelectedTrackId(restoredTracks[0].id);
+          // Prewarm the auto-selected track's decode cache so the
+          // user clicking Mastered immediately after a session
+          // restore doesn't pay the 1-2 s cold-decode freeze.
+          // Fire-and-forget; the cold path still works if it fails.
+          api.prewarmDecode(restoredTracks[0].path).catch(() => {
+            /* opportunistic; cold decode path still works */
+          });
         }
         if (session.track_settings) setSettingsMap(session.track_settings);
         if (session.mode) setMode(session.mode);
@@ -614,6 +621,12 @@ export function useTrackMaster() {
 
         if (selectedTrackId === null) {
           setSelectedTrackId(imported[0].id);
+          // Prewarm the newly auto-selected import. Same rationale
+          // as selectTrack: the user is likely to click Mastered
+          // shortly after import. Fire-and-forget.
+          api.prewarmDecode(imported[0].path).catch(() => {
+            /* opportunistic; cold decode path still works */
+          });
         }
 
         setIsAnalyzing(true);
@@ -1480,6 +1493,12 @@ export function useTrackMaster() {
       setOverrideAlbum(new Set(state.track_override_album ?? []));
       if (state.tracks && state.tracks.length > 0) {
         setSelectedTrackId(state.tracks[0].id);
+        // Prewarm the auto-selected track from the opened project
+        // so first-Mastered-click is snappy. Same opportunistic
+        // pattern as session restore + import auto-select.
+        api.prewarmDecode(state.tracks[0].path).catch(() => {
+          /* opportunistic; cold decode path still works */
+        });
       } else {
         setSelectedTrackId(null);
       }

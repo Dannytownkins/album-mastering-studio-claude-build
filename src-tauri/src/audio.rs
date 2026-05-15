@@ -324,6 +324,13 @@ pub async fn prewarm_decode(
         .ok()
         .and_then(|m| m.modified().ok());
 
+    // Declare this canonical path as the currently-requested prewarm
+    // target. After the decode below finishes, the same call will
+    // check the target still matches before writing — so a slow
+    // prewarm that resolves AFTER a newer selection silently drops
+    // its result instead of evicting the newer cache entry.
+    player.set_prewarm_target(canonical.clone());
+
     // Idempotency guard: if the prewarm cache already holds this
     // entry, skip the decode entirely. The frontend can safely call
     // prewarm_decode on every track-select without thrashing.
@@ -346,6 +353,17 @@ pub async fn prewarm_decode(
         return Err(CommandError::Decode(format!(
             "no samples decoded from {track_path}"
         )));
+    }
+
+    // Stale-prewarm guard: if a newer selection set a different
+    // target while this decode was running, drop the result rather
+    // than evict the newer cache entry. The race that motivates
+    // this: user selects A (slow), 200 ms later selects B (fast);
+    // B's prewarm finishes and writes B; A's prewarm finishes and
+    // would overwrite B with A. Without the guard, the user clicks
+    // Mastered on B and pays a cold decode again.
+    if !player.prewarm_target_matches(&canonical) {
+        return Ok(());
     }
 
     player.set_prewarm_cache(DecodedCacheEntry {
@@ -729,12 +747,21 @@ pub struct AudioPlayer {
     /// reads are paired with writes (cache miss → decode → write), so
     /// the lock contention is negligible.
     prewarm_cache: SharedDecodedCache,
+    /// Most-recently-requested prewarm target (canonical path).
+    /// Every `prewarm_decode` call sets this at the start; after its
+    /// decode finishes, the same call checks the target still matches
+    /// before writing to `prewarm_cache`. Without this guard, a SLOW
+    /// prewarm could finish AFTER a NEWER selection's prewarm and
+    /// evict the newer entry from the single-slot cache (Codex review).
+    /// Stale prewarms drop their result silently.
+    prewarm_target: Arc<Mutex<Option<PathBuf>>>,
 }
 
 impl AudioPlayer {
     pub fn new() -> Self {
         let snapshot = Arc::new(RwLock::new(PlaybackSnapshot::default()));
         let prewarm_cache: SharedDecodedCache = Arc::new(Mutex::new(None));
+        let prewarm_target: Arc<Mutex<Option<PathBuf>>> = Arc::new(Mutex::new(None));
         let (tx, rx) = mpsc::channel::<AudioCommand>();
         let snap_for_thread = snapshot.clone();
         let prewarm_for_thread = prewarm_cache.clone();
@@ -746,6 +773,36 @@ impl AudioPlayer {
             tx: Mutex::new(Some(tx)),
             snapshot,
             prewarm_cache,
+            prewarm_target,
+        }
+    }
+
+    /// Declare the canonical path this player should consider the
+    /// "currently-requested" prewarm target. Called at the start of
+    /// `prewarm_decode` so a slow decode can check whether its target
+    /// has been superseded before it commits a stale entry to the
+    /// shared cache.
+    pub(crate) fn set_prewarm_target(&self, canonical: PathBuf) {
+        let mut guard = self
+            .prewarm_target
+            .lock()
+            .expect("prewarm target mutex poisoned");
+        *guard = Some(canonical);
+    }
+
+    /// Returns true when `canonical` matches the most-recently-set
+    /// prewarm target. False when no target has been set or the
+    /// target has moved on to a different path. Called by
+    /// `prewarm_decode` after its decode finishes to decide whether
+    /// to write to the cache or drop the stale result.
+    pub(crate) fn prewarm_target_matches(&self, canonical: &Path) -> bool {
+        let guard = self
+            .prewarm_target
+            .lock()
+            .expect("prewarm target mutex poisoned");
+        match guard.as_ref() {
+            Some(target) => target == canonical,
+            None => false,
         }
     }
 
@@ -2416,6 +2473,66 @@ mod tests {
         });
         assert!(!player.prewarm_cache_hit(&path_a, mtime));
         assert!(player.prewarm_cache_hit(&path_b, mtime));
+    }
+
+    // ----- Prewarm target guard (stale-prewarm-evicts-newer fix) ----
+
+    /// Fresh AudioPlayer reports no target match (target is None).
+    /// Future-Claude pitfall: don't change this to "matches whatever
+    /// you ask" — the prewarm command relies on the None case
+    /// returning false so the very first prewarm always has to
+    /// declare its target via set_prewarm_target first.
+    #[test]
+    fn prewarm_target_unset_matches_nothing() {
+        let player = AudioPlayer::new();
+        let path = std::path::PathBuf::from("/tmp/a.wav");
+        assert!(!player.prewarm_target_matches(&path));
+    }
+
+    /// set + check on the same path → match. Trivial pass-through
+    /// but gates the basic happy path: a single prewarm declares
+    /// its target and recognizes its own result.
+    #[test]
+    fn prewarm_target_matches_after_set_with_same_path() {
+        let player = AudioPlayer::new();
+        let path = std::path::PathBuf::from("/tmp/a.wav");
+        player.set_prewarm_target(path.clone());
+        assert!(player.prewarm_target_matches(&path));
+    }
+
+    /// set A → check B reports false. The discriminator: a slow
+    /// prewarm of A that wakes up after B was selected sees its
+    /// target is no longer A and should drop its result.
+    #[test]
+    fn prewarm_target_mismatch_on_different_path() {
+        let player = AudioPlayer::new();
+        let path_a = std::path::PathBuf::from("/tmp/a.wav");
+        let path_b = std::path::PathBuf::from("/tmp/b.wav");
+        player.set_prewarm_target(path_a);
+        assert!(!player.prewarm_target_matches(&path_b));
+    }
+
+    /// set A → set B → check A reports false (LIFO replacement).
+    /// This is the actual race that the guard fixes: user selects
+    /// A, then B; A's slow decode finishes; A's check against the
+    /// now-current target (B) returns false; A's result is dropped
+    /// so B's cache entry stays.
+    #[test]
+    fn prewarm_target_set_replaces_prior_target() {
+        let player = AudioPlayer::new();
+        let path_a = std::path::PathBuf::from("/tmp/a.wav");
+        let path_b = std::path::PathBuf::from("/tmp/b.wav");
+        player.set_prewarm_target(path_a.clone());
+        player.set_prewarm_target(path_b.clone());
+        assert!(
+            !player.prewarm_target_matches(&path_a),
+            "slow prewarm A must NOT match after newer set B — \
+             this is the stale-prewarm-evicts-newer guard"
+        );
+        assert!(
+            player.prewarm_target_matches(&path_b),
+            "current target B should still match itself"
+        );
     }
 
     /// resolve_pcm_with_caches: tier-2 hit returns the prewarmed PCM

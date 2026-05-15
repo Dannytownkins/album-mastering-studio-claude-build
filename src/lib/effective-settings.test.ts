@@ -5,7 +5,12 @@ import type {
   DeliveryProfile,
   MasteringSettings,
 } from "../bindings";
-import { effectiveLoudnessTarget } from "./effective-settings";
+import {
+  effectiveLoudnessTarget,
+  LOUDNESS_PROFILES,
+  loudnessTargetDisplay,
+  profileIdForLufs,
+} from "./effective-settings";
 
 // Frontend mirror tests for the `effective_*` accessors. The Rust
 // source-of-truth tests live in `src-tauri/src/types.rs` under
@@ -115,5 +120,115 @@ describe("effectiveLoudnessTarget", () => {
     const on: MasteringSettings = { ...off, volume_match: true };
     expect(effectiveLoudnessTarget(off)).toBe(-12);
     expect(effectiveLoudnessTarget(on)).toBe(-12);
+  });
+});
+
+describe("LOUDNESS_PROFILES (quick-select dropdown options)", () => {
+  it("exposes the four canonical dropdown entries", () => {
+    // Single source of truth — the rendered <option> list AND the
+    // profileIdForLufs lookup both consume this array.
+    const ids = LOUDNESS_PROFILES.map((p) => p.id);
+    expect(ids).toEqual(["streaming", "loud-streaming", "cd-master", "off"]);
+    const lufs = LOUDNESS_PROFILES.map((p) => p.lufs);
+    expect(lufs).toEqual([-14, -11, -9, null]);
+  });
+});
+
+describe("profileIdForLufs", () => {
+  it("matches each canonical profile target to its id", () => {
+    expect(profileIdForLufs(-14)).toBe("streaming");
+    expect(profileIdForLufs(-11)).toBe("loud-streaming");
+    expect(profileIdForLufs(-9)).toBe("cd-master");
+  });
+
+  it("treats null as 'off / natural'", () => {
+    expect(profileIdForLufs(null)).toBe("off");
+  });
+
+  it("returns 'custom' for any value outside the canonical set", () => {
+    expect(profileIdForLufs(-12)).toBe("custom");
+    expect(profileIdForLufs(-6)).toBe("custom");
+    expect(profileIdForLufs(-10.5)).toBe("custom");
+  });
+
+  it("matches within ±1e-3 LU tolerance", () => {
+    // Floating-point fuzz on the comparison — -14 ± 0.0005 still
+    // maps to streaming, -14 ± 0.002 is "custom."
+    expect(profileIdForLufs(-13.9995)).toBe("streaming");
+    expect(profileIdForLufs(-14.0005)).toBe("streaming");
+    expect(profileIdForLufs(-14.002)).toBe("custom");
+  });
+});
+
+describe("loudnessTargetDisplay (the LoudnessTarget readout)", () => {
+  it("on Streaming profile reports the profile's -14 target, NOT raw advanced", () => {
+    // The headline trust-pattern fix from this session, written
+    // as a single aggregate assertion: when the user is on a
+    // non-Custom profile, the readout shows what the chain is
+    // actually targeting (the profile's value), the dropdown
+    // selection matches, and the formatted text is the rounded
+    // LUFS value.
+    const settings: MasteringSettings = {
+      preset: { kind: "universal" },
+      intensity: 0.5,
+      eq_low_db: 0,
+      eq_low_mid_db: 0,
+      eq_mid_db: 0,
+      eq_high_db: 0,
+      volume_match: false,
+      input_gain_db: 0,
+      output_gain_db: 0,
+      delivery_profile: "streaming-universal",
+      advanced: {
+        ...DEFAULT_ADVANCED,
+        lufs_offset_db: -9, // would be shadowed by the profile
+      },
+    };
+    const result = loudnessTargetDisplay(settings);
+    expect(result.current).toBe(-14);
+    expect(result.profileId).toBe("streaming");
+    expect(result.displayText).toBe("-14.0");
+  });
+
+  it("on Custom + null advanced reports 'no target'", () => {
+    const settings: MasteringSettings = {
+      preset: { kind: "universal" },
+      intensity: 0.5,
+      eq_low_db: 0,
+      eq_low_mid_db: 0,
+      eq_mid_db: 0,
+      eq_high_db: 0,
+      volume_match: false,
+      input_gain_db: 0,
+      output_gain_db: 0,
+      delivery_profile: "custom",
+      advanced: { ...DEFAULT_ADVANCED, lufs_offset_db: null },
+    };
+    const result = loudnessTargetDisplay(settings);
+    expect(result.current).toBeNull();
+    expect(result.profileId).toBe("off");
+    expect(result.displayText).toBe("—");
+  });
+
+  it("on Custom + user-typed -12 reports 'custom' profileId and the typed value", () => {
+    const settings: MasteringSettings = {
+      preset: { kind: "universal" },
+      intensity: 0.5,
+      eq_low_db: 0,
+      eq_low_mid_db: 0,
+      eq_mid_db: 0,
+      eq_high_db: 0,
+      volume_match: false,
+      input_gain_db: 0,
+      output_gain_db: 0,
+      delivery_profile: "custom",
+      advanced: { ...DEFAULT_ADVANCED, lufs_offset_db: -12 },
+    };
+    const result = loudnessTargetDisplay(settings);
+    expect(result.current).toBe(-12);
+    // -12 doesn't match any quick-select entry → "custom" lights
+    // up the Custom dropdown option.
+    expect(result.profileId).toBe("custom");
+    expect(result.displayText).toBe("-12.0");
   });
 });

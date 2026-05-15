@@ -15,6 +15,20 @@
 import type { MasteringSettings } from "../bindings";
 import { DELIVERY_PROFILE_TARGET_LUFS } from "../bindings";
 
+/// The four quick-select options on the LoudnessTarget dropdown.
+/// Single source of truth for both the rendered options AND the
+/// profileId-lookup that drives the dropdown's selected value.
+export const LOUDNESS_PROFILES: ReadonlyArray<{
+  id: string;
+  label: string;
+  lufs: number | null;
+}> = [
+  { id: "streaming", label: "Streaming (-14)", lufs: -14 },
+  { id: "loud-streaming", label: "Loud streaming (-11)", lufs: -11 },
+  { id: "cd-master", label: "CD master (-9)", lufs: -9 },
+  { id: "off", label: "Off / Natural", lufs: null },
+];
+
 /// Effective target LUFS that the chain will actually apply.
 ///
 /// Mirror of `MasteringSettings::effective_target_lufs`. When
@@ -30,4 +44,46 @@ export function effectiveLoudnessTarget(
     return profileTarget;
   }
   return settings.advanced.lufs_offset_db ?? null;
+}
+
+/// Match a LUFS value to a quick-select dropdown option id. Returns
+/// the canonical id ("streaming", "loud-streaming", "cd-master", "off")
+/// when the value matches a `LOUDNESS_PROFILES` entry within ±1e-3 LU,
+/// otherwise returns "custom" to indicate the value falls outside the
+/// quick-select set. Null maps to "off / natural."
+export function profileIdForLufs(lufs: number | null): string {
+  if (lufs === null) return "off";
+  for (const p of LOUDNESS_PROFILES) {
+    if (p.lufs !== null && Math.abs(p.lufs - lufs) < 1e-3) return p.id;
+  }
+  return "custom";
+}
+
+/// Aggregate display state for the LoudnessTarget UI block. Computes:
+///
+///   * `current` — the effective target the chain will use, mirror
+///     of `effectiveLoudnessTarget`.
+///   * `profileId` — the dropdown's selected value, derived from
+///     `current` via `profileIdForLufs`.
+///   * `displayText` — the formatted readout above the dropdown
+///     ("-14.0", "—" for no target).
+///
+/// Single pure entry-point so the LoudnessTarget component can pass
+/// `settings` in and get everything it needs out, without inline
+/// formatting / matching logic.
+export interface LoudnessTargetDisplay {
+  current: number | null;
+  profileId: string;
+  displayText: string;
+}
+
+export function loudnessTargetDisplay(
+  settings: MasteringSettings,
+): LoudnessTargetDisplay {
+  const current = effectiveLoudnessTarget(settings);
+  return {
+    current,
+    profileId: profileIdForLufs(current),
+    displayText: current !== null ? current.toFixed(1) : "—",
+  };
 }
