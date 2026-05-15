@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { open, save, getCurrentWebview } from "../lib/tauri-runtime";
 import { api, onPlaybackTick, onRenderProgress } from "../lib/api";
+import { applyAdvancedWithProfileFlip } from "../lib/settings-transitions";
 import type {
   AdvancedSettings,
   AnalysisResult,
@@ -824,39 +825,16 @@ export function useTrackMaster() {
   );
 
   // UI-truthfulness contract (B7): when the user edits a field that a
-  // non-Custom DeliveryProfile would shadow at render time
-  // (`effective_target_lufs` / `effective_ceiling_dbtp` / `effective_bit_depth`
-  // / output sample rate), the displayed value MUST become the value export
-  // uses. Without this flip, the operator can manually type a -9 LUFS target
-  // while delivery_profile === "streaming-universal" and the backend will
-  // silently render at -14 LUFS — the same trust failure mode as VM-in-export
-  // (B3). The fix promotes the session to Custom so the typed value drives
-  // export. Picking a profile from the DeliveryProfile dropdown directly
-  // still works as before (untouched by this callback).
-  const SHADOWED_ADVANCED_KEYS = [
-    "lufs_offset_db",
-    "ceiling_dbtp",
-    "bit_depth",
-    "target_sample_rate",
-  ] as const;
-
+  // non-Custom DeliveryProfile would shadow at render time, the
+  // displayed value MUST become the value export uses. The pure logic
+  // lives in `src/lib/settings-transitions.ts::applyAdvancedWithProfileFlip`
+  // (Vitest-tested) — this callback is the React-state glue.
   const setAdvanced = useCallback(
     (advanced: AdvancedSettings) => {
       if (!selectedTrackId) return;
-      updateSettings(selectedTrackId, (prev) => {
-        const shadowedChanged = SHADOWED_ADVANCED_KEYS.some(
-          (key) => prev.advanced[key] !== advanced[key],
-        );
-        const nextProfile =
-          shadowedChanged && prev.delivery_profile !== "custom"
-            ? "custom"
-            : prev.delivery_profile;
-        return {
-          ...prev,
-          advanced,
-          delivery_profile: nextProfile,
-        };
-      });
+      updateSettings(selectedTrackId, (prev) =>
+        applyAdvancedWithProfileFlip(prev, advanced),
+      );
     },
     [selectedTrackId, updateSettings],
   );

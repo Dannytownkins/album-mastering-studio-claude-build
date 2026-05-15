@@ -31,6 +31,7 @@ import {
 } from "./bindings";
 import type { ExportReceipt, PlaybackKindUI } from "./hooks/useTrackMaster";
 import { effectiveLoudnessTarget } from "./lib/effective-settings";
+import { shouldFlipToCustomOnLoudnessPick } from "./lib/settings-transitions";
 import "./App.css";
 
 const PRESET_OPTIONS: { value: Preset; label: string; blurb: string }[] = [
@@ -1616,19 +1617,16 @@ function LoudnessTarget({
   const profileId = profileIdFor(current);
 
   const handleProfileChange = (id: string) => {
-    if (id === "custom") return; // Custom stays at current value (Advanced edits).
     const profile = LOUDNESS_PROFILES.find((p) => p.id === id);
     if (!profile) return;
-    // Picking ANY quick-select option is a deliberate user intent to
-    // override the current profile's shadowing. Force-flip the
-    // DeliveryProfile to Custom so the picked lufs_offset_db is
-    // actually applied — without this, picking "Off / Natural" while
-    // on a non-Custom profile would be a silent no-op because the
-    // B7 auto-flip in setAdvanced relies on the value DIFFING (and
-    // null -> null is a no-op even if the user's intent changed).
-    if (settings.delivery_profile !== "custom") {
+    // `shouldFlipToCustomOnLoudnessPick` (Vitest-tested) captures the
+    // "user picked an explicit option" intent regardless of whether
+    // the underlying value differs — closes the null -> null no-op
+    // gap that the B7 diff-based auto-flip can't see.
+    if (shouldFlipToCustomOnLoudnessPick(id, settings.delivery_profile)) {
       onDeliveryProfile("custom");
     }
+    if (id === "custom") return; // Custom dropdown entry is a no-op for the value write.
     onAdvanced({ ...settings.advanced, lufs_offset_db: profile.lufs });
   };
 
