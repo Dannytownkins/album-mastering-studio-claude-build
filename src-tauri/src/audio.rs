@@ -955,98 +955,174 @@ fn live_preview_coeffs(
     Ok(coeffs)
 }
 
+/// Dispatch a single audio command. Returns `true` when Shutdown is
+/// received so the caller can break the loop. Extracted from the
+/// original inline match so the command loop can buffer + coalesce
+/// queued commands before dispatching (see `audio_thread` for the
+/// drain pattern).
+fn process_audio_command(
+    cmd: AudioCommand,
+    state: &mut Option<AudioThreadState>,
+) -> bool {
+    match cmd {
+        AudioCommand::Play {
+            track_id,
+            path,
+            start_position_sec,
+            reply,
+        } => {
+            let outcome = handle_play(state, track_id, &path, start_position_sec);
+            let _ = reply.send(outcome);
+        }
+        AudioCommand::PlayMaster {
+            track_id,
+            path,
+            settings,
+            start_position_sec,
+            preview_lufs_landing,
+            reply,
+        } => {
+            let outcome = handle_play_master(
+                state,
+                track_id,
+                &path,
+                &settings,
+                start_position_sec,
+                preview_lufs_landing,
+            );
+            let _ = reply.send(outcome);
+        }
+        AudioCommand::UpdateChain {
+            settings,
+            preview_lufs_landing,
+        } => {
+            if let Some(s) = state.as_ref() {
+                if let Some(tx) = s.live_coeffs_tx.as_ref() {
+                    let coeffs = if let Some(cache) = s.decoded_cache.as_ref() {
+                        live_preview_coeffs(
+                            s.live_sample_rate,
+                            cache.pcm.channels,
+                            &cache.pcm.samples,
+                            &settings,
+                            preview_lufs_landing,
+                        )
+                        .unwrap_or_else(|_| {
+                            crate::dsp::ChainCoeffs::from_settings(
+                                s.live_sample_rate,
+                                &settings,
+                            )
+                        })
+                    } else {
+                        crate::dsp::ChainCoeffs::from_settings(s.live_sample_rate, &settings)
+                    };
+                    let _ = tx.send(coeffs);
+                }
+            }
+        }
+        AudioCommand::Pause => {
+            if let Some(s) = state.as_ref() {
+                s.sink.pause();
+            }
+        }
+        AudioCommand::Resume => {
+            if let Some(s) = state.as_ref() {
+                s.sink.play();
+            }
+        }
+        AudioCommand::Stop => {
+            if let Some(s) = state.as_mut() {
+                s.sink.stop();
+                s.current_track = None;
+            }
+        }
+        AudioCommand::Seek { position_sec, reply } => {
+            let outcome = match state.as_ref() {
+                Some(s) => s
+                    .sink
+                    .try_seek(Duration::from_secs_f64(position_sec.max(0.0)))
+                    .map_err(|e| e.to_string()),
+                None => Err("no track loaded".to_string()),
+            };
+            let _ = reply.send(outcome);
+        }
+        AudioCommand::SetLoop(region) => {
+            if let Some(s) = state.as_mut() {
+                s.loop_region = region.filter(|r| r.end_sec > r.start_sec);
+            }
+        }
+        AudioCommand::Shutdown => return true,
+    }
+    false
+}
+
 fn audio_thread(rx: mpsc::Receiver<AudioCommand>, snapshot: Arc<RwLock<PlaybackSnapshot>>) {
     let mut state: Option<AudioThreadState> = None;
     loop {
-        match rx.recv_timeout(Duration::from_millis(50)) {
-            Ok(AudioCommand::Play {
-                track_id,
-                path,
-                start_position_sec,
-                reply,
-            }) => {
-                let outcome = handle_play(&mut state, track_id, &path, start_position_sec);
-                let _ = reply.send(outcome);
+        // Wait for at least one command (50 ms tick matches the prior
+        // poll cadence so loop-region / snapshot housekeeping below
+        // still runs every ~50 ms even when no commands arrive).
+        let first_cmd: Option<AudioCommand> =
+            match rx.recv_timeout(Duration::from_millis(50)) {
+                Ok(c) => Some(c),
+                Err(RecvTimeoutError::Timeout) => None,
+                Err(RecvTimeoutError::Disconnected) => break,
+            };
+
+        let mut shutdown_requested = false;
+
+        if let Some(first) = first_cmd {
+            // Drain any additional immediately-available commands so
+            // we can coalesce UpdateChain dispatches in front of
+            // latency-sensitive commands like Seek / Pause / Resume.
+            //
+            // Each UpdateChain costs ~20 ms even after the 8 s preview
+            // window perf fix (full chain over the window + BS.1770
+            // measurement when Export LUFS preview is on). Knob spam
+            // can pile 5-10 of these into the queue, and any one of
+            // them sitting in front of a Seek delays the seek-reply
+            // past the frontend's 2 s timeout (Dan: "audio seek reply
+            // timeout" toast; Codex pinpointed this loop as the
+            // bottleneck).
+            //
+            // Strategy: pull every command currently in the queue,
+            // separate the LATEST UpdateChain from everything else,
+            // process the in-order non-UpdateChain commands FIRST
+            // (so seeks land immediately), then process the single
+            // coalesced UpdateChain last (so live playback ends up at
+            // the freshest settings rather than an intermediate
+            // state). Intermediate UpdateChains are dropped — the
+            // user has already moved past them, their coefficient
+            // payloads are obsolete.
+            let mut buffered: Vec<AudioCommand> = Vec::with_capacity(4);
+            buffered.push(first);
+            while let Ok(more) = rx.try_recv() {
+                buffered.push(more);
             }
-            Ok(AudioCommand::PlayMaster {
-                track_id,
-                path,
-                settings,
-                start_position_sec,
-                preview_lufs_landing,
-                reply,
-            }) => {
-                let outcome = handle_play_master(
-                    &mut state,
-                    track_id,
-                    &path,
-                    &settings,
-                    start_position_sec,
-                    preview_lufs_landing,
-                );
-                let _ = reply.send(outcome);
-            }
-            Ok(AudioCommand::UpdateChain {
-                settings,
-                preview_lufs_landing,
-            }) => {
-                if let Some(s) = state.as_ref() {
-                    if let Some(tx) = s.live_coeffs_tx.as_ref() {
-                        let coeffs = if let Some(cache) = s.decoded_cache.as_ref() {
-                            live_preview_coeffs(
-                                s.live_sample_rate,
-                                cache.pcm.channels,
-                                &cache.pcm.samples,
-                                &settings,
-                                preview_lufs_landing,
-                            )
-                            .unwrap_or_else(|_| {
-                                crate::dsp::ChainCoeffs::from_settings(
-                                    s.live_sample_rate,
-                                    &settings,
-                                )
-                            })
-                        } else {
-                            crate::dsp::ChainCoeffs::from_settings(s.live_sample_rate, &settings)
-                        };
-                        let _ = tx.send(coeffs);
-                    }
+
+            let mut latest_update: Option<AudioCommand> = None;
+            let mut in_order: Vec<AudioCommand> = Vec::with_capacity(buffered.len());
+            for c in buffered {
+                if matches!(c, AudioCommand::UpdateChain { .. }) {
+                    latest_update = Some(c);
+                } else {
+                    in_order.push(c);
                 }
             }
-            Ok(AudioCommand::Pause) => {
-                if let Some(s) = state.as_ref() {
-                    s.sink.pause();
+
+            for c in in_order {
+                if process_audio_command(c, &mut state) {
+                    shutdown_requested = true;
                 }
             }
-            Ok(AudioCommand::Resume) => {
-                if let Some(s) = state.as_ref() {
-                    s.sink.play();
+            if let Some(c) = latest_update {
+                if process_audio_command(c, &mut state) {
+                    shutdown_requested = true;
                 }
             }
-            Ok(AudioCommand::Stop) => {
-                if let Some(s) = state.as_mut() {
-                    s.sink.stop();
-                    s.current_track = None;
-                }
-            }
-            Ok(AudioCommand::Seek { position_sec, reply }) => {
-                let outcome = match state.as_ref() {
-                    Some(s) => s
-                        .sink
-                        .try_seek(Duration::from_secs_f64(position_sec.max(0.0)))
-                        .map_err(|e| e.to_string()),
-                    None => Err("no track loaded".to_string()),
-                };
-                let _ = reply.send(outcome);
-            }
-            Ok(AudioCommand::SetLoop(region)) => {
-                if let Some(s) = state.as_mut() {
-                    s.loop_region = region.filter(|r| r.end_sec > r.start_sec);
-                }
-            }
-            Ok(AudioCommand::Shutdown) => break,
-            Err(RecvTimeoutError::Timeout) => {}
-            Err(RecvTimeoutError::Disconnected) => break,
+        }
+
+        if shutdown_requested {
+            break;
         }
 
         // Loop enforcement: if a region is set and the playhead has crossed the
