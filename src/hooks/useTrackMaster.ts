@@ -5,6 +5,12 @@ import {
   applyAdvancedWithProfileFlip,
   applyChainDispatchOverrides,
 } from "../lib/settings-transitions";
+import {
+  appendToPast,
+  applyRedo,
+  applyUndo,
+  shouldCoalesceCommit,
+} from "../lib/history-stack";
 import type {
   AdvancedSettings,
   AnalysisResult,
@@ -389,7 +395,7 @@ export function useTrackMaster() {
   // redo stack (standard undo/redo semantics).
   const commitToHistory = useCallback(() => {
     const now = Date.now();
-    if (now - lastCommitAt.current < HISTORY_COALESCE_MS) {
+    if (shouldCoalesceCommit(lastCommitAt.current, now, HISTORY_COALESCE_MS)) {
       // Inside a drag burst — extend the window but don't add a new snapshot.
       lastCommitAt.current = now;
       return;
@@ -400,10 +406,11 @@ export function useTrackMaster() {
       albumIntent: { ...albumIntent },
       overrideAlbum: Array.from(overrideAlbum),
     };
-    const past = historyPast.current;
-    historyPast.current = past.length >= HISTORY_MAX
-      ? [...past.slice(past.length - HISTORY_MAX + 1), snapshot]
-      : [...past, snapshot];
+    historyPast.current = appendToPast(
+      historyPast.current,
+      snapshot,
+      HISTORY_MAX,
+    );
     historyFuture.current = [];
     setHistoryVersion((v) => v + 1);
   }, [settingsMap, albumIntent, overrideAlbum]);
@@ -451,36 +458,34 @@ export function useTrackMaster() {
   );
 
   const undo = useCallback(() => {
-    const past = historyPast.current;
-    if (past.length === 0) return;
-    const snapshot = past[past.length - 1];
     const current: HistorySnapshot = {
       settingsMap: { ...settingsMap },
       albumIntent: { ...albumIntent },
       overrideAlbum: Array.from(overrideAlbum),
     };
-    historyPast.current = past.slice(0, -1);
-    historyFuture.current = [...historyFuture.current, current];
+    const result = applyUndo(historyPast.current, historyFuture.current, current);
+    if (result.restored === null) return; // empty past — no-op
+    historyPast.current = result.past;
+    historyFuture.current = result.future;
     // Reset the coalesce window so the NEXT user edit always commits a new
     // snapshot rather than collapsing into the just-restored state.
     lastCommitAt.current = 0;
-    restoreSnapshot(snapshot);
+    restoreSnapshot(result.restored);
     setHistoryVersion((v) => v + 1);
   }, [settingsMap, albumIntent, overrideAlbum, restoreSnapshot]);
 
   const redo = useCallback(() => {
-    const future = historyFuture.current;
-    if (future.length === 0) return;
-    const snapshot = future[future.length - 1];
     const current: HistorySnapshot = {
       settingsMap: { ...settingsMap },
       albumIntent: { ...albumIntent },
       overrideAlbum: Array.from(overrideAlbum),
     };
-    historyFuture.current = future.slice(0, -1);
-    historyPast.current = [...historyPast.current, current];
+    const result = applyRedo(historyPast.current, historyFuture.current, current);
+    if (result.restored === null) return; // empty future — no-op
+    historyPast.current = result.past;
+    historyFuture.current = result.future;
     lastCommitAt.current = 0;
-    restoreSnapshot(snapshot);
+    restoreSnapshot(result.restored);
     setHistoryVersion((v) => v + 1);
   }, [settingsMap, albumIntent, overrideAlbum, restoreSnapshot]);
 
