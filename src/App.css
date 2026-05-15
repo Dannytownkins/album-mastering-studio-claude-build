@@ -3974,7 +3974,8 @@ button.primary:disabled {
    The prior restyle had the right visual ingredients, but Track Master
    still behaved like a vertical document. This block gives the desktop
    app a console contract:
-     - main canvas does not scroll at the 1600x940 target
+     - main canvas is composed for the 1920x1080 target
+     - compact desktop mode remains usable when the window is reduced
      - right rail remains the scrollable technical drawer
      - waveform height is bounded by the console grid, not by stacked
        meter panels
@@ -4034,7 +4035,7 @@ button.primary:disabled {
 
   .console-hero .track-header-main {
     display: grid;
-    grid-template-columns: minmax(260px, auto) minmax(260px, 42vw);
+    grid-template-columns: minmax(220px, 1fr) minmax(300px, 38vw);
     grid-template-rows: auto auto;
     align-items: center;
     column-gap: 0.8rem;
@@ -4061,7 +4062,7 @@ button.primary:disabled {
     font-size: clamp(1.45rem, 2.1vw, 1.95rem);
     margin: 0;
     line-height: 0.98;
-    max-width: 34vw;
+    max-width: 100%;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -4475,6 +4476,14 @@ button.primary:disabled {
     gap: 0.68rem;
   }
 
+  .console-hero .track-header-main {
+    grid-template-columns: minmax(300px, 1fr) minmax(420px, 0.8fr);
+  }
+
+  .console-hero .analysis-summary {
+    max-width: 460px;
+  }
+
   .wf-deck {
     grid-template-columns: 104px minmax(0, 1fr) 186px;
     gap: 0.6rem;
@@ -4520,6 +4529,168 @@ button.primary:disabled {
 
   .tone-shape-knobs .knob-vis {
     max-width: 84px;
+  }
+}
+
+@media (max-width: 1699px) and (min-width: 1280px) and (min-height: 820px) {
+  .app {
+    grid-template-columns: 230px minmax(0, 1fr) 280px;
+  }
+
+  .workspace {
+    padding: 0.55rem 0.75rem 0.7rem;
+  }
+
+  .top-header {
+    min-height: 52px;
+  }
+
+  .top-header-tabs {
+    transform: scale(0.92);
+    transform-origin: center;
+  }
+
+  .track-master-console {
+    grid-template-rows:
+      minmax(300px, 1.45fr)
+      92px
+      44px
+      minmax(154px, 0.68fr)
+      36px;
+    gap: 0.45rem;
+  }
+
+  .console-hero {
+    grid-template-rows: minmax(76px, auto) minmax(0, 1fr);
+  }
+
+  .console-hero .track-header {
+    gap: 0.55rem;
+  }
+
+  .console-hero .track-header-main {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto auto auto;
+    row-gap: 0.24rem;
+  }
+
+  .console-hero .track-header-main .track-title,
+  .console-hero .track-header-main .track-meta-chips,
+  .console-hero .track-header-main .analysis-summary {
+    grid-column: 1;
+  }
+
+  .console-hero .track-header-main .track-title {
+    grid-row: 1;
+  }
+
+  .console-hero .track-header-main .track-meta-chips {
+    grid-row: 2;
+  }
+
+  .console-hero .track-header-main .analysis-summary {
+    grid-row: 3;
+    max-width: 440px;
+    width: 100%;
+  }
+
+  .track-header-controls {
+    transform: scale(0.88);
+    transform-origin: top right;
+    gap: 0.42rem;
+  }
+
+  .wf-deck {
+    grid-template-columns: 72px minmax(0, 1fr) 156px;
+    gap: 0.42rem;
+    padding: 0.42rem;
+  }
+
+  .wf-deck-transport .play-btn {
+    width: 58px;
+    height: 58px;
+  }
+
+  .wf-deck-meters {
+    width: 156px;
+  }
+
+  .wf-deck-meters .master-out {
+    grid-template-columns: minmax(94px, 2fr) minmax(38px, 1fr);
+    padding: 0.38rem 0.32rem;
+  }
+
+  .wf-deck-meters .master-out .lufs-bar {
+    width: 26px;
+  }
+
+  .wf-deck-meters .master-out .tp-bar {
+    width: 14px;
+  }
+
+  .wf-deck-meters .master-out .readout-number {
+    font-size: 0.58rem;
+  }
+
+  .tile-row {
+    grid-template-columns: repeat(8, minmax(0, 1fr));
+    gap: 0.36rem;
+  }
+
+  .tile {
+    padding: 0.2rem 0.18rem;
+  }
+
+  .tile-icon {
+    width: 28px;
+    height: 28px;
+  }
+
+  .tile-label {
+    font-size: 0.62rem;
+  }
+
+  .signal-chain {
+    padding-inline: 0.6rem;
+  }
+
+  .chain-stage-disc {
+    width: 20px;
+    height: 20px;
+  }
+
+  .chain-stage-label {
+    font-size: 0.52rem;
+  }
+
+  .knobs-row {
+    grid-template-columns: minmax(104px, auto) minmax(190px, auto) minmax(230px, 1fr) minmax(130px, 150px);
+    gap: 0.48rem;
+    padding: 0.55rem 0.62rem;
+  }
+
+  .intensity-block .knob-vis {
+    max-width: 104px;
+  }
+
+  .tone-shape-knobs {
+    gap: 0.42rem;
+  }
+
+  .tone-shape-knobs .knob-vis {
+    max-width: 56px;
+  }
+
+  .equalizer-block .visual-eq-panel-compact {
+    min-height: 0;
+  }
+
+  .loudness-number {
+    font-size: 1.12rem;
+  }
+
+  .loudness-profile-select {
+    font-size: 0.66rem;
   }
 }
 
