@@ -735,8 +735,20 @@ export function useTrackMaster() {
       api.setLoopRegion(null).catch(() => {
         /* swallow — best-effort */
       });
+      // Prewarm the backend decode cache for the newly-selected track
+      // so the PCM is ready by the time the user clicks Mastered. The
+      // decode runs on the Tauri blocking pool — fire-and-forget here,
+      // idempotent on repeat selections of the same track. Eliminates
+      // the 1-2 s freeze on first Mastered click for long WAVs.
+      const selected = tracks.find((t) => t.id === id);
+      if (selected) {
+        api.prewarmDecode(selected.path).catch(() => {
+          /* swallow — prewarm is opportunistic; cold-decode path
+             still works if this fails */
+        });
+      }
     },
-    [loadedTrackId],
+    [loadedTrackId, tracks],
   );
 
   const removeTrack = useCallback(

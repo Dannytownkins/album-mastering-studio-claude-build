@@ -63,6 +63,7 @@ pub fn run() {
             audio::play_track,
             audio::play_master,
             audio::update_chain,
+            audio::prewarm_decode,
             audio::pause_playback,
             audio::resume_playback,
             audio::stop_playback,

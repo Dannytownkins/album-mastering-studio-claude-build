@@ -290,6 +290,72 @@ pub async fn update_chain(
     player.update_chain(settings, preview_lufs_landing.unwrap_or(true))
 }
 
+/// Prewarm the decode cache for `track_path` in the background.
+/// Intended to be called from the frontend the moment the user
+/// selects a track in the UI — by the time they click Play / Mastered,
+/// the PCM is already in the shared prewarm cache and
+/// `handle_play_master` skips the synchronous `decode_full` call.
+/// Eliminates the ~1-2 s freeze on first Mastered click for long
+/// WAVs (Codex audit May 15, item 7).
+///
+/// Idempotent: re-prewarming the same `(canonical_path, mtime)`
+/// returns immediately without decoding. The decode runs on
+/// `tokio::task::spawn_blocking` so the Tauri async worker isn't
+/// held for the decode duration and the audio thread is never
+/// touched — playback / knob tweaks remain responsive during a
+/// prewarm in flight.
+#[tauri::command]
+pub async fn prewarm_decode(
+    track_path: String,
+    player: tauri::State<'_, Arc<AudioPlayer>>,
+) -> CommandResult<()> {
+    if track_path.is_empty() {
+        return Err(CommandError::InvalidPath("empty path".to_string()));
+    }
+    let path = std::path::PathBuf::from(&track_path);
+    if crate::files::has_parent_dir_component(&path) {
+        return Err(CommandError::InvalidPath(format!(
+            "path traversal not allowed: {track_path}"
+        )));
+    }
+
+    let canonical = path.canonicalize().unwrap_or_else(|_| path.clone());
+    let mtime = std::fs::metadata(&canonical)
+        .ok()
+        .and_then(|m| m.modified().ok());
+
+    // Idempotency guard: if the prewarm cache already holds this
+    // entry, skip the decode entirely. The frontend can safely call
+    // prewarm_decode on every track-select without thrashing.
+    if player.prewarm_cache_hit(&canonical, mtime) {
+        return Ok(());
+    }
+
+    // Decode on the blocking pool so the async Tauri worker thread
+    // isn't held for ~1-2 s. The PCM lands in the shared cache; the
+    // audio thread reads from there on the next play_master.
+    // `tauri::async_runtime::spawn_blocking` delegates to the same
+    // tokio runtime Tauri runs its commands on, no extra crate
+    // dependency.
+    let decode_path = path.clone();
+    let join_result = tauri::async_runtime::spawn_blocking(move || decode_full(&decode_path))
+        .await
+        .map_err(|e| CommandError::Other(format!("prewarm decode task: {e}")))?;
+    let decoded = join_result?;
+    if decoded.samples.is_empty() {
+        return Err(CommandError::Decode(format!(
+            "no samples decoded from {track_path}"
+        )));
+    }
+
+    player.set_prewarm_cache(DecodedCacheEntry {
+        canonical_path: canonical,
+        mtime,
+        pcm: decoded,
+    });
+    Ok(())
+}
+
 #[tauri::command]
 pub async fn pause_playback(
     player: tauri::State<'_, Arc<AudioPlayer>>,
@@ -637,24 +703,80 @@ impl Default for PlaybackSnapshot {
     }
 }
 
+/// Single-slot opportunistic decode cache shared between the audio
+/// thread and Tauri prewarm commands. Distinct from
+/// `AudioThreadState.decoded_cache` (which represents the
+/// currently-playing PCM and is consulted by `UpdateChain` for live-
+/// preview measurements). Splitting the two:
+///
+///   * UpdateChain never reads this shared cache — it always uses the
+///     currently-playing PCM. Prewarm of a different track can't
+///     poison live-preview measurements.
+///   * `handle_play_master` consults both: local first (zero-cost
+///     same-track replay), then this shared cache (prewarm hit), then
+///     fresh decode (cold miss).
+///   * `prewarm_decode` writes here from off-thread, so a 1–2 s
+///     decode can run while the user is still browsing tracks. By the
+///     time they click Mastered, the PCM is already in the slot.
+type SharedDecodedCache = Arc<Mutex<Option<DecodedCacheEntry>>>;
+
 pub struct AudioPlayer {
     tx: Mutex<Option<Sender<AudioCommand>>>,
     snapshot: Arc<RwLock<PlaybackSnapshot>>,
+    /// Shared opportunistic decode cache. Populated by `prewarm_decode`
+    /// and read (with fallback to fresh decode) by `handle_play_master`
+    /// / `handle_play`. Wrapped in a Mutex rather than RwLock because
+    /// reads are paired with writes (cache miss → decode → write), so
+    /// the lock contention is negligible.
+    prewarm_cache: SharedDecodedCache,
 }
 
 impl AudioPlayer {
     pub fn new() -> Self {
         let snapshot = Arc::new(RwLock::new(PlaybackSnapshot::default()));
+        let prewarm_cache: SharedDecodedCache = Arc::new(Mutex::new(None));
         let (tx, rx) = mpsc::channel::<AudioCommand>();
         let snap_for_thread = snapshot.clone();
+        let prewarm_for_thread = prewarm_cache.clone();
         std::thread::Builder::new()
             .name("audio-player".to_string())
-            .spawn(move || audio_thread(rx, snap_for_thread))
+            .spawn(move || audio_thread(rx, snap_for_thread, prewarm_for_thread))
             .expect("spawn audio thread");
         Self {
             tx: Mutex::new(Some(tx)),
             snapshot,
+            prewarm_cache,
         }
+    }
+
+    /// Returns true when the prewarm cache already holds an entry
+    /// matching `(canonical_path, mtime)`. Used by `prewarm_decode`
+    /// to skip redundant decodes when the user re-selects the same
+    /// track in the UI.
+    pub(crate) fn prewarm_cache_hit(
+        &self,
+        canonical_path: &Path,
+        mtime: Option<std::time::SystemTime>,
+    ) -> bool {
+        let guard = self
+            .prewarm_cache
+            .lock()
+            .expect("prewarm cache mutex poisoned");
+        match guard.as_ref() {
+            Some(entry) => entry.canonical_path == canonical_path && entry.mtime == mtime,
+            None => false,
+        }
+    }
+
+    /// Replace the prewarm cache entry. Single-slot LRU: any prior
+    /// entry is dropped. Called by `prewarm_decode` after a successful
+    /// off-thread decode.
+    pub(crate) fn set_prewarm_cache(&self, entry: DecodedCacheEntry) {
+        let mut guard = self
+            .prewarm_cache
+            .lock()
+            .expect("prewarm cache mutex poisoned");
+        *guard = Some(entry);
     }
 
     pub fn play_track(
@@ -834,10 +956,10 @@ struct AudioThreadState {
 }
 
 #[derive(Clone)]
-struct DecodedCacheEntry {
-    canonical_path: PathBuf,
-    mtime: Option<std::time::SystemTime>,
-    pcm: DecodedPcm,
+pub(crate) struct DecodedCacheEntry {
+    pub(crate) canonical_path: PathBuf,
+    pub(crate) mtime: Option<std::time::SystemTime>,
+    pub(crate) pcm: DecodedPcm,
 }
 
 /// Returns the cached PCM if the entry's key matches the given canonical
@@ -1052,6 +1174,56 @@ fn live_preview_coeffs(
     Ok(coeffs)
 }
 
+/// Resolve PCM for `path` via the three-tier cache hierarchy used by
+/// `handle_play` / `handle_play_master`:
+///
+///   1. Local AudioThreadState `decoded_cache` (currently-playing PCM).
+///      Matches the Original/Mastered toggle case where the user is
+///      replaying the same track — zero cost.
+///   2. Shared `prewarm_cache` populated off the audio thread by
+///      `prewarm_decode` (Tauri command, runs on tokio's blocking
+///      pool). Hits when the user selected the track in the UI and
+///      prewarm finished before they clicked Play / Mastered.
+///   3. Fresh `decode_full` — synchronous on the audio thread, the
+///      cold case prewarm exists to avoid. 1-2 s for long WAVs.
+///
+/// Returns the resolved PCM or an error string suitable for forwarding
+/// through the caller's `Result<(), String>` reply path.
+fn resolve_pcm_with_caches(
+    state: Option<&AudioThreadState>,
+    prewarm_cache: &SharedDecodedCache,
+    path: &Path,
+    canonical: &Path,
+    mtime: Option<std::time::SystemTime>,
+) -> Result<DecodedPcm, String> {
+    // Tier 1: local same-track cache (no lock, fastest path).
+    if let Some(p) = decode_cache_lookup(
+        state.and_then(|s| s.decoded_cache.as_ref()),
+        canonical,
+        mtime,
+    ) {
+        return Ok(p);
+    }
+    // Tier 2: shared prewarm cache. Briefly locked for the lookup; if
+    // the lock is contended the prewarm task is mid-write and we fall
+    // through to fresh decode (rare, acceptable — the next play_master
+    // would hit the now-populated shared cache).
+    {
+        let guard = prewarm_cache
+            .lock()
+            .map_err(|e| format!("prewarm cache lock: {e}"))?;
+        if let Some(p) = decode_cache_lookup(guard.as_ref(), canonical, mtime) {
+            return Ok(p);
+        }
+    }
+    // Tier 3: cold path. Decode synchronously.
+    let decoded = crate::audio::decode_full(path).map_err(|e| format!("{e}"))?;
+    if decoded.samples.is_empty() {
+        return Err("no samples decoded for playback".to_string());
+    }
+    Ok(decoded)
+}
+
 /// True for commands that change which track is loaded into the audio
 /// thread. UpdateChain coalescing MUST NOT cross these — a stale
 /// UpdateChain queued before a track switch would otherwise apply old
@@ -1150,6 +1322,7 @@ fn should_invalidate_landing_cache(
 fn process_audio_command(
     cmd: AudioCommand,
     state: &mut Option<AudioThreadState>,
+    prewarm_cache: &SharedDecodedCache,
 ) -> bool {
     match cmd {
         AudioCommand::Play {
@@ -1158,7 +1331,13 @@ fn process_audio_command(
             start_position_sec,
             reply,
         } => {
-            let outcome = handle_play(state, track_id, &path, start_position_sec);
+            let outcome = handle_play(
+                state,
+                track_id,
+                &path,
+                start_position_sec,
+                prewarm_cache,
+            );
             let _ = reply.send(outcome);
         }
         AudioCommand::PlayMaster {
@@ -1176,6 +1355,7 @@ fn process_audio_command(
                 &settings,
                 start_position_sec,
                 preview_lufs_landing,
+                prewarm_cache,
             );
             let _ = reply.send(outcome);
         }
@@ -1264,7 +1444,11 @@ fn process_audio_command(
     false
 }
 
-fn audio_thread(rx: mpsc::Receiver<AudioCommand>, snapshot: Arc<RwLock<PlaybackSnapshot>>) {
+fn audio_thread(
+    rx: mpsc::Receiver<AudioCommand>,
+    snapshot: Arc<RwLock<PlaybackSnapshot>>,
+    prewarm_cache: SharedDecodedCache,
+) {
     let mut state: Option<AudioThreadState> = None;
     loop {
         // Wait for at least one command (50 ms tick matches the prior
@@ -1310,7 +1494,7 @@ fn audio_thread(rx: mpsc::Receiver<AudioCommand>, snapshot: Arc<RwLock<PlaybackS
 
             let sequenced = coalesced_command_sequence(buffered);
             for c in sequenced {
-                if process_audio_command(c, &mut state) {
+                if process_audio_command(c, &mut state, &prewarm_cache) {
                     shutdown_requested = true;
                 }
             }
@@ -1410,28 +1594,19 @@ fn handle_play(
     track_id: TrackId,
     path: &Path,
     start_position_sec: f64,
+    prewarm_cache: &SharedDecodedCache,
 ) -> Result<(), String> {
     let canonical = path
         .canonicalize()
         .unwrap_or_else(|_| path.to_path_buf());
     let mtime = std::fs::metadata(&canonical).ok().and_then(|m| m.modified().ok());
-    let cache_hit_pcm: Option<DecodedPcm> = decode_cache_lookup(
-        state.as_ref().and_then(|s| s.decoded_cache.as_ref()),
+    let pcm = resolve_pcm_with_caches(
+        state.as_ref(),
+        prewarm_cache,
+        path,
         &canonical,
         mtime,
-    );
-
-    let pcm = match cache_hit_pcm {
-        Some(p) => p,
-        None => {
-            let decoded =
-                crate::audio::decode_full(path).map_err(|e| format!("{e}"))?;
-            if decoded.samples.is_empty() {
-                return Err("no samples decoded for source playback".to_string());
-            }
-            decoded
-        }
-    };
+    )?;
 
     if state.is_none() {
         let (stream, handle) = rodio::OutputStream::try_default()
@@ -1507,33 +1682,28 @@ fn handle_play_master(
     settings: &MasteringSettings,
     start_position_sec: f64,
     preview_lufs_landing: bool,
+    prewarm_cache: &SharedDecodedCache,
 ) -> Result<(), String> {
-    // Phase 12.1 perf — decode cache. Resolve the canonical path and
-    // mtime to use as the cache key. If the cache holds a matching entry,
-    // reuse the PCM directly; otherwise decode and store. Skipping
-    // `decode_full` on a ~244 s WAV cuts the Original→Mastered toggle
-    // latency from ~1–2 s down to a sub-100 ms swap.
+    // Three-tier PCM resolution (fastest to slowest):
+    //   1. Local "currently-playing" cache on AudioThreadState —
+    //      same-track replay (Original/Mastered toggle).
+    //   2. Shared prewarm cache — populated off the audio thread by
+    //      `prewarm_decode` when the user selects a track in the UI.
+    //      The 1-2 s freeze on first Mastered click for long WAVs is
+    //      what motivates this tier.
+    //   3. Fresh `decode_full` — synchronous on the audio thread, the
+    //      cold case prewarm exists to avoid.
     let canonical = path
         .canonicalize()
         .unwrap_or_else(|_| path.to_path_buf());
     let mtime = std::fs::metadata(&canonical).ok().and_then(|m| m.modified().ok());
-    let cache_hit_pcm: Option<DecodedPcm> = decode_cache_lookup(
-        state.as_ref().and_then(|s| s.decoded_cache.as_ref()),
+    let pcm = resolve_pcm_with_caches(
+        state.as_ref(),
+        prewarm_cache,
+        path,
         &canonical,
         mtime,
-    );
-
-    let pcm = match cache_hit_pcm {
-        Some(p) => p,
-        None => {
-            let decoded =
-                crate::audio::decode_full(path).map_err(|e| format!("{e}"))?;
-            if decoded.samples.is_empty() {
-                return Err("no samples decoded for master playback".to_string());
-            }
-            decoded
-        }
-    };
+    )?;
 
     // Cache invalidation: clear the landing-gain cache when canonical
     // path OR mtime differs from the prior decoded cache entry. Same-
@@ -2137,6 +2307,169 @@ mod tests {
         let raw_coeffs = live_preview_coeffs(sample_rate, channels, &samples, &settings, false)
             .expect("raw preview coeffs");
         assert_eq!(raw_coeffs.export_landing_gain_lin, 1.0);
+    }
+
+    // ========================================================================
+    // Prewarm decode cache — mechanical gates for the off-thread decode
+    // cache that eliminates the 1-2 s freeze on first Mastered click
+    // for long WAVs. The cache stores a single entry keyed by
+    // (canonical_path, mtime) and is consulted by handle_play_master as
+    // tier 2 of the three-tier resolve_pcm_with_caches hierarchy.
+    // ========================================================================
+
+    /// Fresh AudioPlayer reports no cache hit — the prewarm cache
+    /// starts empty.
+    #[test]
+    fn prewarm_cache_empty_after_construction() {
+        let player = AudioPlayer::new();
+        let path = std::path::PathBuf::from("/tmp/a.wav");
+        assert!(!player.prewarm_cache_hit(&path, None));
+    }
+
+    /// After set, the same (path, mtime) reports a hit. The whole
+    /// point of the cache.
+    #[test]
+    fn prewarm_cache_hit_after_set() {
+        let player = AudioPlayer::new();
+        let path = std::path::PathBuf::from("/tmp/a.wav");
+        let mtime = Some(std::time::SystemTime::UNIX_EPOCH);
+        player.set_prewarm_cache(DecodedCacheEntry {
+            canonical_path: path.clone(),
+            mtime,
+            pcm: DecodedPcm {
+                samples: vec![0.0, 0.0],
+                sample_rate: 48_000,
+                channels: 2,
+            },
+        });
+        assert!(player.prewarm_cache_hit(&path, mtime));
+    }
+
+    /// Different path → miss. Cache distinguishes by canonical path.
+    #[test]
+    fn prewarm_cache_miss_on_different_path() {
+        let player = AudioPlayer::new();
+        let path_a = std::path::PathBuf::from("/tmp/a.wav");
+        let path_b = std::path::PathBuf::from("/tmp/b.wav");
+        let mtime = Some(std::time::SystemTime::UNIX_EPOCH);
+        player.set_prewarm_cache(DecodedCacheEntry {
+            canonical_path: path_a,
+            mtime,
+            pcm: DecodedPcm {
+                samples: vec![],
+                sample_rate: 48_000,
+                channels: 2,
+            },
+        });
+        assert!(!player.prewarm_cache_hit(&path_b, mtime));
+    }
+
+    /// Same path, different mtime → miss. The file was re-saved /
+    /// replaced; cached PCM is stale. This is the same predicate
+    /// shape that protects the landing_gain_cache.
+    #[test]
+    fn prewarm_cache_miss_on_mtime_change() {
+        let player = AudioPlayer::new();
+        let path = std::path::PathBuf::from("/tmp/a.wav");
+        let old_mtime = Some(std::time::SystemTime::UNIX_EPOCH);
+        let new_mtime = Some(
+            std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(60),
+        );
+        player.set_prewarm_cache(DecodedCacheEntry {
+            canonical_path: path.clone(),
+            mtime: old_mtime,
+            pcm: DecodedPcm {
+                samples: vec![],
+                sample_rate: 48_000,
+                channels: 2,
+            },
+        });
+        assert!(!player.prewarm_cache_hit(&path, new_mtime));
+    }
+
+    /// set_prewarm_cache replaces the prior entry — single-slot LRU.
+    /// After setting B, A's path no longer reports a hit.
+    #[test]
+    fn prewarm_cache_set_replaces_prior_entry() {
+        let player = AudioPlayer::new();
+        let path_a = std::path::PathBuf::from("/tmp/a.wav");
+        let path_b = std::path::PathBuf::from("/tmp/b.wav");
+        let mtime = Some(std::time::SystemTime::UNIX_EPOCH);
+        player.set_prewarm_cache(DecodedCacheEntry {
+            canonical_path: path_a.clone(),
+            mtime,
+            pcm: DecodedPcm {
+                samples: vec![],
+                sample_rate: 48_000,
+                channels: 2,
+            },
+        });
+        assert!(player.prewarm_cache_hit(&path_a, mtime));
+        player.set_prewarm_cache(DecodedCacheEntry {
+            canonical_path: path_b.clone(),
+            mtime,
+            pcm: DecodedPcm {
+                samples: vec![],
+                sample_rate: 48_000,
+                channels: 2,
+            },
+        });
+        assert!(!player.prewarm_cache_hit(&path_a, mtime));
+        assert!(player.prewarm_cache_hit(&path_b, mtime));
+    }
+
+    /// resolve_pcm_with_caches: tier-2 hit returns the prewarmed PCM
+    /// without falling through to decode_full. Verifies the central
+    /// promise of the prewarm feature: when the shared cache holds
+    /// the right entry, the audio thread skips the synchronous decode.
+    #[test]
+    fn resolve_pcm_with_caches_tier_2_hit_short_circuits() {
+        let prewarm: SharedDecodedCache = Arc::new(Mutex::new(None));
+        let path = std::path::PathBuf::from("/tmp/prewarmed.wav");
+        let canonical = path.clone();
+        let mtime = Some(std::time::SystemTime::UNIX_EPOCH);
+        // Pre-populate the shared cache with a distinctive sample
+        // payload so we can verify the function returned THE PREWARMED
+        // PCM (not a fresh decode).
+        let distinctive_samples = vec![0.42_f32, 0.42_f32, 0.42_f32, 0.42_f32];
+        {
+            let mut guard = prewarm.lock().expect("lock");
+            *guard = Some(DecodedCacheEntry {
+                canonical_path: canonical.clone(),
+                mtime,
+                pcm: DecodedPcm {
+                    samples: distinctive_samples.clone(),
+                    sample_rate: 48_000,
+                    channels: 2,
+                },
+            });
+        }
+        let result = resolve_pcm_with_caches(None, &prewarm, &path, &canonical, mtime)
+            .expect("tier-2 hit must resolve without decode_full");
+        assert_eq!(
+            result.samples, distinctive_samples,
+            "resolve must return the PREWARMED PCM, not a fresh decode"
+        );
+    }
+
+    /// resolve_pcm_with_caches: tier-2 miss (different path) falls
+    /// through to decode_full. With a bogus path the decode_full call
+    /// errors — verifies the fall-through path is wired (decode_full
+    /// is actually invoked when both cache tiers miss).
+    #[test]
+    fn resolve_pcm_with_caches_falls_through_on_double_miss() {
+        let prewarm: SharedDecodedCache = Arc::new(Mutex::new(None));
+        let path = std::path::PathBuf::from("/tmp/does-not-exist-rust-test.wav");
+        let canonical = path.clone();
+        // No state, no shared cache entry → both tiers miss → tier 3
+        // (decode_full) runs, fails on the bogus path. The Err result
+        // is the proof that tier 3 was reached (any unhandled fall-
+        // through would short-circuit before this).
+        let result = resolve_pcm_with_caches(None, &prewarm, &path, &canonical, None);
+        assert!(
+            result.is_err(),
+            "double cache miss must fall through to decode_full, which errors on bogus path"
+        );
     }
 
     // ========================================================================

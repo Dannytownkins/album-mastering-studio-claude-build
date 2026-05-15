@@ -196,6 +196,7 @@ export async function mockInvoke<T>(
 
     case "set_loop_region":
     case "update_chain":
+    case "prewarm_decode":
     case "open_output":
     case "delete_user_preset":
       return null as unknown as T;

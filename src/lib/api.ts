@@ -163,6 +163,14 @@ export const api = {
   updateChain: (settings: MasteringSettings, previewLufsLanding = true) =>
     invoke<null>("update_chain", { settings, previewLufsLanding }),
 
+  /// Prewarm the backend decode cache for a track. Fire-and-forget
+  /// from track-select / track-import handlers so the PCM is ready
+  /// by the time the user clicks Mastered (eliminates the 1-2 s
+  /// freeze on first click for long WAVs). Idempotent; safe to
+  /// call repeatedly on the same track.
+  prewarmDecode: (trackPath: string) =>
+    invoke<null>("prewarm_decode", { trackPath }),
+
   pausePlayback: () => invoke<null>("pause_playback"),
   resumePlayback: () => invoke<null>("resume_playback"),
   stopPlayback: () => invoke<null>("stop_playback"),
