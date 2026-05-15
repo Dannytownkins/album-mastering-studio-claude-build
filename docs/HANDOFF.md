@@ -108,6 +108,38 @@ Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>
 
 Subject line under 70 chars. Push to `origin/master` after every passing slice. No feature branches — this is a single-author personal project.
 
+## Mechanical correctness first — the workflow agreement (2026-05-15)
+
+Dan has a day job and can't be a per-commit verification loop. The
+agreement going forward:
+
+- **Every behavioral fix ships with an automated repro test.** Write
+  the failing test first (or alongside the fix), confirm it fails on
+  the bug, fix until it passes, run the full suite, commit. The test
+  is the gate — not Dan's ears.
+- **"Verification" in commit messages ends with passing tests + grep
+  evidence**, never "pending Dan's ears" or "manual verification
+  required." A commit that needs Dan to verify it isn't ready to ship.
+- **Listening sessions are batched, not per-commit.** When something
+  needs subjective evaluation (does this preset *sound* like Punch),
+  add it to a "pending listening checks" list in the active handoff
+  doc. Trigger Dan only when (a) enough items have accumulated for
+  an efficient session, OR (b) a specific product-taste decision is
+  blocking and only Dan's ears can answer it. Default cadence: zero
+  per-commit asks; batch every ~5 commits or when the next slice
+  genuinely depends on a listening result.
+- **Mechanical first, listening last.** Each subjective evaluation
+  Dan does should already be downstream of all the automated checks
+  the slice could have. If a mechanical test could catch the bug,
+  write it. Don't outsource regression detection to Dan's ears.
+- **Bounce-back-as-manual-testing is the failure mode.** If I find
+  myself writing "try this scenario by hand and tell me if it
+  works," the right move is almost always to write the test that
+  answers the question mechanically.
+
+This applies in both directions: I don't ask Dan to verify code I
+wrote, and I don't claim "it works" without the test that proves it.
+
 ## Autonomy boundaries
 
 **Allowed without asking Dan:**
