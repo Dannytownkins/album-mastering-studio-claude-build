@@ -1275,58 +1275,28 @@ const PRESET_ACCENT: Record<Preset["kind"], string> = {
   custom: "#9ca3af",
 };
 
-/// In-app webview zoom keybindings. WebView2's default zoom shortcuts
-/// don't fire reliably across Tauri versions / platforms, so we wire
-/// our own deterministic handlers:
-///
-///   Ctrl + =        zoom in (×1.1, capped at 3.0)
-///   Ctrl + +        same — convenience on layouts where = needs Shift
-///   Ctrl + -        zoom out (÷1.1, floored at 0.5)
-///   Ctrl + 0        reset to 1.0
-///
-/// Scales the entire app via CSS `zoom:` on the root element, so layout
-/// flow + the 1400 px responsive breakpoint adapt as you'd expect.
-/// Session-scoped — no localStorage; every fresh window opens at 1.0.
-/// Intended use case (2026-05-14): Dan wants the design canvas to
-/// render physically larger on his 4K monitor without changing Windows
-/// display scaling (which would disrupt his concurrent video-editing
-/// app). Ctrl+= up to ~1.5 gives the "150% Windows scaling" effect
-/// without touching the OS.
+/// Keep the WebView at a deterministic 100% app zoom on every fresh launch.
+/// The app is now composed for a native 1920x1080 window, so carrying an
+/// in-app CSS zoom on top of Windows display scaling makes the console feel
+/// blurry and causes breakpoint math to lie. Ctrl+0 still re-applies 100% if
+/// the WebView ever inherits a zoom state from the shell.
 function useWebviewZoomShortcuts() {
   useEffect(() => {
-    const ZOOM_MIN = 0.5;
-    const ZOOM_MAX = 3.0;
-    const ZOOM_STEP = 0.1;
-    let current = 1.0;
     const apply = () => {
       // CSS `zoom:` is non-standard but supported by Chromium / WebView2.
-      // Stored as a string so the browser can parse "1.5" rather than 1.5.
       (document.documentElement.style as CSSStyleDeclaration & {
         zoom?: string;
-      }).zoom = current.toString();
+      }).zoom = "1";
     };
-    const clamp = (v: number) => Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, v));
-    const round1 = (v: number) => Math.round(v * 10) / 10;
+    apply();
     const onKey = (event: KeyboardEvent) => {
       if (!(event.ctrlKey || event.metaKey)) return;
-      // Don't fight a focused input — typing "-" / "+" / "0" into a field
-      // with the modifier should still reach the field if the browser
-      // doesn't already treat it as a shortcut.
       const target = event.target as HTMLElement | null;
       const inEditableField =
         target && (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable);
       if (inEditableField) return;
-      if (event.key === "=" || event.key === "+") {
+      if (event.key === "0") {
         event.preventDefault();
-        current = round1(clamp(current + ZOOM_STEP));
-        apply();
-      } else if (event.key === "-" || event.key === "_") {
-        event.preventDefault();
-        current = round1(clamp(current - ZOOM_STEP));
-        apply();
-      } else if (event.key === "0") {
-        event.preventDefault();
-        current = 1.0;
         apply();
       }
     };
