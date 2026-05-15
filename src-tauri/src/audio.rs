@@ -20,6 +20,8 @@ fn linear_to_dbfs(linear: f32) -> f32 {
     }
 }
 
+use std::collections::HashMap;
+
 use symphonia::core::audio::{AudioBufferRef, SampleBuffer};
 use symphonia::core::codecs::{DecoderOptions, CODEC_TYPE_NULL};
 use symphonia::core::errors::Error as SymphoniaError;
@@ -794,6 +796,10 @@ struct AudioThreadState {
     /// Single-entry LRU is sufficient because the typical Track Master flow
     /// hammers one fixture; album mode keeps the most-recently-played track.
     decoded_cache: Option<DecodedCacheEntry>,
+    /// Export-landing-gain cache. Keyed by settings hash, scoped to the
+    /// currently-loaded decoded PCM. Cleared whenever
+    /// `handle_play_master` swaps in a different canonical path.
+    landing_gain_cache: PreviewLandingCache,
     /// Shared post-output-gain peak slot. `MasteringSource` writes via
     /// `fetch_max` per frame; the audio thread `swap`s to 0 each snapshot
     /// cycle to compute "peak since last tick." Bits are an f32 magnitude;
@@ -845,6 +851,85 @@ fn decode_cache_lookup(
     cache
         .filter(|entry| entry.canonical_path == canonical && entry.mtime == mtime)
         .map(|entry| entry.pcm.clone())
+}
+
+/// Cache of computed export-landing-gain values, keyed by a hash of
+/// the settings fields that affect the chain output and the LUFS
+/// target. Lifetime is tied to the currently-loaded decoded PCM —
+/// when `handle_play_master` swaps in a different track, the cache
+/// is cleared because the cached per-setting values were computed
+/// against the OLD PCM and are now stale. Original/Mastered toggles
+/// on the SAME track preserve the cache because the PCM is unchanged.
+///
+/// Compounds with the audio-command-loop coalescing: coalescing drops
+/// redundant intermediate UpdateChains so only the survivor pays a
+/// measurement; caching makes that survivor free when its settings
+/// hash has already been seen for this PCM. Typical knob-twiddle
+/// A → B → A goes from 3 measurements to 2.
+#[derive(Debug, Default)]
+struct PreviewLandingCache {
+    by_hash: HashMap<u64, f32>,
+}
+
+impl PreviewLandingCache {
+    fn new() -> Self {
+        Self {
+            by_hash: HashMap::new(),
+        }
+    }
+
+    fn clear(&mut self) {
+        self.by_hash.clear();
+    }
+
+    #[cfg(test)]
+    fn len(&self) -> usize {
+        self.by_hash.len()
+    }
+
+    /// Lookup the cached landing gain for `settings`. On miss, invoke
+    /// `compute` with the settings, store its result, and return it.
+    /// `compute` is `FnOnce` so callers can borrow other state from
+    /// the audio thread inside the closure without lifetime trouble.
+    fn get_or_compute<F>(&mut self, settings: &MasteringSettings, compute: F) -> f32
+    where
+        F: FnOnce(&MasteringSettings) -> f32,
+    {
+        let hash = settings_landing_hash(settings);
+        if let Some(&cached) = self.by_hash.get(&hash) {
+            return cached;
+        }
+        let result = compute(settings);
+        self.by_hash.insert(hash, result);
+        result
+    }
+}
+
+/// Hash of the `MasteringSettings` fields that affect the export
+/// landing gain. Uses serde_json for ergonomic correctness — every
+/// f32 / enum / Option boundary is handled by serde without bespoke
+/// bit-twiddling — at ~50–100 μs per call vs the ~20 ms measurement
+/// the cache prevents, the hash cost is negligible.
+///
+/// Two fields are STRIPPED before hashing so they don't bust the
+/// cache when they change without affecting the landing gain:
+///
+///   * `volume_match` — the measurement always runs with VM off
+///     (see `export_landing_gain_lin_for_preview`), so toggling VM
+///     in the UI doesn't invalidate the cached value.
+///   * `source_lufs_integrated` — affects the VM cap downstream of
+///     the chain measurement but not the measurement itself. Stripped
+///     so analysis updates (which inject this field) don't bust the
+///     cache.
+fn settings_landing_hash(settings: &MasteringSettings) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut to_hash = settings.clone();
+    to_hash.volume_match = false;
+    to_hash.source_lufs_integrated = None;
+    let json = serde_json::to_string(&to_hash).unwrap_or_default();
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    json.hash(&mut hasher);
+    hasher.finish()
 }
 
 fn export_landing_gain_lin_for_preview(
@@ -940,6 +1025,13 @@ fn export_landing_gain_lin_for_preview(
     }
 }
 
+/// Cache-less variant of the audio thread's UpdateChain coefficient
+/// build. The audio thread itself routes through `PreviewLandingCache`
+/// now (see the `UpdateChain` branch in `process_audio_command`), but
+/// this helper is preserved for tests that want to exercise the raw
+/// chain-coefficient + landing-gain composition without setting up a
+/// full cache + AudioThreadState.
+#[cfg(test)]
 fn live_preview_coeffs(
     sample_rate: u32,
     channels: u16,
@@ -1027,25 +1119,47 @@ fn process_audio_command(
             settings,
             preview_lufs_landing,
         } => {
-            if let Some(s) = state.as_ref() {
-                if let Some(tx) = s.live_coeffs_tx.as_ref() {
-                    let coeffs = if let Some(cache) = s.decoded_cache.as_ref() {
-                        live_preview_coeffs(
-                            s.live_sample_rate,
-                            cache.pcm.channels,
-                            &cache.pcm.samples,
-                            &settings,
-                            preview_lufs_landing,
-                        )
-                        .unwrap_or_else(|_| {
-                            crate::dsp::ChainCoeffs::from_settings(
-                                s.live_sample_rate,
-                                &settings,
-                            )
-                        })
-                    } else {
-                        crate::dsp::ChainCoeffs::from_settings(s.live_sample_rate, &settings)
-                    };
+            if let Some(s) = state.as_mut() {
+                // Split-borrow the AudioThreadState fields we touch:
+                // `landing_gain_cache` mutably (for cache insert) and
+                // `decoded_cache` / `live_sample_rate` / `live_coeffs_tx`
+                // immutably. Rust permits this when each disjoint field
+                // is named explicitly through `&mut s.x` / `&s.y`.
+                let sample_rate = s.live_sample_rate;
+                let landing_cache = &mut s.landing_gain_cache;
+                let decoded_cache = s.decoded_cache.as_ref();
+                let tx = s.live_coeffs_tx.as_ref();
+
+                if let Some(tx) = tx {
+                    let mut coeffs =
+                        crate::dsp::ChainCoeffs::from_settings(sample_rate, &settings);
+                    if preview_lufs_landing {
+                        if let Some(cache_entry) = decoded_cache {
+                            // Cache-aware landing-gain computation.
+                            // Cache miss → run the full measurement
+                            // through `export_landing_gain_lin_for_preview`
+                            // (~20 ms on the 8 s window) and store the
+                            // result. Cache hit → 0 ms; return the prior
+                            // value computed against the same settings
+                            // and PCM.
+                            let samples_ref = cache_entry.pcm.samples.as_slice();
+                            let channels = cache_entry.pcm.channels;
+                            coeffs.export_landing_gain_lin =
+                                landing_cache.get_or_compute(&settings, |s_arg| {
+                                    export_landing_gain_lin_for_preview(
+                                        samples_ref,
+                                        sample_rate,
+                                        channels,
+                                        s_arg,
+                                    )
+                                    .unwrap_or(1.0)
+                                });
+                        }
+                        // No decoded PCM cached yet → leave landing
+                        // gain at 1.0. The next play_master will
+                        // populate the decode cache and the next
+                        // UpdateChain will compute through the cache.
+                    }
                     let _ = tx.send(coeffs);
                 }
             }
@@ -1274,6 +1388,7 @@ fn handle_play(
             live_coeffs_tx: None,
             live_sample_rate: pcm.sample_rate,
             decoded_cache: None,
+            landing_gain_cache: PreviewLandingCache::new(),
             peak_linear: Arc::new(AtomicU32::new(0)),
             gr_low: Arc::new(AtomicU32::new(0)),
             gr_mid: Arc::new(AtomicU32::new(0)),
@@ -1362,6 +1477,22 @@ fn handle_play_master(
         }
     };
 
+    // Cache invalidation: clear the landing-gain cache when the
+    // canonical path differs from the prior decoded cache entry's.
+    // Same-path replays (Original/Mastered toggle, repeated play on
+    // the same track) preserve the cache because the PCM is
+    // unchanged. New track → entries were computed against the OLD
+    // PCM and would mis-land the new one.
+    let path_changed = state
+        .as_ref()
+        .and_then(|s| s.decoded_cache.as_ref())
+        .map_or(true, |entry| entry.canonical_path != canonical);
+    if path_changed {
+        if let Some(s) = state.as_mut() {
+            s.landing_gain_cache.clear();
+        }
+    }
+
     if state.is_none() {
         let (stream, handle) = rodio::OutputStream::try_default()
             .map_err(|e| format!("audio device unavailable: {e}"))?;
@@ -1375,6 +1506,7 @@ fn handle_play_master(
             live_coeffs_tx: None,
             live_sample_rate: pcm.sample_rate,
             decoded_cache: None,
+            landing_gain_cache: PreviewLandingCache::new(),
             peak_linear: Arc::new(AtomicU32::new(0)),
             gr_low: Arc::new(AtomicU32::new(0)),
             gr_mid: Arc::new(AtomicU32::new(0)),
@@ -1945,6 +2077,157 @@ mod tests {
         let raw_coeffs = live_preview_coeffs(sample_rate, channels, &samples, &settings, false)
             .expect("raw preview coeffs");
         assert_eq!(raw_coeffs.export_landing_gain_lin, 1.0);
+    }
+
+    // ========================================================================
+    // PreviewLandingCache — mechanical gates for the cache that prevents
+    // repeat measurements when the user nudges back to a settings hash
+    // they've already paid for. Together with command-loop coalescing,
+    // this is the cost-floor enforcement layer for live-preview perf.
+    // ========================================================================
+
+    /// Identical settings hash to the same u64. Two callers that build
+    /// the same MasteringSettings independently should land in the same
+    /// cache slot — otherwise a knob-nudge-and-back doesn't reuse the
+    /// prior result and the cache is doing nothing.
+    #[test]
+    fn settings_landing_hash_is_stable_across_identical_settings() {
+        let a = settings_with_intensity(0.5);
+        let b = settings_with_intensity(0.5);
+        assert_eq!(
+            settings_landing_hash(&a),
+            settings_landing_hash(&b),
+            "two structurally-identical settings must hash to the same value"
+        );
+    }
+
+    /// Different intensity → different hash. Settings fields that affect
+    /// chain output MUST bust the cache, otherwise stale gains would
+    /// apply across legitimate edits.
+    #[test]
+    fn settings_landing_hash_differs_on_intensity_change() {
+        let a = settings_with_intensity(0.5);
+        let b = settings_with_intensity(0.6);
+        assert_ne!(
+            settings_landing_hash(&a),
+            settings_landing_hash(&b),
+            "intensity change must produce a different hash"
+        );
+    }
+
+    /// VM toggle MUST NOT bust the cache. The measurement always runs
+    /// with VM stripped (see `export_landing_gain_lin_for_preview`), so
+    /// the landing gain is independent of VM state. If toggling VM
+    /// busts the cache, every Volume Match click pays for a re-measure
+    /// that returns the identical value.
+    #[test]
+    fn settings_landing_hash_ignores_volume_match_toggle() {
+        let mut a = settings_with_intensity(0.5);
+        a.volume_match = false;
+        let mut b = a.clone();
+        b.volume_match = true;
+        assert_eq!(
+            settings_landing_hash(&a),
+            settings_landing_hash(&b),
+            "VM toggle must not invalidate the cache — the measurement \
+             always runs VM-stripped"
+        );
+    }
+
+    /// Source LUFS injection MUST NOT bust the cache either. Analysis
+    /// completes asynchronously and injects `source_lufs_integrated`
+    /// into settings after the playback chain has already been
+    /// built — busting the cache on that injection would force a
+    /// re-measure of a landing gain that doesn't depend on source LUFS.
+    #[test]
+    fn settings_landing_hash_ignores_source_lufs_injection() {
+        let mut a = settings_with_intensity(0.5);
+        a.source_lufs_integrated = None;
+        let mut b = a.clone();
+        b.source_lufs_integrated = Some(-13.4);
+        assert_eq!(
+            settings_landing_hash(&a),
+            settings_landing_hash(&b),
+            "source LUFS injection must not invalidate the cache"
+        );
+    }
+
+    /// Cache miss invokes `compute` and stores the result; cache hit
+    /// returns the stored value without invoking `compute`. This is
+    /// the core perf property: a repeat call on identical settings
+    /// must skip the expensive measurement.
+    #[test]
+    fn landing_cache_skips_compute_on_repeat_settings() {
+        let mut cache = PreviewLandingCache::new();
+        let settings = settings_with_intensity(0.5);
+
+        let mut compute_calls = 0usize;
+        let result_a = cache.get_or_compute(&settings, |_| {
+            compute_calls += 1;
+            0.42_f32
+        });
+        assert_eq!(compute_calls, 1, "first call must run compute");
+        assert!((result_a - 0.42).abs() < f32::EPSILON);
+
+        // Second call with IDENTICAL settings → compute MUST NOT run.
+        let result_b = cache.get_or_compute(&settings, |_| {
+            compute_calls += 1;
+            0.99_f32 // would-be result; should never be observed
+        });
+        assert_eq!(
+            compute_calls, 1,
+            "second call with identical settings must hit the cache (got {} compute invocations)",
+            compute_calls
+        );
+        assert!(
+            (result_b - 0.42).abs() < f32::EPSILON,
+            "cache hit must return the stored value, not the new closure's result"
+        );
+    }
+
+    /// Different settings hash → cache miss → compute runs again with
+    /// a fresh result. Verifies the cache discriminates between
+    /// settings, not just collapses everything to the first stored
+    /// value.
+    #[test]
+    fn landing_cache_recomputes_on_different_settings() {
+        let mut cache = PreviewLandingCache::new();
+        let a = settings_with_intensity(0.5);
+        let b = settings_with_intensity(0.6);
+        let _ = cache.get_or_compute(&a, |_| 0.42_f32);
+        let mut compute_calls = 0usize;
+        let r = cache.get_or_compute(&b, |_| {
+            compute_calls += 1;
+            0.84_f32
+        });
+        assert_eq!(compute_calls, 1, "different settings must invoke compute");
+        assert!((r - 0.84).abs() < f32::EPSILON);
+        assert_eq!(cache.len(), 2, "cache must hold both entries");
+    }
+
+    /// `clear()` drops all entries — verifies the track-change
+    /// invalidation path in `handle_play_master` actually wipes the
+    /// cached values so the next UpdateChain re-measures against the
+    /// new PCM.
+    #[test]
+    fn landing_cache_clear_drops_all_entries() {
+        let mut cache = PreviewLandingCache::new();
+        let _ = cache.get_or_compute(&settings_with_intensity(0.4), |_| 0.4_f32);
+        let _ = cache.get_or_compute(&settings_with_intensity(0.5), |_| 0.5_f32);
+        let _ = cache.get_or_compute(&settings_with_intensity(0.6), |_| 0.6_f32);
+        assert_eq!(cache.len(), 3);
+        cache.clear();
+        assert_eq!(cache.len(), 0);
+
+        // Post-clear, a previously-cached settings hash must invoke
+        // compute again (the cache was honestly wiped, not just
+        // marked dirty).
+        let mut compute_calls = 0usize;
+        let _ = cache.get_or_compute(&settings_with_intensity(0.5), |_| {
+            compute_calls += 1;
+            0.5_f32
+        });
+        assert_eq!(compute_calls, 1, "clear() must force the next call to re-compute");
     }
 
     // ========================================================================
