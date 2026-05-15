@@ -244,3 +244,41 @@ Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>
 ```
 
 Subject under 70 characters. Push to `origin/master` after every passing slice.
+
+## Codex review addendum — handoff completeness check
+
+Codex reviewed this handoff read-only after commit `47861b3`. Overall verdict:
+the handoff is strong enough for a fresh session to continue without
+rediscovering the architecture or pulling Dan into per-commit QA. The
+mechanical-first workflow agreement is clear, the major live-preview/export
+architecture is captured, and the recent Codex review fixes are represented.
+
+Small consistency fixes recommended for the next doc-maintenance pass:
+
+1. **`docs/progress.md` is stale relative to this handoff.** `HANDOFF.md`
+   still says the tail of `progress.md` is "where we are now," but the tail
+   still points to the old VM hotfix / `energy_density` follow-up that this
+   evening session superseded. Either append a current `progress.md` entry for
+   the 22-commit session, or update `HANDOFF.md` to say this evening handoff
+   overrides `progress.md` until progress is refreshed.
+
+2. **Clarify HEAD wording.** The code snapshot commit is `74d704f`, but the
+   current repo HEAD after the handoff-doc commit is `47861b3`. Best wording:
+   "code snapshot: `74d704f`; docs HEAD after handoff: `47861b3`."
+
+3. **Normalize the `src/lib/` module count.** Some wording says "four pure
+   helper modules," while the tested pure-helper modules are three:
+   `effective-settings`, `settings-transitions`, and `history-stack`. Better
+   phrasing: "three tested pure-helper modules, plus API / preview / Tauri
+   support wrappers."
+
+4. **Keep Dan out of mechanical prewarm QA.** The pending listening list is
+   useful, but the auto-prewarm dispatch paths should be covered by the
+   deferred mock-API Vitest slice rather than assigned to Dan. Dan's listening
+   batch should stay focused on subjective UX/audio feel: whether playback
+   feels snappy and whether the audio behavior matches expectations.
+
+Fresh quick-gate spot check during this review:
+
+- `npm test`: 43/43 pass.
+- `cargo test --lib --target-dir target-tests`: 144/144 pass.
