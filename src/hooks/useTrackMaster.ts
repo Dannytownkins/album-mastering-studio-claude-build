@@ -160,28 +160,50 @@ export function useTrackMaster() {
   const HISTORY_MAX = 100;
   const HISTORY_COALESCE_MS = 300;
 
-  // Volume Match wiring: the DSP chain attenuates Mastered playback to the
-  // SOURCE's measured integrated LUFS when `volume_match` is on, but it can
-  // only do that if `source_lufs_integrated` rides along on the settings
-  // payload. The Rust fallback (no source LUFS → "undo input gain only")
-  // doesn't account for the preset compressor's makeup gain, EQ boosts, or
-  // saturation, so the fallback path leaves Mastered audibly louder than
-  // Source — which reads as "VM is broken" during a listening pass.
+  // Settings → backend bridge. Two transformations every payload needs
+  // before it reaches the audio chain:
   //
-  // This helper centralizes the injection so every code path that hands
-  // settings to the backend (play, updateSettings, undo/redo, analysis-
-  // arrival re-push) stays in sync. Returns the original settings object
-  // when analysis hasn't completed yet so the legacy fallback still
-  // engages — the analysis-arrival useEffect below will re-push the chain
-  // with the real LUFS the moment it lands.
+  //   1. Inject `source_lufs_integrated` from the analysis result for
+  //      this track. Currently unused by the VM math (which estimates
+  //      from chain gain stages instead), but kept future-friendly for
+  //      a real measure-and-target loop.
+  //
+  //   2. Override `volume_match` with the session-level transport state.
+  //      VM is a UI A/B utility, not a per-track creative choice — the
+  //      checkbox the user is looking at always wins. Without this
+  //      override, VM "got lost" when the user clicked around: per-track
+  //      `settings.volume_match` stayed on the value it had when last
+  //      toggled FROM that specific track, so switching tracks made VM
+  //      disagree with the checkbox until the user re-toggled. Once
+  //      lost, it stayed lost. This forces consistency on every payload
+  //      that goes to the backend.
+  //
+  // The volume_match read uses a ref, not transport.volumeMatch directly,
+  // so setVolumeMatch can update the ref synchronously and have the
+  // updateSettings call in the same tick already see the new value
+  // (otherwise React's setState batching would have us reading the OLD
+  // transport.volumeMatch and overriding the toggle BACK to its prior
+  // state — exactly the bug this override was meant to prevent).
+  //
+  // Renaming preserved as `withSourceLufs` to keep diffs small; the
+  // comment block above is the source of truth for what it actually does.
+  const volumeMatchRef = useRef(false);
+  useEffect(() => {
+    volumeMatchRef.current = transport.volumeMatch;
+  }, [transport.volumeMatch]);
   const withSourceLufs = useCallback(
     (id: TrackId | null, settings: MasteringSettings): MasteringSettings => {
-      if (!id) return settings;
-      const sourceLufs = analysisMap[id]?.lufs_integrated;
-      if (sourceLufs !== undefined && Number.isFinite(sourceLufs)) {
-        return { ...settings, source_lufs_integrated: sourceLufs };
+      const result: MasteringSettings = {
+        ...settings,
+        volume_match: volumeMatchRef.current,
+      };
+      if (id) {
+        const sourceLufs = analysisMap[id]?.lufs_integrated;
+        if (sourceLufs !== undefined && Number.isFinite(sourceLufs)) {
+          result.source_lufs_integrated = sourceLufs;
+        }
       }
-      return settings;
+      return result;
     },
     [analysisMap],
   );
@@ -1175,6 +1197,13 @@ export function useTrackMaster() {
 
   const setVolumeMatch = useCallback(
     (on: boolean) => {
+      // Update the ref synchronously BEFORE setTransport / updateSettings
+      // fire. The ref is what `withSourceLufs` reads when wrapping the
+      // settings payload for the audio chain — without this synchronous
+      // write, the override below would clobber the new VM value back to
+      // the prior transport.volumeMatch (React batches setTransport, so
+      // the deferred-effect-driven ref update lands one tick later).
+      volumeMatchRef.current = on;
       setTransport((t) => ({ ...t, volumeMatch: on }));
       // Route through updateSettings so the DSP chain picks up the change
       // (live for Mastered playback via api.updateChain, persisted to
