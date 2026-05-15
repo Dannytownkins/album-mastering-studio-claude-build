@@ -3967,3 +3967,566 @@ button.primary:disabled {
 .knob-lg .knob-vis {
   filter: drop-shadow(0 0 22px color-mix(in srgb, var(--knob-tone, #4d8bff) 22%, transparent));
 }
+
+/* ------------------------------------------------------------------
+   Codex console layout pass — 2026-05-14
+
+   The prior restyle had the right visual ingredients, but Track Master
+   still behaved like a vertical document. This block gives the desktop
+   app a console contract:
+     - main canvas does not scroll at the 1600x940 target
+     - right rail remains the scrollable technical drawer
+     - waveform height is bounded by the console grid, not by stacked
+       meter panels
+   ------------------------------------------------------------------ */
+
+@media (min-width: 1280px) and (min-height: 820px) {
+  .app {
+    grid-template-columns: 260px minmax(0, 1fr) 300px;
+    min-height: 0;
+  }
+
+  .workspace {
+    overflow: hidden;
+    min-height: 0;
+    padding: 0.75rem 1rem 0.85rem;
+    gap: 0;
+  }
+
+  .right-rail {
+    min-height: 0;
+    overflow-y: auto;
+  }
+
+  .track-master-console {
+    height: 100%;
+    min-height: 0;
+    display: grid;
+    grid-template-rows:
+      minmax(330px, 1.55fr)
+      104px
+      50px
+      minmax(170px, 0.75fr)
+      38px;
+    gap: 0.55rem;
+    overflow: hidden;
+  }
+
+  .track-master-console > * {
+    min-height: 0;
+  }
+
+  .console-hero {
+    display: grid;
+    grid-template-rows: minmax(58px, auto) minmax(0, 1fr);
+    min-height: 0;
+    gap: 0.38rem;
+  }
+
+  .console-hero .track-header {
+    min-height: 0;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: start;
+    flex-wrap: nowrap;
+    gap: 0.75rem;
+  }
+
+  .console-hero .track-header-main {
+    display: grid;
+    grid-template-columns: minmax(260px, auto) minmax(260px, 42vw);
+    grid-template-rows: auto auto;
+    align-items: center;
+    column-gap: 0.8rem;
+    row-gap: 0.32rem;
+  }
+
+  .console-hero .track-header-main .track-title {
+    grid-column: 1;
+    grid-row: 1;
+  }
+
+  .console-hero .track-header-main .track-meta-chips {
+    grid-column: 1;
+    grid-row: 2;
+  }
+
+  .console-hero .track-header-main .analysis-summary {
+    grid-column: 2;
+    grid-row: 1 / span 2;
+    align-self: center;
+  }
+
+  .console-hero .track-title {
+    font-size: clamp(1.45rem, 2.1vw, 1.95rem);
+    margin: 0;
+    line-height: 0.98;
+    max-width: 34vw;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .console-hero .track-sub {
+    gap: 0.35rem;
+  }
+
+  .console-hero .track-badge {
+    padding: 0.22rem 0.46rem;
+    font-size: 0.68rem;
+  }
+
+  .console-hero .analysis-summary {
+    max-width: none;
+    padding: 0.38rem 0.55rem;
+    min-height: 0;
+  }
+
+  .console-hero .analysis-summary-icon {
+    width: 1.35rem;
+    height: 1.35rem;
+  }
+
+  .track-header-controls {
+    gap: 0.55rem;
+    flex-wrap: nowrap;
+    align-items: center;
+  }
+
+  .wf-deck {
+    min-height: 0;
+    height: 100%;
+    display: grid;
+    grid-template-columns: 86px minmax(0, 1fr) 174px;
+    gap: 0.5rem;
+    padding: 0.5rem;
+  }
+
+  .wf-deck-transport {
+    justify-content: center;
+    gap: 0.45rem;
+    padding: 0.35rem 0.25rem;
+  }
+
+  .wf-deck-transport .play-btn {
+    width: clamp(58px, 4.4vw, 70px);
+    height: clamp(58px, 4.4vw, 70px);
+  }
+
+  .wf-deck-transport .time {
+    font-size: 0.72rem;
+    line-height: 1.2;
+  }
+
+  .wf-deck-transport .icon-btn {
+    width: 30px;
+    height: 30px;
+  }
+
+  .wf-card {
+    min-height: 0;
+    height: 100%;
+    gap: 0.22rem;
+  }
+
+  .wf-main {
+    min-height: 0;
+  }
+
+  .wf {
+    min-height: 0;
+  }
+
+  .wf-overview {
+    height: 36px;
+    width: calc(100% - 30px);
+    margin-right: 30px;
+  }
+
+  .wf-hint {
+    margin-top: 0.16rem;
+    font-size: 0.68rem;
+  }
+
+  .wf-deck-meters {
+    min-height: 0;
+    justify-self: end;
+    width: 174px;
+    overflow: hidden;
+  }
+
+  .wf-deck-meters .levels,
+  .wf-deck-meters .stereo-width-panel {
+    display: none;
+  }
+
+  .wf-deck-meters .master-out {
+    height: 100%;
+    min-height: 0;
+    display: grid;
+    grid-template-columns: minmax(104px, 2fr) minmax(44px, 1fr);
+    grid-template-rows: auto minmax(0, 1fr);
+    column-gap: 0.22rem;
+    row-gap: 0.18rem;
+    padding: 0.44rem 0.38rem 0.4rem;
+    overflow: hidden;
+  }
+
+  .wf-deck-meters .master-out .panel-head {
+    grid-column: 1 / -1;
+    min-width: 0;
+    margin: 0;
+  }
+
+  .wf-deck-meters .master-out .panel-title {
+    font-size: 0.58rem;
+  }
+
+  .wf-deck-meters .master-out .lufs-meter {
+    grid-column: 1;
+    grid-row: 2;
+    height: 100%;
+    min-height: 0;
+    gap: 0.22rem;
+    padding-top: 0;
+  }
+
+  .wf-deck-meters .master-out .lufs-bars {
+    gap: 0.22rem;
+  }
+
+  .wf-deck-meters .master-out .lufs-bar {
+    width: 30px;
+  }
+
+  .wf-deck-meters .master-out .lufs-scale {
+    width: 20px;
+    font-size: 0.48rem;
+  }
+
+  .wf-deck-meters .master-out .tp-bar {
+    width: 16px;
+  }
+
+  .wf-deck-meters .master-out .master-readouts {
+    grid-column: 2;
+    grid-row: 2;
+    display: grid;
+    grid-template-columns: 1fr;
+    grid-template-rows: repeat(4, minmax(0, 1fr));
+    gap: 0.14rem;
+    margin: 0;
+    min-height: 0;
+  }
+
+  .wf-deck-meters .master-out .readout {
+    min-width: 0;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 0.08rem 0.08rem;
+    gap: 0.03rem;
+    background:
+      linear-gradient(180deg, rgba(31, 37, 51, 0.48) 0%, rgba(31, 37, 51, 0.18) 100%);
+    border-color: rgba(111, 163, 255, 0.11);
+  }
+
+  .wf-deck-meters .master-out .readout-value {
+    min-width: 0;
+    justify-content: center;
+    gap: 0.04rem;
+  }
+
+  .wf-deck-meters .master-out .readout-label {
+    display: none;
+  }
+
+  .wf-deck-meters .master-out .readout-number {
+    font-size: clamp(0.58rem, 0.62vw, 0.72rem);
+    font-weight: 560;
+    letter-spacing: 0;
+  }
+
+  .wf-deck-meters .master-out .readout-unit,
+  .wf-deck-meters .master-out .readout-label {
+    font-size: 0.28rem;
+    line-height: 1;
+  }
+
+  .console-hero .analysis-summary {
+    position: relative;
+    z-index: 5;
+  }
+
+  .console-hero .analysis-summary > ul {
+    position: absolute;
+    top: calc(100% + 0.35rem);
+    left: 0;
+    right: 0;
+    z-index: 20;
+    padding: 0.55rem 0.65rem 0.6rem;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: linear-gradient(180deg, rgba(31, 37, 51, 0.98) 0%, rgba(17, 21, 31, 0.98) 100%);
+    box-shadow: 0 16px 30px rgba(0, 0, 0, 0.42);
+  }
+
+  .presets {
+    min-height: 0;
+    padding: 0.42rem 0.7rem 0.5rem;
+    gap: 0.32rem;
+    overflow: hidden;
+  }
+
+  .presets .section-head {
+    height: 16px;
+  }
+
+  .tile-row {
+    height: calc(100% - 18px);
+    grid-template-columns: repeat(8, minmax(0, 1fr));
+    gap: 0.45rem;
+  }
+
+  .tile {
+    min-height: 0;
+    height: 100%;
+    padding: 0.28rem 0.25rem;
+    gap: 0.12rem;
+  }
+
+  .tile-icon {
+    width: clamp(28px, 2.2vw, 36px);
+    height: clamp(28px, 2.2vw, 36px);
+  }
+
+  .tile-label {
+    font-size: 0.68rem;
+  }
+
+  .signal-chain {
+    min-height: 0;
+    padding: 0.28rem 0.8rem 0.32rem;
+    overflow: hidden;
+  }
+
+  .signal-chain-track {
+    height: 100%;
+  }
+
+  .chain-stage-disc {
+    width: 22px;
+    height: 22px;
+  }
+
+  .chain-stage-label {
+    font-size: 0.58rem;
+  }
+
+  .chain-link {
+    margin-bottom: 24px;
+  }
+
+  .console-controls {
+    display: grid;
+    grid-template-rows: 26px minmax(0, 1fr);
+    gap: 0.38rem;
+    min-height: 0;
+    overflow: hidden;
+  }
+
+  .console-controls .user-presets-add-inline {
+    align-self: start;
+    padding: 0.24rem 0.7rem;
+    font-size: 0.66rem;
+    line-height: 1;
+  }
+
+  .console-controls .user-presets {
+    min-height: 0;
+    padding: 0.3rem 0.55rem;
+    overflow: hidden;
+  }
+
+  .console-controls .macros {
+    min-height: 0;
+    overflow: hidden;
+  }
+
+  .knobs-row {
+    height: 100%;
+    min-height: 0;
+    grid-template-columns: minmax(118px, auto) minmax(210px, auto) minmax(260px, 1fr) minmax(150px, 170px);
+    gap: clamp(0.65rem, 1.1vw, 1rem);
+    padding: 0.75rem 0.9rem;
+    overflow: hidden;
+  }
+
+  .intensity-block,
+  .tone-shape-block,
+  .equalizer-block,
+  .loudness-target-block {
+    min-height: 0;
+  }
+
+  .knob-vis svg {
+    max-width: 100%;
+    height: auto;
+  }
+
+  .intensity-block .knob-vis {
+    max-width: 118px;
+  }
+
+  .tone-shape-knobs {
+    gap: 0.65rem;
+  }
+
+  .tone-shape-knobs .knob-vis {
+    max-width: 70px;
+  }
+
+  .knob-label {
+    font-size: 0.62rem;
+  }
+
+  .knob-value {
+    font-size: 0.68rem;
+  }
+
+  .equalizer-block .visual-eq-panel-compact {
+    min-height: 0;
+    height: 100%;
+  }
+
+  .visual-eq-panel-compact .eq-overlay {
+    min-height: 0;
+  }
+
+  .loudness-number {
+    font-size: 1.35rem;
+  }
+
+  .loudness-profile-select {
+    font-size: 0.72rem;
+    padding: 0.28rem 0.45rem;
+  }
+
+  .console-footer-row {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    align-items: center;
+    gap: 0.6rem;
+    min-height: 0;
+  }
+
+  .console-footer-row .undo-redo-bar {
+    margin: 0;
+    justify-content: flex-start;
+  }
+
+  .console-footer-row .stale-bar {
+    min-height: 0;
+    height: 100%;
+    padding: 0.35rem 0.7rem;
+    overflow: hidden;
+    flex-wrap: nowrap;
+  }
+
+  .console-footer-row .stale-bar .render-progress {
+    min-width: 140px;
+  }
+
+  .right-rail-export-group {
+    background: linear-gradient(180deg, var(--bg-1) 0%, var(--bg-1) 100%);
+    border-top: 1px solid rgba(111, 163, 255, 0.12);
+    box-shadow: 0 -16px 28px rgba(5, 8, 14, 0.92);
+  }
+
+  .rail-card-advanced:not([open]) {
+    padding-bottom: 0.45rem;
+  }
+
+  .rail-card-advanced:not([open]) .panel-head {
+    margin-bottom: 0;
+  }
+
+  .rail-card-advanced:not([open]) .advanced-grid {
+    display: none;
+  }
+}
+
+@media (min-width: 1700px) and (min-height: 960px) {
+  .app {
+    grid-template-columns: 300px minmax(0, 1fr) 340px;
+  }
+
+  .workspace {
+    padding: 0.9rem 1.15rem 0.95rem;
+  }
+
+  .track-master-console {
+    grid-template-rows:
+      minmax(410px, 1.56fr)
+      126px
+      58px
+      minmax(228px, 0.84fr)
+      42px;
+    gap: 0.68rem;
+  }
+
+  .wf-deck {
+    grid-template-columns: 104px minmax(0, 1fr) 186px;
+    gap: 0.6rem;
+  }
+
+  .wf-deck-meters {
+    width: 186px;
+  }
+
+  .wf-deck-meters .master-out {
+    grid-template-columns: minmax(114px, 2fr) minmax(48px, 1fr);
+  }
+
+  .wf-deck-meters .master-out .lufs-bar {
+    width: 34px;
+  }
+
+  .wf-deck-meters .master-out .tp-bar {
+    width: 18px;
+  }
+
+  .wf-deck-meters .master-out .readout-number {
+    font-size: 0.76rem;
+  }
+
+  .tile-icon {
+    width: 44px;
+    height: 44px;
+  }
+
+  .tile-label {
+    font-size: 0.74rem;
+  }
+
+  .knobs-row {
+    grid-template-columns: minmax(150px, auto) minmax(260px, auto) minmax(360px, 1fr) minmax(190px, 220px);
+    padding: 0.95rem 1.15rem;
+  }
+
+  .intensity-block .knob-vis {
+    max-width: 144px;
+  }
+
+  .tone-shape-knobs .knob-vis {
+    max-width: 84px;
+  }
+}
+
+@media (max-width: 1279px), (max-height: 819px) {
+  .track-master-console {
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+  }
+}

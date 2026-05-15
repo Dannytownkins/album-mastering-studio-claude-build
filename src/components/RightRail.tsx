@@ -62,21 +62,6 @@ export function RightRail({
       <QualityCheckPanel checks={lastChecks} analysis={analysis} />
       {advancedSlot}
       <div className="right-rail-export-group">
-        <button
-          type="button"
-          className="primary right-rail-export"
-          onClick={onExport}
-          disabled={!canExport || isExporting || isRendering}
-          title={
-            isRendering && !isExporting
-              ? "Disabled while a render-audit WAV is in progress — they share render state."
-              : !canExport
-              ? "Analyze a track first."
-              : undefined
-          }
-        >
-          {isExporting ? "Exporting…" : "Export Master"}
-        </button>
         <details className="right-rail-tools">
           <summary>Tools</summary>
           <button
@@ -95,6 +80,21 @@ export function RightRail({
             {previewStale ? "Render audit WAV" : "Re-render audit WAV"}
           </button>
         </details>
+        <button
+          type="button"
+          className="primary right-rail-export"
+          onClick={onExport}
+          disabled={!canExport || isExporting || isRendering}
+          title={
+            isRendering && !isExporting
+              ? "Disabled while a render-audit WAV is in progress — they share render state."
+              : !canExport
+              ? "Analyze a track first."
+              : undefined
+          }
+        >
+          {isExporting ? "Exporting…" : "Export Master"}
+        </button>
       </div>
     </aside>
   );

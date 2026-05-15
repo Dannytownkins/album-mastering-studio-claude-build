@@ -8,7 +8,7 @@ import {
 import { api } from "./lib/api";
 import { useTrackMaster } from "./hooks/useTrackMaster";
 import { PresetIcon } from "./components/PresetIcon";
-import { RightRail, MasterOutPanel, StereoWidthGauge, LevelsPanel } from "./components/RightRail";
+import { RightRail, MasterOutPanel } from "./components/RightRail";
 import { VisualEqPanel } from "./components/VisualEqPanel";
 import { AlbumPanel } from "./components/AlbumPanel";
 import { Knob, intensityLabel } from "./components/Knob";
@@ -526,70 +526,58 @@ function TrackMaster({ tm }: { tm: ReturnType<typeof useTrackMaster> }) {
   const track = tm.selectedTrack;
   if (!track) return null;
   return (
-    <>
+    <div className="track-master-console">
       {tm.mode === "album" && (
         <OverrideBanner
           isOverriding={tm.selectedIsOverriding}
           onToggle={() => tm.toggleOverrideAlbum(track.id)}
         />
       )}
-      <TrackHeader
-        track={track}
-        analysis={tm.selectedAnalysis}
-        isAnalyzing={tm.isAnalyzing}
-        showStoryTags={tm.mode === "album"}
-        playbackKind={tm.transport.playbackKind}
-        volumeMatch={tm.transport.volumeMatch}
-        onPlaybackKindChange={tm.setPlaybackKind}
-        onVolumeMatchChange={tm.setVolumeMatch}
-      />
       {/* UI_LAYOUT_REVISION_1600x940 L1 + L2 — waveform deck as the
-          workspace anchor.
-          Three columns: transport (play btn + time + loop) | waveform
-          (SVG + mini overview) | meters (Master Out + Stereo Width).
-          MasterOutPanel and StereoWidthGauge live here now rather
-          than the right rail so metering sits with the audio being
-          metered. */}
-      <section className="wf-deck">
-        <Transport
-          isPlaying={tm.transport.isPlaying}
-          loop={tm.transport.loop}
-          durationSec={track.duration_seconds ?? 180}
-          currentSec={tm.transport.currentTimeSec}
-          loopEnabled={!!tm.selectedRegion}
-          onPlayPause={tm.togglePlay}
-          onLoopToggle={tm.toggleLoop}
+          workspace anchor. Three columns: transport | waveform |
+          compact master out, keeping primary audio controls in the
+          hero instead of a separate transport strip. */}
+      <section className="console-hero">
+        <TrackHeader
+          track={track}
+          analysis={tm.selectedAnalysis}
+          isAnalyzing={tm.isAnalyzing}
+          showStoryTags={tm.mode === "album"}
+          playbackKind={tm.transport.playbackKind}
+          volumeMatch={tm.transport.volumeMatch}
+          onPlaybackKindChange={tm.setPlaybackKind}
+          onVolumeMatchChange={tm.setVolumeMatch}
         />
-        <WaveformView
-          peaks={tm.selectedWaveform}
-          isLoading={tm.isLoadingWaveform}
-          currentTimeSec={tm.transport.currentTimeSec}
-          durationSec={track.duration_seconds ?? 180}
-          region={tm.selectedRegion}
-          onSeek={tm.seek}
-          onSetRegion={tm.setRegion}
-          onClearRegion={tm.clearRegion}
-        />
-        <div className="wf-deck-meters">
-          <MasterOutPanel
-            analysis={tm.selectedAnalysis}
-            isAnalyzing={tm.isAnalyzing}
-            peakDbfs={tm.transport.peakDbfs}
+        <div className="wf-deck">
+          <Transport
             isPlaying={tm.transport.isPlaying}
-            lufsMomentary={tm.transport.lufsMomentary}
-            lufsIntegrated={tm.transport.lufsIntegrated}
+            loop={tm.transport.loop}
+            durationSec={track.duration_seconds ?? 180}
+            currentSec={tm.transport.currentTimeSec}
+            loopEnabled={!!tm.selectedRegion}
+            onPlayPause={tm.togglePlay}
+            onLoopToggle={tm.toggleLoop}
           />
-          <LevelsPanel
-            peakDbfs={tm.transport.peakDbfs}
-            isPlaying={tm.transport.isPlaying}
-            compressionGr={tm.transport.compressionGr}
+          <WaveformView
+            peaks={tm.selectedWaveform}
+            isLoading={tm.isLoadingWaveform}
+            currentTimeSec={tm.transport.currentTimeSec}
+            durationSec={track.duration_seconds ?? 180}
+            region={tm.selectedRegion}
+            onSeek={tm.seek}
+            onSetRegion={tm.setRegion}
+            onClearRegion={tm.clearRegion}
           />
-          <StereoWidthGauge
-            width={
-              tm.selectedSettings.advanced.width ??
-              (tm.selectedSettings.preset.kind === "spatial" ? 1.3 : 1.0)
-            }
-          />
+          <div className="wf-deck-meters">
+            <MasterOutPanel
+              analysis={tm.selectedAnalysis}
+              isAnalyzing={tm.isAnalyzing}
+              peakDbfs={tm.transport.peakDbfs}
+              isPlaying={tm.transport.isPlaying}
+              lufsMomentary={tm.transport.lufsMomentary}
+              lufsIntegrated={tm.transport.lufsIntegrated}
+            />
+          </div>
         </div>
       </section>
       <PresetTiles
@@ -597,6 +585,7 @@ function TrackMaster({ tm }: { tm: ReturnType<typeof useTrackMaster> }) {
         onChange={tm.setPreset}
       />
       <SignalChain settings={tm.selectedSettings} />
+      <div className="console-controls">
       <UserPresetSection
         presets={tm.userPresets}
         savingPreset={tm.savingPreset}
@@ -611,6 +600,8 @@ function TrackMaster({ tm }: { tm: ReturnType<typeof useTrackMaster> }) {
         onAdvanced={tm.setAdvanced}
         spectrumDb={tm.transport.spectrumDb}
       />
+      </div>
+      <div className="console-footer-row">
       <UndoRedoBar
         canUndo={tm.canUndo}
         canRedo={tm.canRedo}
@@ -623,7 +614,8 @@ function TrackMaster({ tm }: { tm: ReturnType<typeof useTrackMaster> }) {
         renderProgress={tm.renderProgress}
         isPlaying={tm.transport.isPlaying}
       />
-    </>
+      </div>
+    </div>
   );
 }
 
@@ -1858,7 +1850,7 @@ function AdvancedControlsCard({
 }) {
   const a = settings.advanced;
   return (
-    <details className="panel rail-card rail-card-advanced" open>
+    <details className="panel rail-card rail-card-advanced">
       <summary className="panel-head panel-head-summary">
         <span className="panel-title">ADVANCED CONTROLS</span>
         <span className="panel-chevron" aria-hidden>⌄</span>
