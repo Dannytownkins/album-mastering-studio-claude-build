@@ -333,14 +333,25 @@ fn character_promotion_and_bias_lands_on_rendered_audio() {
     );
 
     // LUFS comparison: Heavy gets +0.82 LUFS pull, ReturnAcoustic -1.05
-    // (1.87 LU expected gap). At intensity 1.0 with cinematic arc, the
-    // per-position arc offset adds some extra; we observe a >=1.0 LU
-    // gap and assert that as a safe lower bound.
+    // (1.87 LU character-only gap). The full per-track target also
+    // factors in arc curve + source-energy compensation, which together
+    // narrow the actual target spread to roughly 0.9-1.0 LU in this
+    // setup.
+    //
+    // Pre-B6, refuse-upward landing kept the quiet ReturnAcoustic at
+    // its post-chain LUFS (couldn't push it up to target), which
+    // accidentally widened the observed gap well past the character
+    // spread. After B6 + the album-plan landing patch, both tracks
+    // actually land at their character-biased targets and the observed
+    // gap reflects ONLY the character + arc + source-comp math — so
+    // the gap is smaller AND more honest. Threshold dropped from 1.0
+    // to 0.8 to match the post-B6 reality with comfortable measurement
+    // headroom.
     let heavy_lufs = engine::measure_integrated_lufs_at_path(heavy_path).expect("heavy LUFS");
     let return_lufs = engine::measure_integrated_lufs_at_path(return_path).expect("return LUFS");
     let gap = heavy_lufs - return_lufs;
     assert!(
-        gap >= 1.0,
-        "HeavyDjent ({heavy_lufs:.2} LUFS) should land at least +1.0 LU louder than ReturnAcoustic ({return_lufs:.2} LUFS); got gap = {gap:.2}",
+        gap >= 0.8,
+        "HeavyDjent ({heavy_lufs:.2} LUFS) should land at least +0.8 LU louder than ReturnAcoustic ({return_lufs:.2} LUFS); got gap = {gap:.2}",
     );
 }

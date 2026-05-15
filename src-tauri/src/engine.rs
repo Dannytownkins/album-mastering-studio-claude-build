@@ -1309,16 +1309,65 @@ pub fn render_album_plan_impl(
             }
         }
 
-        // Apply per-track LUFS landing using the shadowed target (the
-        // arc-modulated value).
+        // B6 follow-up — ceiling-bounded LUFS landing for the album-plan
+        // path. Pre-fix this was the third surviving refuse-upward block
+        // (`if delta_db < 0.0`), so user-facing Album Master exports
+        // ignored upward LUFS targets even after B6 landed for
+        // track-render and album-simple. Brought into lockstep here.
+        //
+        // `shadowed.effective_target_lufs()` is the arc-modulated target
+        // (per-track LUFS offset baked into the shadow), so each track
+        // lands at its arc-curve-determined target rather than the raw
+        // album-intent target — preserving the album-arc story.
+        //
+        // The chunk has been moved to a single ebur128 `I | TRUE_PEAK`
+        // pass so headroom is computed from the proper BS.1770 true peak
+        // rather than sample peak, matching the export-path math.
+        //
+        // TODO: extract the three identical landing blocks (this one,
+        // mastering_render_with_progress, album_render_with_progress)
+        // into a shared `apply_ceiling_bounded_landing` helper. Three
+        // copies is two too many — drift between them is exactly what
+        // got us here.
         if let Some(target_lufs) = shadowed.effective_target_lufs() {
             if target_lufs.is_finite() {
-                let measured =
-                    measure_integrated_lufs(&samples, pcm.sample_rate, pcm.channels)?;
-                if measured.is_finite() && measured > -70.0 {
-                    let delta_db = target_lufs - measured;
-                    if delta_db < 0.0 {
-                        let gain_lin = 10.0_f32.powf(delta_db / 20.0);
+                let channels_u32 = u32::from(pcm.channels.max(1));
+                let mut ebu =
+                    EbuR128::new(channels_u32, pcm.sample_rate, Mode::I | Mode::TRUE_PEAK)
+                        .map_err(|e| CommandError::Render(format!("ebur128 init: {e}")))?;
+                ebu.add_frames_f32(&samples)
+                    .map_err(|e| CommandError::Render(format!("ebur128 feed: {e}")))?;
+                let measured_lufs = sanitize_lufs(
+                    ebu.loudness_global()
+                        .map_err(|e| CommandError::Render(format!("ebur128 global: {e}")))?
+                        as f32,
+                );
+                if measured_lufs.is_finite() && measured_lufs > -70.0 {
+                    let mut peak_lin: f64 = 0.0;
+                    for ch in 0..channels_u32 {
+                        let tp = ebu
+                            .true_peak(ch)
+                            .map_err(|e| CommandError::Render(format!("ebur128 tp: {e}")))?;
+                        if tp > peak_lin {
+                            peak_lin = tp;
+                        }
+                    }
+                    let measured_true_peak_dbtp = if peak_lin > 0.0 {
+                        (20.0 * peak_lin.log10()) as f32
+                    } else {
+                        -60.0
+                    };
+                    let delta_db = target_lufs - measured_lufs;
+                    let ceiling_dbtp = shadowed.effective_ceiling_dbtp();
+                    let headroom_db =
+                        (ceiling_dbtp - measured_true_peak_dbtp).max(0.0);
+                    let applied_delta_db = if delta_db < 0.0 {
+                        delta_db
+                    } else {
+                        delta_db.min(headroom_db)
+                    };
+                    if applied_delta_db.abs() > 1.0e-4 {
+                        let gain_lin = 10.0_f32.powf(applied_delta_db / 20.0);
                         for s in samples.iter_mut() {
                             *s *= gain_lin;
                         }
