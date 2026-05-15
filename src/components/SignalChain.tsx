@@ -21,16 +21,22 @@ function presetSaturation(preset: Preset): number {
   // Mirror of the saturation_amount table in dsp.rs::ChainCoeffs::from_settings.
   // Kept in sync by hand — if those numbers change, update here too.
   switch (preset.kind) {
+    case "universal":
+      return 0.03;
+    case "clarity":
+      return 0.025;
     case "tape":
-      return 0.25;
-    case "warmth":
-      return 0.3;
-    case "punch":
-      return 0.2;
-    case "oomph":
-      return 0.15;
-    case "loud":
       return 0.1;
+    case "spatial":
+      return 0.04;
+    case "oomph":
+      return 0.045;
+    case "warmth":
+      return 0.08;
+    case "punch":
+      return 0.035;
+    case "loud":
+      return 0.055;
     default:
       return 0;
   }
@@ -111,9 +117,9 @@ function buildStages(settings: MasteringSettings): Stage[] {
     {
       key: "sat",
       label: "Saturation",
-      detail: sat > 0.05 ? `${(sat * 100).toFixed(0)}% drive` : "off",
-      active: sat > 0.05,
-      intensity: Math.min(1, sat),
+      detail: sat > 0.01 ? `${(sat * 100).toFixed(0)}% drive` : "off",
+      active: sat > 0.01,
+      intensity: Math.min(1, sat * 4),
       icon: SatIcon,
     },
     {

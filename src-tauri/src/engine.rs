@@ -890,9 +890,12 @@ pub fn album_render_with_progress(
             .as_ref()
             .and_then(|m| m.get(input.id.as_str()))
             .unwrap_or(&req.album_intent);
+        let mut render_settings = settings.clone();
+        render_settings.volume_match = false;
         let mut samples = pcm.samples;
         let channels_usize = pcm.channels.max(1) as usize;
-        let mut chain = crate::dsp::MasteringChain::new(pcm.sample_rate, channels_usize, settings);
+        let mut chain =
+            crate::dsp::MasteringChain::new(pcm.sample_rate, channels_usize, &render_settings);
 
         // Chunk the per-track render so we can fire sub-track progress events
         // — matches `mastering_render_with_progress`'s 4096-frame granularity.
@@ -1193,6 +1196,8 @@ pub fn render_album_plan_impl(
             curve_value,
             energy_density,
         );
+        let mut shadowed = shadowed;
+        shadowed.volume_match = false;
         let mut samples = pcm.samples;
         let channels_usize = pcm.channels.max(1) as usize;
         let mut chain = crate::dsp::MasteringChain::new(
@@ -1569,8 +1574,10 @@ pub fn mastering_render_with_progress(
     let channels = pcm.channels as usize;
     let channels_max = channels.max(1);
     let mut samples = pcm.samples;
+    let mut render_settings = settings.clone();
+    render_settings.volume_match = false;
     let mut chain =
-        crate::dsp::MasteringChain::new(pcm.sample_rate, channels_max, settings);
+        crate::dsp::MasteringChain::new(pcm.sample_rate, channels_max, &render_settings);
 
     // Process in 4096-frame chunks (~93 ms at 44.1 kHz) so progress callbacks
     // fire ~10 times per second. The chain's per-frame state (limiter
@@ -1646,7 +1653,7 @@ pub fn mastering_render_with_progress(
     // samples unchanged and let the user re-render with more Intensity /
     // Input Gain. See `docs/research/most-recent-mastering-app-research.md`
     // for the industry-survey notes behind this decision.
-    if let Some(target_lufs) = settings.effective_target_lufs() {
+    if let Some(target_lufs) = render_settings.effective_target_lufs() {
         if target_lufs.is_finite() && measured_lufs.is_finite() && measured_lufs > -70.0 {
             let delta_db = target_lufs - measured_lufs;
             if delta_db < 0.0 {
@@ -1664,7 +1671,7 @@ pub fn mastering_render_with_progress(
         }
     }
 
-    let bit_depth = settings.effective_bit_depth();
+    let bit_depth = render_settings.effective_bit_depth();
     let measurements = RenderedMeasurements {
         lufs_integrated: measured_lufs,
         true_peak_dbtp: measured_true_peak_dbtp,

@@ -172,6 +172,26 @@ cargo test --tests --target-dir target-tests  # scratch build dir, all tests
 
 The executable name hasn't been renamed even though the app is now YES Master. `target-tests/` is gitignored implicitly via not-being-listed (we should add it to `.gitignore` next chance — minor cleanup).
 
+## Review checkpoint findings (2026-05-15)
+
+Fresh-Claude audit of HEAD `4b9b7e9`. Full report at `docs/checkpoints/checkpoint-2026-05-15-post-phase-a4-vm-hotfixes.md`. `cargo check` clean, `cargo test --lib` 81/81. Carryovers from `checkpoint-2026-05-14-pre-preset-retune.md` are marked.
+
+### Real bugs
+
+- **B1 (carryover from 2026-05-14)** — `engine.rs:1188` `let energy_density = 0.5_f32;` in album EXPORT path. PCM is decoded at `engine.rs:1152`; `compute_energy_density_score` already exists at `engine.rs:670`. Already open-queue item #1.
+- **B2 (carryover from 2026-05-14)** — `engine.rs:1437–1438` `INT16_SCALE = 32_767.0` / `INT24_SCALE = 8_388_607.0`. Most-negative integer unreachable; 1-LSB asymmetric output. Already open-queue item #7a.
+- **B3 (NEW)** — Volume Match applies in the export path. `dsp.rs:1713` `process_frame_inplace` multiplies `volume_match_gain_lin` into every frame unconditionally. Render path at `engine.rs:895` (track) / `engine.rs:1198` (album) constructs the chain with the request `settings` directly — if `settings.volume_match = true` at render time, the exported WAV is attenuated by the chain-push estimate and under-shoots the preset's `target_lufs` by 0–1 dB. **PRODUCT.md Locked Decision #22 / line 262 explicitly says "Export level is unchanged" by VM.** Spec violation. Already flagged in this handoff's "Newly-surfaced this session" section; promoting to a real bug here. Fix shape: force `settings.volume_match = false` in `engine.rs` render entry points (~5 lines) + regression test asserting rendered WAV is byte-equivalent with VM on vs off in settings (~30 lines).
+- **B4 (NEW)** — `types.rs:747` `ISO_PLACEHOLDER = "2026-05-11T12:00:00Z"` is used as the timestamp for every report/manifest `*_iso` field. Six call sites in production code: `engine.rs:233` (`AnalysisResult.measured_at_iso`), `engine.rs:944` (track render `started_at_iso`), `engine.rs:1295` (`rendered_at_iso`), `engine.rs:1687` (album render `started_at_iso`), `settings.rs:29` (`UserPreset.created_at_iso`), `album.rs:545` (album entry `measured_at_iso`). Every "when did this happen" field reports the same wrong date. Easy fix at call sites (use `chrono::Utc::now().to_rfc3339()`); missed because no test asserts `*_iso` fields differ across invocations. ~40 lines total including a regression test.
+
+### Top priorities for next session
+
+1. **Dan's listening verification (already the primary workstream in this handoff).** (a) Confirm hotfix-3 VM stays sync'd through track-switch flurries; (b) run the analysis-doc listening pass on `It's a coat` per `PRESET_REFERENCE_ANALYSIS_2026-05-14.md` lines 191–198. The Phase A4 retune is partially-correctness via the distinctness contract — the chain's structural limit (single Q=0.8 peak at 1500 Hz for the 1.5–4 kHz range) forced two thresholds to soften from the analysis-doc reference values; only Dan's ears can confirm the softened-threshold presets actually deliver. If they do, ship. If they don't, see PB-C in the checkpoint.
+2. **B3 — Strip VM in the export path.** Spec violation, narrow fix. ~45 lines including a regression test.
+3. **B4 — Replace `ISO_PLACEHOLDER` with real timestamps at the six call sites.** ~40 lines including a regression test that two analyses 1 s apart differ in `measured_at_iso`. Add `chrono` if not already transitive.
+4. **B1 — Album-export `energy_density` literal.** Open-queue #1; already scoped.
+
+(B2 — INT scales asymmetric — remains low-priority background work as queued.)
+
 ## Commit shape
 
 Match the established pattern from this session's commits:
