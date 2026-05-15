@@ -1,6 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "Album Mastering Studio",
+  "productName": "YES Master",
   "version": "0.0.0",
   "identifier": "com.albummasteringstudio.app",
   "build": {
@@ -13,7 +13,7 @@
     "windows": [
       {
         "label": "main",
-        "title": "Album Mastering Studio",
+        "title": "YES Master",
         "width": 1600,
         "height": 940,
         "minWidth": 1280,

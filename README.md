@@ -1,6 +1,6 @@
-# Album Mastering Studio Claude Build
+# YES Master Claude Build
 
-This repo is a clean, source-free build space for Claude Code to take a from-zero shot at Album Mastering Studio.
+This repo is a clean, source-free build space for Claude Code to take a from-zero shot at YES Master.
 
 It intentionally starts with product canon, research, and build guidance, not inherited implementation code. The goal is not to clone the existing Codex/Tauri/Python repo. The goal is to build the best private Windows desktop mastering app that satisfies the product mission.
 

@@ -258,7 +258,7 @@ function TopHeader({
             />
           </svg>
         </span>
-        <span className="brand-name">Album Mastering Studio</span>
+        <span className="brand-name">YES Master</span>
       </div>
       <nav className="top-header-tabs" aria-label="Mode">
         <button
@@ -509,8 +509,8 @@ function EmptyState({ onAdd }: { onAdd: () => void }) {
       </div>
       <h1>Drop audio, analyze, export.</h1>
       <p>
-        Album Mastering Studio masters one track or a full album. Universal-first
-        — no genre wizard, no jargon walls.
+        YES Master masters one track or a full album. Universal-first — no genre
+        wizard, no jargon walls.
       </p>
       <button type="button" className="primary" onClick={onAdd}>
         Import audio

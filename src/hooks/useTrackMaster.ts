@@ -1312,7 +1312,7 @@ export function useTrackMaster() {
         defaultPath: defaultName,
         filters: [
           {
-            name: "Album Mastering Studio project",
+            name: "YES Master project",
             extensions: ["ams.json", "json"],
           },
         ],
@@ -1347,7 +1347,7 @@ export function useTrackMaster() {
         multiple: false,
         filters: [
           {
-            name: "Album Mastering Studio project",
+            name: "YES Master project",
             extensions: ["ams.json", "json"],
           },
         ],

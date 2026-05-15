@@ -1,7 +1,7 @@
 [package]
 name = "album-mastering-studio"
 version = "0.0.0"
-description = "Album Mastering Studio (Claude build)"
+description = "YES Master (Claude build)"
 authors = ["Daniel Kinsner"]
 edition = "2021"
 rust-version = "1.77"

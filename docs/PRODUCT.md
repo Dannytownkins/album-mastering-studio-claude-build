@@ -1,14 +1,14 @@
-# Album Mastering Studio Product Canon
+# YES Master Product Canon
 
 Last updated: 2026-05-11
 
-This is the canonical product mission and decision record for Album Mastering Studio. Future agents must read this file before doing product, UI, DSP, architecture, or planning work. If another document conflicts with this one, treat this file as the product source of truth unless the user explicitly changes direction.
+This is the canonical product mission and decision record for YES Master. Future agents must read this file before doing product, UI, DSP, architecture, or planning work. If another document conflicts with this one, treat this file as the product source of truth unless the user explicitly changes direction.
 
 This file is not a detailed implementation plan. It captures what the product is, what quality means, what decisions are locked, what remains open, and how long-running agents should keep the work coherent.
 
 ## Mission
 
-Album Mastering Studio is a local desktop mastering app for real tracks and real albums. It should be something a musician or producer would be proud to run their audio through.
+YES Master is a local desktop mastering app for real tracks and real albums. It should be something a musician or producer would be proud to run their audio through.
 
 The product is not a toy normalizer, not a certified mastering lab, and not a replacement for a skilled mastering engineer. It is a serious, standards-aware, listening-first mastering assistant that helps users improve finished mixes, export credible masters, and understand the result.
 
