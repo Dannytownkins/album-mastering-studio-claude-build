@@ -1632,19 +1632,40 @@ impl DitherRng {
     }
 }
 
-const INT16_SCALE: f32 = 32_767.0;
-const INT24_SCALE: f32 = 8_388_607.0;
+// B2 fix — symmetric-range scaling for integer quantization.
+//
+// Pre-fix, INT16_SCALE was 32_767.0 and INT24_SCALE was 8_388_607.0
+// (the absolute value of i16::MAX / i24::MAX). With `clamp(-1, 1) *
+// SCALE`, the most-negative integer (`i16::MIN = -32_768` / equivalent
+// for i24) was unreachable — output range was asymmetric by 1 LSB.
+// Audibly inconsequential (< -90 dB FS DC offset) but technically
+// incorrect.
+//
+// Industry-standard fix: scale by the absolute value of the integer
+// MIN (32_768 / 8_388_608) so negative samples reach the full range,
+// and clamp the rounded result to the actual integer range post-
+// multiply so positive samples cap at MAX without overflowing.
+//
+// `INT16_PEAK` / `INT24_PEAK` are still 32_767 / 8_388_607 — used as
+// the upper clamp bound (the most-positive integer the format
+// supports).
+const INT16_SCALE: f32 = 32_768.0;
+const INT16_PEAK_POS: f32 = 32_767.0;
+const INT24_SCALE: f32 = 8_388_608.0;
+const INT24_PEAK_POS: f32 = 8_388_607.0;
 
 #[inline]
 fn quantize_16_tpdf(sample: f32, rng: &mut DitherRng) -> i16 {
     let dithered = sample + rng.tpdf_lsb() / INT16_SCALE;
-    (dithered.clamp(-1.0, 1.0) * INT16_SCALE).round() as i16
+    let scaled = (dithered * INT16_SCALE).round();
+    scaled.clamp(-INT16_SCALE, INT16_PEAK_POS) as i16
 }
 
 #[inline]
 fn quantize_24_tpdf(sample: f32, rng: &mut DitherRng) -> i32 {
     let dithered = sample + rng.tpdf_lsb() / INT24_SCALE;
-    (dithered.clamp(-1.0, 1.0) * INT24_SCALE).round() as i32
+    let scaled = (dithered * INT24_SCALE).round();
+    scaled.clamp(-INT24_SCALE, INT24_PEAK_POS) as i32
 }
 
 fn wav_spec(channels: u16, sample_rate: u32, bit_depth: u16) -> CommandResult<hound::WavSpec> {
@@ -2007,7 +2028,7 @@ mod tests {
 
         let mut undithered = HashSet::new();
         for &s in &samples {
-            let v = (s.clamp(-1.0, 1.0) * INT16_SCALE).round() as i16;
+            let v = (s * INT16_SCALE).round().clamp(-INT16_SCALE, INT16_PEAK_POS) as i16;
             undithered.insert(v);
         }
 
@@ -2382,6 +2403,98 @@ mod tests {
         );
         assert_eq!(applied, 0.0);
         assert_eq!(samples, original, "samples must not be mutated on no-op");
+    }
+
+    // ========================================================================
+    // B2: symmetric-range integer quantization. Pre-fix, INT16_SCALE and
+    // INT24_SCALE were `i16::MAX` / equivalent, so `clamp(-1, 1) * SCALE`
+    // never reached `i16::MIN`/i24-MIN — the most-negative integer was
+    // unreachable. Post-fix, SCALE is `|i16::MIN|` / equivalent, with a
+    // post-multiply clamp to the integer range so positive samples cap
+    // at MAX without overflow.
+    // ========================================================================
+
+    /// `sample <= -1.0` (safely below the lower bound even with dither)
+    /// must produce `i16::MIN`. Pre-B2 it produced -32_767 (one LSB
+    /// short of the actual minimum). This test is the regression gate
+    /// for the asymmetric-range bug.
+    #[test]
+    fn quantize_16_tpdf_reaches_i16_min_on_negative_extreme() {
+        // Sample = -1.5 is far enough below -1.0 that no TPDF dither
+        // amplitude (which lives in [-2/INT16_SCALE, +2/INT16_SCALE) ≈
+        // ±6e-5) can pull the dithered value above the clamp floor.
+        // The scaled value rounds to ~-49152, clamps to -32768, casts
+        // to `i16::MIN`.
+        let mut rng = DitherRng::new(0xDEAD_BEEF);
+        let result = quantize_16_tpdf(-1.5, &mut rng);
+        assert_eq!(
+            result,
+            i16::MIN,
+            "sample <= -1.0 must reach i16::MIN ({}); pre-B2 the asymmetric \
+             scale capped at -32767 instead",
+            i16::MIN
+        );
+    }
+
+    /// `sample >= 1.0` (or above) must clamp to `i16::MAX`, never
+    /// overflow to a negative value. With the new scale = 32768, raw
+    /// `1.0 * 32768 = 32768` would overflow `as i16`; the post-multiply
+    /// clamp is what keeps the result valid.
+    #[test]
+    fn quantize_16_tpdf_clamps_positive_extreme_at_i16_max() {
+        let mut rng = DitherRng::new(0xCAFE_F00D);
+        let result = quantize_16_tpdf(2.0, &mut rng);
+        assert_eq!(
+            result,
+            i16::MAX,
+            "sample >= 1.0 must clamp to i16::MAX ({}); the post-multiply \
+             clamp is what prevents overflow with the new scale",
+            i16::MAX
+        );
+    }
+
+    /// Equivalent regression gate for the 24-bit path: the i24 MIN
+    /// value (-8_388_608) is reachable for samples at or below -1.0.
+    #[test]
+    fn quantize_24_tpdf_reaches_i24_min_on_negative_extreme() {
+        let mut rng = DitherRng::new(0xDEAD_BEEF);
+        let result = quantize_24_tpdf(-1.5, &mut rng);
+        assert_eq!(
+            result,
+            -8_388_608,
+            "sample <= -1.0 must reach i24-MIN (-8_388_608); pre-B2 \
+             the asymmetric scale capped at -8_388_607"
+        );
+    }
+
+    /// And the 24-bit positive clamp.
+    #[test]
+    fn quantize_24_tpdf_clamps_positive_extreme_at_i24_max() {
+        let mut rng = DitherRng::new(0xCAFE_F00D);
+        let result = quantize_24_tpdf(2.0, &mut rng);
+        assert_eq!(
+            result, 8_388_607,
+            "sample >= 1.0 must clamp to i24-MAX (8_388_607); the \
+             post-multiply clamp prevents overflow with the new scale"
+        );
+    }
+
+    /// Zero sample with deterministic RNG produces a value within ±2
+    /// LSB of zero (the TPDF dither amplitude bound). Verifies the
+    /// dither + quantize path doesn't drift away from silence on the
+    /// new scale — the prior implementation had the same property and
+    /// nothing should have changed for typical-amplitude samples.
+    #[test]
+    fn quantize_16_tpdf_preserves_silence_within_dither_bound() {
+        let mut rng = DitherRng::new(0xBEEF_1234);
+        for _ in 0..100 {
+            let result = quantize_16_tpdf(0.0, &mut rng);
+            assert!(
+                result.abs() <= 2,
+                "zero sample with TPDF dither should produce values within \
+                 ±2 LSB; got {result}"
+            );
+        }
     }
 
     /// B4: every production *_iso field now reads from `now_iso()` instead
