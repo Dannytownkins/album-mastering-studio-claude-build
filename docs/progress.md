@@ -3499,4 +3499,45 @@ the audio is doing). Then **open queue #1 — album-export
 ~50 lines of regression test). Full plan in
 `docs/HANDOFF_2026-05-15_session.md`.
 
+## 2026-05-17 — Codex item 4: mock-API frontend gates
+
+Goal:
+
+Close the deferred Codex review item from
+`docs/HANDOFF_2026-05-15_evening.md`: add mechanical frontend coverage
+for the mock/API interaction paths that were previously verified only
+by inspection.
+
+What changed:
+
+- Exported `LoudnessTarget` from `src/App.tsx` so its DOM behavior can
+  be tested directly without rendering the full app.
+- Added `src/App.loudness-target.test.tsx` covering the end-to-end
+  force-to-Custom behavior for explicit LUFS picks, including the
+  `Off / Natural` null-over-null case.
+- Added `src/hooks/useTrackMaster.integration.test.tsx` with mocked
+  Tauri/API boundaries for restore/import/open-project decode prewarm
+  dispatches and Export LUFS Preview `api.updateChain(..., flag)`
+  dispatch while Mastered playback is loaded.
+
+Verification:
+
+- `npm test`: 49/49 pass across 5 files; no React `act` warnings.
+- `npm run build`: clean production build.
+
+Real-audio fixture used: None.
+
+What failed or remains partial:
+
+- No audio/DSP paths touched.
+- The autonomous queue is still effectively empty; remaining meaningful
+  work needs Dan's listening pass or a product-direction pick.
+
+Next recommended slice:
+
+Dan listening batch from `docs/HANDOFF_2026-05-15_evening.md`: VM sync
+through track-switch flurries, aggressive-settings VM cap, decode-stall
+end-to-end, LoudnessTarget readout truthfulness, and preset character
+on real material.
+
 

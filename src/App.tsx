@@ -1589,7 +1589,7 @@ function Macros({
 // pure helpers). Single source of truth for both the rendered dropdown
 // options AND the readout the LoudnessTarget block shows.
 
-function LoudnessTarget({
+export function LoudnessTarget({
   settings,
   onAdvanced,
   onDeliveryProfile,
