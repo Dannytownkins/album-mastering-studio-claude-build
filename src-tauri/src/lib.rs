@@ -8,6 +8,7 @@ pub mod files;
 pub mod jobs;
 pub mod project;
 pub mod settings;
+pub mod sources;
 pub mod spectrum;
 pub mod types;
 
