@@ -7,6 +7,7 @@ pub mod files;
 pub mod jobs;
 pub mod project;
 pub mod settings;
+pub mod spectrum;
 pub mod types;
 
 pub use types::*;
