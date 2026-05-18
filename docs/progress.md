@@ -3540,4 +3540,83 @@ through track-switch flurries, aggressive-settings VM cap, decode-stall
 end-to-end, LoudnessTarget readout truthfulness, and preset character
 on real material.
 
+## 2026-05-18 — audio.rs split refactor (3-pass)
+
+Goal:
+
+Close the `audio.rs split candidate` follow-up flagged in
+`docs/HANDOFF_2026-05-15_evening.md` ("3,558 lines mixing five
+concerns; natural fault lines exist for a future refactor session").
+Pure behavior-preserving refactor — the test matrix is the gate.
+
+What changed:
+
+Three sequential commits, each its own module + its own test gate:
+
+- `fcd5ec3` — Pass 1: extract `SpectrumRing` + `SpectrumAnalyzer` to
+  new `src-tauri/src/spectrum.rs` (175 lines). Drops the
+  `AtomicUsize` + `rustfft::num_complex::Complex` imports from
+  audio.rs; `AtomicU32` + `Ordering` stay (still used by peak / GR
+  atomics). Pub constants `SPECTRUM_N_SAMPLES` + `SPECTRUM_N_BINS`
+  remain pub-at-crate so any future consumer can reach them.
+- `03d79e3` — Pass 2: extract `DecodedPcm`, `DecodedPeaks`,
+  `decode_full`, `decode_to_peaks` (plus all seven Symphonia imports
+  + their `CommandResult` / `CommandError` use) to new
+  `src-tauri/src/decode.rs` (220 lines). Updated five
+  `crate::audio::decode_full` call sites in `engine.rs` and one in
+  `audio.rs` to `crate::decode::decode_full`.
+- `abedc64` — Pass 3: extract `MeteredPcmSource` + `MasteringSource`
+  (plus the `COEFFS_CHECK_INTERVAL_FRAMES` /
+  `COEFFS_CROSSFADE_FRAMES` constants) to new
+  `src-tauri/src/sources.rs` (423 lines). Bumped visibility from
+  module-private `struct` / `fn new` to `pub(crate)` so audio.rs's
+  `handle_play` / `handle_play_master` can still construct them and
+  the in-module tests still cover `MasteringSource` via `super::*`.
+  Stale "MasteringSource is private to this module" comment in the
+  tests-header trimmed; tests stay in audio.rs since they were
+  written there.
+
+Net effect on audio.rs:
+
+- 3,655 lines → 2,883 lines (-772, -21%).
+- File is now ~orchestration: Tauri commands, `AudioPlayer`,
+  `AudioThreadState`, coalescer, caches, audio thread, handle_play /
+  handle_play_master, plus the ~1,400-line `mod tests`. Tests stayed
+  put for this refactor — moving them is the natural next pass if
+  someone wants to keep going, but the orchestration code is
+  meaningfully more readable already.
+
+Verification (run after each of the three commits):
+
+- `cargo check --tests`: clean (no warnings) after each pass.
+- `cargo test --lib`: 144/144 pass after each pass.
+- `cargo test --tests --target-dir target-tests`: full fast-lane pass
+  after each pass — every integration suite green (export_volume_match,
+  preset_signature, preset_loudness_balance, preset_character_smoke).
+- `npm test`: 49/49 pass after pass 1 (frontend untouched after that).
+- `npm run build`: clean after pass 1.
+
+Real-audio fixture used: None. Behavior is byte-identical between pre-
+and post-split — every moved function body is textually unchanged, the
+test matrix gates the contract.
+
+What failed or remains partial:
+
+- Nothing failed. Three clean passes.
+- Tests in audio.rs are still co-located with what's left in audio.rs
+  rather than moved to sit next to the lifted modules. Splitting them
+  is the natural next refactor cut if someone wants to keep going,
+  but it touches ~1,400 lines of test code and isn't urgent.
+- The audio thread / coalescer / cache code in audio.rs could
+  themselves be split (the handoff flagged these as separate
+  concerns). Diminishing returns at this point — 2,883 lines is
+  readable, the orchestration is one cohesive concern, and the win
+  per additional cut is small.
+
+Next recommended slice:
+
+Same as before — Dan's listening batch from
+`docs/HANDOFF_2026-05-15_evening.md`. The autonomous mechanical queue
+is back to effectively empty.
+
 
