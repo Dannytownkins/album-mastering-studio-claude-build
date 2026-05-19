@@ -51,6 +51,7 @@ rustfft = "6"
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
 
 [dev-dependencies]
+sha2 = "0.10"
 tokio = { version = "1", features = ["macros", "rt"] }
 tempfile = "3"
 

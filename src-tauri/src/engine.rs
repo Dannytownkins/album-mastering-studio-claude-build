@@ -2064,7 +2064,15 @@ fn write_wav(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use sha2::{Digest, Sha256};
     use std::collections::HashSet;
+    use std::fs;
+
+    fn sha256_file(path: &Path) -> String {
+        let bytes = fs::read(path).expect("read wav bytes");
+        let digest = Sha256::digest(&bytes);
+        digest.iter().map(|byte| format!("{byte:02x}")).collect()
+    }
 
     #[test]
     fn explicit_output_dir_creates_selected_album_folder() {
@@ -2117,6 +2125,165 @@ mod tests {
         assert!(
             out_path.parent().expect("parent").is_dir(),
             "Windows backslash output parent should be created"
+        );
+    }
+
+    #[test]
+    fn write_wav_16bit_snapshot_pins_spec_samples_and_file_hash() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let out = tmp.path().join("writer-16.wav");
+        let samples = [-1.0, -0.5, -0.125, 0.0, 0.125, 0.5, 0.99999];
+
+        write_wav(&out, &samples, 48_000, 1, 16).expect("write 16-bit wav");
+
+        let mut reader = hound::WavReader::open(&out).expect("open 16-bit wav");
+        let spec = reader.spec();
+        assert_eq!(spec.channels, 1);
+        assert_eq!(spec.sample_rate, 48_000);
+        assert_eq!(spec.bits_per_sample, 16);
+        assert_eq!(spec.sample_format, hound::SampleFormat::Int);
+
+        let decoded: Vec<i16> = reader
+            .samples::<i16>()
+            .collect::<Result<Vec<_>, _>>()
+            .expect("decode 16-bit samples");
+        assert_eq!(
+            decoded,
+            vec![-32768, -16383, -4095, -1, 4096, 16385, 32767]
+        );
+        assert_eq!(
+            sha256_file(&out),
+            "49af7efd8ee26001eaabfc0b3a83e09fc09454eeeee6d08678ae6d249f0210d1"
+        );
+    }
+
+    #[test]
+    fn write_samples_24bit_snapshot_pins_spec_samples_and_file_hash() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let out = tmp.path().join("writer-24.wav");
+        let samples = [-1.0, -0.25, 0.0, 0.25, 0.75, 0.99999];
+        let spec = wav_spec(2, 44_100, 24).expect("24-bit spec");
+        let mut writer = hound::WavWriter::create(&out, spec).expect("create 24-bit wav");
+
+        write_samples_into_writer(&mut writer, &samples, 24).expect("write 24-bit samples");
+        writer.finalize().expect("finalize 24-bit wav");
+
+        let mut reader = hound::WavReader::open(&out).expect("open 24-bit wav");
+        let spec = reader.spec();
+        assert_eq!(spec.channels, 2);
+        assert_eq!(spec.sample_rate, 44_100);
+        assert_eq!(spec.bits_per_sample, 24);
+        assert_eq!(spec.sample_format, hound::SampleFormat::Int);
+
+        let decoded: Vec<i32> = reader
+            .samples::<i32>()
+            .collect::<Result<Vec<_>, _>>()
+            .expect("decode 24-bit samples");
+        assert_eq!(
+            decoded,
+            vec![-8388608, -2097151, 1, 2097151, 6291456, 8388525]
+        );
+        assert_eq!(
+            sha256_file(&out),
+            "ad59c803dc2d594e5d6915b337c55c3ac64607491a6997153b4dcf9d58f5c369"
+        );
+    }
+
+    #[test]
+    fn write_wav_and_writer_helper_match_for_same_16bit_spec() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let via_write_wav = tmp.path().join("write-wav.wav");
+        let via_helper = tmp.path().join("writer-helper.wav");
+        let samples = [-0.75, -0.25, 0.0, 0.25, 0.75, 0.99999];
+
+        write_wav(&via_write_wav, &samples, 48_000, 2, 16).expect("write_wav");
+        let spec = wav_spec(2, 48_000, 16).expect("16-bit spec");
+        let mut writer = hound::WavWriter::create(&via_helper, spec).expect("create wav");
+        write_samples_into_writer(&mut writer, &samples, 16).expect("write via helper");
+        writer.finalize().expect("finalize helper wav");
+
+        assert_eq!(
+            fs::read(&via_write_wav).expect("read write_wav bytes"),
+            fs::read(&via_helper).expect("read helper bytes"),
+            "write_wav and write_samples_into_writer must stay byte-identical when their specs overlap"
+        );
+    }
+
+    #[test]
+    fn writer_helpers_intentionally_reset_dither_rng_per_call() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let first = tmp.path().join("first.wav");
+        let second = tmp.path().join("second.wav");
+        let segmented = tmp.path().join("segmented.wav");
+        let continuous = tmp.path().join("continuous.wav");
+        let segment = [0.0_f32; 32];
+        let doubled: Vec<f32> = segment.iter().chain(segment.iter()).copied().collect();
+
+        // Intentional writer contract: every public writer helper starts a
+        // fresh deterministic TPDF dither stream with DitherRng::new(0xA11_CE).
+        // Continuous-album segments therefore reset dither at each helper call.
+        // Do not "fix" this into one shared RNG stream without changing the
+        // byte contract and the album-render expectations together.
+        write_wav(&first, &segment, 48_000, 1, 16).expect("first write_wav");
+        write_wav(&second, &segment, 48_000, 1, 16).expect("second write_wav");
+        assert_eq!(
+            fs::read(&first).expect("read first write_wav"),
+            fs::read(&second).expect("read second write_wav"),
+            "write_wav must reset its dither RNG on every call"
+        );
+
+        let spec = wav_spec(1, 48_000, 16).expect("segmented spec");
+        let mut segmented_writer =
+            hound::WavWriter::create(&segmented, spec).expect("create segmented wav");
+        write_samples_into_writer(&mut segmented_writer, &segment, 16)
+            .expect("first segmented write");
+        write_samples_into_writer(&mut segmented_writer, &segment, 16)
+            .expect("second segmented write");
+        segmented_writer.finalize().expect("finalize segmented");
+
+        let spec = wav_spec(1, 48_000, 16).expect("continuous spec");
+        let mut continuous_writer =
+            hound::WavWriter::create(&continuous, spec).expect("create continuous wav");
+        write_samples_into_writer(&mut continuous_writer, &doubled, 16)
+            .expect("single continuous write");
+        continuous_writer.finalize().expect("finalize continuous");
+
+        let mut segmented_reader = hound::WavReader::open(&segmented).expect("open segmented");
+        let segmented_samples: Vec<i16> = segmented_reader
+            .samples::<i16>()
+            .collect::<Result<Vec<_>, _>>()
+            .expect("decode segmented samples");
+        assert_eq!(&segmented_samples[..32], &segmented_samples[32..]);
+        assert_ne!(
+            fs::read(&segmented).expect("read segmented bytes"),
+            fs::read(&continuous).expect("read continuous bytes"),
+            "two helper calls must not collapse into one continuous dither stream"
+        );
+    }
+
+    #[test]
+    fn write_wav_32bit_float_snapshot_pins_spec_samples_and_file_hash() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let out = tmp.path().join("writer-32.wav");
+        let samples = [-1.2, -0.25, 0.0, 0.25, 1.2];
+
+        write_wav(&out, &samples, 48_000, 1, 32).expect("write 32-bit float wav");
+
+        let mut reader = hound::WavReader::open(&out).expect("open 32-bit wav");
+        let spec = reader.spec();
+        assert_eq!(spec.channels, 1);
+        assert_eq!(spec.sample_rate, 48_000);
+        assert_eq!(spec.bits_per_sample, 32);
+        assert_eq!(spec.sample_format, hound::SampleFormat::Float);
+
+        let decoded: Vec<f32> = reader
+            .samples::<f32>()
+            .collect::<Result<Vec<_>, _>>()
+            .expect("decode 32-bit samples");
+        assert_eq!(decoded, vec![-1.0, -0.25, 0.0, 0.25, 1.0]);
+        assert_eq!(
+            sha256_file(&out),
+            "ca8a2aef746c21b009a818f48c1cbfb4b13a51fb72aae503ee5f85e6950813f7"
         );
     }
 
