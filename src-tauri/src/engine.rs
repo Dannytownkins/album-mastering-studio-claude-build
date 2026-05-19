@@ -941,12 +941,16 @@ pub async fn render_track_master(
 #[tauri::command]
 pub async fn render_album_master(
     request: AlbumRenderRequest,
+    output_dir: Option<String>,
     app: tauri::AppHandle,
 ) -> CommandResult<RenderJob> {
     if request.tracks.is_empty() {
         return Err(CommandError::Other("album has no tracks".to_string()));
     }
-    let out_dir = render_output_dir(&app, RenderKind::Album)?;
+    let out_dir = match output_dir {
+        Some(path) => explicit_output_dir(Path::new(&path))?,
+        None => render_output_dir(&app, RenderKind::Album)?,
+    };
     // The first track's id is the "representative" id on the progress events.
     // Frontend treats the album bar as one unit, so it just needs to know
     // "this is the album render" via `kind = Album` — the track_id field is
@@ -1544,9 +1548,13 @@ pub async fn plan_album(request: PlanAlbumRequest) -> CommandResult<AlbumPlan> {
 #[tauri::command]
 pub async fn render_album_plan(
     request: AlbumPlanRenderRequest,
+    output_dir: Option<String>,
     app: tauri::AppHandle,
 ) -> CommandResult<AlbumRenderReport> {
-    let out_dir = render_output_dir(&app, RenderKind::Album)?;
+    let out_dir = match output_dir {
+        Some(path) => explicit_output_dir(Path::new(&path))?,
+        None => render_output_dir(&app, RenderKind::Album)?,
+    };
     let app_for_progress = app.clone();
     let on_progress = move |fraction: f32| {
         let _ = app_for_progress.emit(
@@ -1950,6 +1958,14 @@ fn explicit_output_path(path: &Path) -> CommandResult<PathBuf> {
     Ok(path.to_path_buf())
 }
 
+fn explicit_output_dir(path: &Path) -> CommandResult<PathBuf> {
+    if path.as_os_str().is_empty() {
+        return Err(CommandError::InvalidPath("empty output directory".to_string()));
+    }
+    std::fs::create_dir_all(path).map_err(|e| CommandError::Io(e.to_string()))?;
+    Ok(path.to_path_buf())
+}
+
 fn unique_output_path(
     out_dir: &Path,
     source: &Path,
@@ -2049,6 +2065,27 @@ fn write_wav(
 mod tests {
     use super::*;
     use std::collections::HashSet;
+
+    #[test]
+    fn explicit_output_dir_creates_selected_album_folder() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let chosen = tmp.path().join("Album Masters").join("Round 1");
+
+        let out_dir = explicit_output_dir(&chosen).expect("explicit output dir");
+
+        assert_eq!(out_dir, chosen);
+        assert!(out_dir.is_dir(), "selected album folder should be created");
+    }
+
+    #[test]
+    fn explicit_output_dir_rejects_empty_path() {
+        let err = explicit_output_dir(Path::new("")).expect_err("empty dir should fail");
+
+        assert!(
+            matches!(err, CommandError::InvalidPath(ref message) if message == "empty output directory"),
+            "unexpected error: {err:?}"
+        );
+    }
 
     /// Phase A4: at -90 dBFS the signal sits at ~1 LSB of a 16-bit
     /// quantizer. Without dither, `round()` quantizes the sine to a

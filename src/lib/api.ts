@@ -78,6 +78,7 @@ export const api = {
     tracks: Array<{ id: TrackId; path: string }>,
     albumIntent: MasteringSettings,
     perTrackOverrides?: Record<string, MasteringSettings>,
+    outputDir?: string,
   ) =>
     invoke<RenderJob>("render_album_master", {
       request: {
@@ -85,6 +86,7 @@ export const api = {
         album_intent: albumIntent,
         per_track_overrides: perTrackOverrides ?? null,
       },
+      outputDir: outputDir ?? null,
     }),
 
   prepareWaveform: (
@@ -193,9 +195,14 @@ export const api = {
       request: { title, analyses, durations, arc, intensity },
     }),
 
-  renderAlbumPlan: (plan: AlbumPlan, tracks: AlbumTrackRenderInput[]) =>
+  renderAlbumPlan: (
+    plan: AlbumPlan,
+    tracks: AlbumTrackRenderInput[],
+    outputDir?: string,
+  ) =>
     invoke<AlbumRenderReport>("render_album_plan", {
       request: { plan, tracks },
+      outputDir: outputDir ?? null,
     }),
 };
 

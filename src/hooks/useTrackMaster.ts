@@ -77,6 +77,16 @@ function ensureWavExtension(path: string): string {
   return /\.wav$/i.test(path) ? path : `${path}.wav`;
 }
 
+async function chooseAlbumExportFolder(): Promise<string | null> {
+  const selected = await open({
+    directory: true,
+    multiple: false,
+    title: "Choose album export folder",
+  });
+  if (Array.isArray(selected)) return selected[0] ?? null;
+  return selected;
+}
+
 export type PlaybackKindUI = "source" | "master";
 
 export interface ExportReceipt {
@@ -920,6 +930,8 @@ export function useTrackMaster() {
         );
       }
       const durations = tracks.map((t) => t.duration_seconds ?? 0);
+      const outputDir = await chooseAlbumExportFolder();
+      if (!outputDir) return;
       const arc: import("../bindings").AlbumArc = {
         kind: "preset",
         preset: albumArcKind,
@@ -942,7 +954,7 @@ export function useTrackMaster() {
             settings,
           };
         });
-      const report = await api.renderAlbumPlan(plan, renderTracks);
+      const report = await api.renderAlbumPlan(plan, renderTracks, outputDir);
       setAlbumExportReport(report);
     } catch (err) {
       setError(String(err));
@@ -1423,11 +1435,14 @@ export function useTrackMaster() {
       }
       const overridesArg =
         Object.keys(perTrackOverrides).length > 0 ? perTrackOverrides : undefined;
+      const outputDir = await chooseAlbumExportFolder();
+      if (!outputDir) return;
 
       const job = await api.renderAlbumMaster(
         tracks.map((t) => ({ id: t.id, path: t.path })),
         albumIntent,
         overridesArg,
+        outputDir,
       );
       const continuousPath = job.output_paths[0] ?? "";
       setLastExportReceipt({

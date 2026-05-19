@@ -74,7 +74,9 @@ export async function listen<T>(
 // ---------------------------------------------------------------------------
 
 type OpenDialogOptions = {
+  directory?: boolean;
   multiple?: boolean;
+  title?: string;
   filters?: Array<{ name: string; extensions: string[] }>;
 };
 type SaveDialogOptions = {

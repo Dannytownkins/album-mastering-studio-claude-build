@@ -3841,3 +3841,51 @@ Next recommended slice:
 
 Run the Mac app and verify the Save dialog appears before Track Master export;
 then consider an album export directory picker as a separate objective UX slice.
+
+## 2026-05-18 - album export directory picker
+
+Goal:
+
+Finish the export-location UX by making album exports choose an explicit
+folder instead of silently writing album WAVs/manifests into Application
+Support.
+
+What changed:
+
+- Album Plan export now opens a native folder picker before planning/rendering
+  and passes the chosen directory to the Rust album renderer.
+- The legacy album export button now uses the same folder picker, so both album
+  export paths behave consistently.
+- Rust album commands accept an optional explicit output directory and create
+  it when needed, while preserving the old app render folder for callers that
+  do not provide one.
+- Browser-preview dialog mocks and TypeScript dialog types now understand
+  directory-selection options.
+
+Verification:
+
+- Initial hook integration tests failed because album export did not open a
+  folder picker.
+- `npm test -- src/hooks/useTrackMaster.integration.test.tsx`: 9/9 pass.
+- `cargo test -p album-mastering-studio explicit_output_dir -- --nocapture`:
+  2/2 pass.
+- `npm test`: 61/61 pass.
+- `npm run build`: clean production build.
+- `cargo test -p album-mastering-studio`: full suite passed.
+
+Real-audio fixture used:
+
+No. This slice changes export destination plumbing only; it does not touch DSP,
+WAV sample generation, or LUFS landing behavior.
+
+What failed or remains partial:
+
+- A first Rust assertion partially moved the error value while checking the
+  empty-path case; fixed by borrowing the message in the test pattern.
+- This does not remove duplicate album export buttons. It only makes both
+  current paths save to the user's chosen folder.
+
+Next recommended slice:
+
+Run the Mac app smoke path for Track Master and Album Master export dialogs,
+then clean up the duplicate album export entry point if the UX feels redundant.

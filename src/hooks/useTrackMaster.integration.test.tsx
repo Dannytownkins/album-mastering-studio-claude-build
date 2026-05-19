@@ -12,6 +12,7 @@ import {
 
 import type {
   AnalysisResult,
+  AlbumPlan,
   ImportedTrack,
   MasteringSettings,
   ProjectState,
@@ -188,6 +189,26 @@ function makeRenderJob(path: string): RenderJob {
       sample_rate: 44_100,
       bit_depth: 24,
     },
+  };
+}
+
+function makeAlbumPlan(trackIds: string[]): AlbumPlan {
+  return {
+    title: "Desk Check",
+    arc: { kind: "preset", preset: "cinematic" },
+    tracks: trackIds.map((trackId, index) => ({
+      track_id: trackId,
+      position: index,
+      role: index === 0 ? "opener" : "closer",
+      role_locked: false,
+      arc_lufs_offset_db: 0,
+      intensity_scale: 1,
+    })),
+    transitions: trackIds.map(() => ({
+      kind: "direct",
+      duration_seconds: 0,
+    })),
+    intensity: 1,
   };
 }
 
@@ -426,6 +447,157 @@ describe("useTrackMaster integration dispatches", () => {
 
     expect(mocks.save).toHaveBeenCalled();
     expect(mocks.api.renderTrackMaster).not.toHaveBeenCalled();
+    await act(async () => {
+      harness.root.unmount();
+    });
+  });
+
+  it("asks where to save an album plan export and passes that folder to render", async () => {
+    const first = makeTrack("album-1", "C:/audio/album one.wav");
+    const second = makeTrack("album-2", "C:/audio/album two.wav");
+    const plan = makeAlbumPlan([first.id, second.id]);
+    const outputDir = "/Users/daniel/Desktop/Album Masters";
+    mocks.api.importTracks.mockResolvedValue([first, second]);
+    mocks.api.analyzeTracks.mockResolvedValue([
+      makeAnalysis(first.id),
+      makeAnalysis(second.id),
+    ]);
+    mocks.open.mockResolvedValue(outputDir);
+    mocks.api.planAlbum.mockResolvedValue(plan);
+    mocks.api.renderAlbumPlan.mockResolvedValue({
+      album_wav_path: `${outputDir}/album_continuous_1.wav`,
+      manifest_path: `${outputDir}/manifest.json`,
+      tracks: [
+        {
+          track_id: first.id,
+          position: 0,
+          output_path: `${outputDir}/album-1__master.wav`,
+          measured_lufs: -14,
+        },
+        {
+          track_id: second.id,
+          position: 1,
+          output_path: `${outputDir}/album-2__master.wav`,
+          measured_lufs: -14,
+        },
+      ],
+    });
+    const harness = await renderHookHarness();
+
+    await act(async () => {
+      await harness.current().importFiles([first.path, second.path]);
+    });
+    await waitFor(() => {
+      expect(harness.current().tracks).toHaveLength(2);
+    });
+
+    await act(async () => {
+      await harness.current().exportAlbumPlan();
+    });
+
+    expect(mocks.open).toHaveBeenCalledWith({
+      directory: true,
+      multiple: false,
+      title: "Choose album export folder",
+    });
+    expect(mocks.api.renderAlbumPlan).toHaveBeenCalledWith(
+      plan,
+      expect.arrayContaining([
+        expect.objectContaining({
+          track_id: first.id,
+          source_path: first.path,
+        }),
+        expect.objectContaining({
+          track_id: second.id,
+          source_path: second.path,
+        }),
+      ]),
+      outputDir,
+    );
+    expect(harness.current().albumExportReport?.album_wav_path).toBe(
+      `${outputDir}/album_continuous_1.wav`,
+    );
+    await act(async () => {
+      harness.root.unmount();
+    });
+  });
+
+  it("does not render an album plan when the folder picker is cancelled", async () => {
+    const first = makeTrack("album-cancel-1", "C:/audio/album cancel one.wav");
+    const second = makeTrack("album-cancel-2", "C:/audio/album cancel two.wav");
+    mocks.api.importTracks.mockResolvedValue([first, second]);
+    mocks.api.analyzeTracks.mockResolvedValue([
+      makeAnalysis(first.id),
+      makeAnalysis(second.id),
+    ]);
+    mocks.open.mockResolvedValue(null);
+    const harness = await renderHookHarness();
+
+    await act(async () => {
+      await harness.current().importFiles([first.path, second.path]);
+    });
+    await waitFor(() => {
+      expect(harness.current().tracks).toHaveLength(2);
+    });
+
+    await act(async () => {
+      await harness.current().exportAlbumPlan();
+    });
+
+    expect(mocks.open).toHaveBeenCalled();
+    expect(mocks.api.planAlbum).not.toHaveBeenCalled();
+    expect(mocks.api.renderAlbumPlan).not.toHaveBeenCalled();
+    await act(async () => {
+      harness.root.unmount();
+    });
+  });
+
+  it("asks where to save the legacy album export and passes that folder to render", async () => {
+    const first = makeTrack("legacy-album-1", "C:/audio/legacy one.wav");
+    const second = makeTrack("legacy-album-2", "C:/audio/legacy two.wav");
+    const outputDir = "/Users/daniel/Desktop/Legacy Album Masters";
+    mocks.api.importTracks.mockResolvedValue([first, second]);
+    mocks.open.mockResolvedValue(outputDir);
+    mocks.api.renderAlbumMaster.mockResolvedValue({
+      ...makeRenderJob(`${outputDir}/album_continuous_1.wav`),
+      kind: "album",
+      target_tracks: [first.id, second.id],
+      output_paths: [
+        `${outputDir}/album_continuous_1.wav`,
+        `${outputDir}/legacy-album-1__master.wav`,
+        `${outputDir}/legacy-album-2__master.wav`,
+      ],
+    });
+    const harness = await renderHookHarness();
+
+    await act(async () => {
+      await harness.current().importFiles([first.path, second.path]);
+    });
+    await waitFor(() => {
+      expect(harness.current().tracks).toHaveLength(2);
+    });
+
+    await act(async () => {
+      await harness.current().exportAlbum();
+    });
+
+    expect(mocks.open).toHaveBeenCalledWith({
+      directory: true,
+      multiple: false,
+      title: "Choose album export folder",
+    });
+    expect(mocks.api.renderAlbumMaster).toHaveBeenCalledWith(
+      [
+        { id: first.id, path: first.path },
+        { id: second.id, path: second.path },
+      ],
+      DEFAULT_SETTINGS,
+      undefined,
+      outputDir,
+    );
+    expect(harness.current().lastExportReceipt?.outputPath).toBe(
+      `${outputDir}/album_continuous_1.wav`,
+    );
     await act(async () => {
       harness.root.unmount();
     });
