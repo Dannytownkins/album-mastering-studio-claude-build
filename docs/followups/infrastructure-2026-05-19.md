@@ -20,6 +20,10 @@ distribution items, not monitor-time musical taste checks.
    - Tauri's `.msi` path depends on WiX and must be verified on Windows; if the
      first run complains about Windows optional features or installer tooling,
      capture the exact error here before changing config.
+   - `bundle.windows.webviewInstallMode` is currently the explicit Tauri
+     default (`downloadBootstrapper`, silent). Revisit only after the first
+     Windows installer run proves whether that default is wrong for Dan's
+     target machines.
 
 3. Windows Authenticode signing.
    - Wider Windows distribution will require a code-signing certificate and an

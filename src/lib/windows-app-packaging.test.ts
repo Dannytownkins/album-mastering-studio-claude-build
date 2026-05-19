@@ -16,6 +16,12 @@ describe("Windows app packaging", () => {
     expect(config.identifier).toBe("com.albummasteringstudio.yesmaster");
     expect(config.bundle?.active).toBe(true);
     expect(config.bundle?.targets).toBe("all");
+    expect(config.bundle?.windows).toEqual({
+      webviewInstallMode: {
+        silent: true,
+        type: "downloadBootstrapper",
+      },
+    });
     expect(icons).toContain("icons/icon.ico");
     expect(existsSync(resolve(repoRoot, "src-tauri/icons/icon.ico"))).toBe(true);
   });
@@ -24,8 +30,9 @@ describe("Windows app packaging", () => {
     const packageJson = readJson("package.json");
 
     expect(packageJson.scripts?.["build:windows"]).toBe(
-      "tauri build --bundles msi,nsis",
+      "rimraf src-tauri/target/release/produce_dialog_smoke.exe && tauri build --bundles msi,nsis",
     );
+    expect(packageJson.devDependencies?.rimraf).toBeDefined();
   });
 
   test("release app builds omit Windows-specific development helper binaries", () => {
@@ -35,5 +42,6 @@ describe("Windows app packaging", () => {
     expect(cargoToml).toContain('name = "album-mastering-studio"');
     expect(cargoToml).not.toContain('name = "produce_dialog_smoke"');
     expect(cargoToml).not.toContain('name = "produce_dialog_smoke.exe"');
+    expect(existsSync(resolve(repoRoot, "src-tauri/examples/produce_dialog_smoke.rs"))).toBe(true);
   });
 });

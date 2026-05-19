@@ -4,7 +4,8 @@ This document is the entry point for any Claude session — interactive or sched
 
 ## Cross-platform considerations
 
-- Build commands: macOS uses `npm run build:mac` (`tauri build --bundles app,dmg`); Windows uses `npm run build:windows` (`tauri build --bundles msi,nsis`). Tauri's Windows installer docs name MSI and NSIS as the Windows installer outputs; `app` is the macOS app-bundle target, so do not change the Windows script to `app,msi`.
+- Build commands: macOS uses `npm run build:mac` (`tauri build --bundles app,dmg`); Windows uses `npm run build:windows` (`tauri build --bundles msi,nsis`). Tauri's Windows installer docs name MSI and NSIS as the Windows installer outputs; `app` is the macOS app-bundle target, so do not change the Windows script to `app,msi`. The Windows script uses `rimraf` to remove `produce_dialog_smoke.exe` cross-shell before bundling.
+- Windows bundling has an explicit `bundle.windows.webviewInstallMode` block set to Tauri's documented default (`downloadBootstrapper`, silent). This is intentional until the first Windows build proves whether a different WebView2 install mode is needed.
 - Code signing: macOS is currently ad-hoc signed for local use; wider macOS distribution needs Apple Developer ID + notarization. Windows distribution needs Authenticode signing once YES Master leaves Dan's own machines.
 - Save/export paths: the Tauri dialog plugin returns native paths on each OS (`/` on macOS/Linux, `\` on Windows). Frontend tests now pin both separator styles flowing through to render unchanged.
 
