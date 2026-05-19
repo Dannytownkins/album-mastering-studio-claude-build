@@ -1383,9 +1383,11 @@ function Macros({
 }: {
   settings: MasteringSettings;
   onIntensity: (v: number) => void;
-  // Widened in slice 4b: includes "low-mid" so the embedded Visual EQ
-  // can drive eq_low_mid_db via the same setter the knobs use.
-  onEq: (band: "low" | "low-mid" | "mid" | "high", db: number) => void;
+  // Visual EQ drag-only nodes share the same setter as the knob-bound bands.
+  onEq: (
+    band: "sub" | "low" | "low-mid" | "mid" | "high-mid" | "high" | "sparkle",
+    db: number,
+  ) => void;
   onAdvanced: (adv: MasteringSettings["advanced"]) => void;
   // Used by the LoudnessTarget quick-select so explicit picks atomically
   // switch the DeliveryProfile alongside the underlying lufs_offset_db

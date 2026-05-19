@@ -4657,6 +4657,42 @@ Next recommended slice:
 Commit 2: TypeScript bindings, defaults, setter widening, Macros prop plumbing,
 and TS fixture updates.
 
+## 2026-05-19 - Phase B.2: TypeScript 7-band EQ settings plumbing
+
+Goal:
+
+Carry the new Rust EQ fields through the TypeScript settings shape and state
+update path so the visual EQ slice can add Sub, High-Mid, and Sparkle nodes
+without another state-model change.
+
+What changed:
+
+- Added `eq_sub_db`, `eq_high_mid_db`, and `eq_sparkle_db` to the
+  `MasteringSettings` TypeScript binding.
+- Added the new fields to frontend defaults and TS test/mock fixtures at 0 dB.
+- Widened `setEqBand` to accept `sub`, `high-mid`, and `sparkle`.
+- Widened the Macros `onEq` prop type so the upcoming Visual EQ component
+  expansion can call the same setter.
+
+Verification:
+
+- `npm test`: 81/81 tests pass.
+- `npm run build`: TypeScript build and Vite production build pass.
+
+Real-audio fixture used:
+
+No. This slice only changed frontend state shape and TypeScript plumbing.
+
+What failed or remains partial:
+
+- Visual EQ still renders four nodes. The three new drag-only nodes land in
+  Commit 3.
+
+Next recommended slice:
+
+Commit 3: expand `VisualEqPanel` to seven bands, choose final colors, and run
+the required visual smoke checks.
+
 ## 2026-05-19 - Phase B.0: per-preset chain-output SHA snapshots
 
 Goal:

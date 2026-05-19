@@ -147,12 +147,15 @@ export interface AlbumPlan {
 export interface MasteringSettings {
   preset: Preset;
   intensity: number;
+  eq_sub_db: number;
   eq_low_db: number;
   /// Phase A2 — user offset on top of the preset's low-mid baseline
   /// (400 Hz peaking @ Q=0.9). 0 = use preset value as-is.
   eq_low_mid_db: number;
   eq_mid_db: number;
+  eq_high_mid_db: number;
   eq_high_db: number;
+  eq_sparkle_db: number;
   volume_match: boolean;
   /// Source-track integrated LUFS — populated by the frontend before
   /// each `updateChain` so the chain can compute proper Volume Match

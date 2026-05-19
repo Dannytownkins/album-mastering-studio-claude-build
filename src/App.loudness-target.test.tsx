@@ -43,10 +43,13 @@ function makeSettings(
   return {
     preset: { kind: "universal" },
     intensity: 0.5,
+    eq_sub_db: 0,
     eq_low_db: 0,
     eq_low_mid_db: 0,
     eq_mid_db: 0,
+    eq_high_mid_db: 0,
     eq_high_db: 0,
+    eq_sparkle_db: 0,
     volume_match: false,
     input_gain_db: 0,
     output_gain_db: 0,

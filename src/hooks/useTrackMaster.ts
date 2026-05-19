@@ -38,10 +38,13 @@ import type {
 const DEFAULT_SETTINGS: MasteringSettings = {
   preset: { kind: "universal" },
   intensity: 0.5,
+  eq_sub_db: 0,
   eq_low_db: 0,
   eq_low_mid_db: 0,
   eq_mid_db: 0,
+  eq_high_mid_db: 0,
   eq_high_db: 0,
+  eq_sparkle_db: 0,
   volume_match: false,
   input_gain_db: 0,
   output_gain_db: 0,
@@ -854,14 +857,20 @@ export function useTrackMaster() {
   );
 
   const setEqBand = useCallback(
-    (band: "low" | "low-mid" | "mid" | "high", db: number) => {
+    (
+      band: "sub" | "low" | "low-mid" | "mid" | "high-mid" | "high" | "sparkle",
+      db: number,
+    ) => {
       if (!selectedTrackId) return;
       updateSettings(selectedTrackId, (prev) => {
         const next = { ...prev };
-        if (band === "low") next.eq_low_db = db;
+        if (band === "sub") next.eq_sub_db = db;
+        else if (band === "low") next.eq_low_db = db;
         else if (band === "low-mid") next.eq_low_mid_db = db;
         else if (band === "mid") next.eq_mid_db = db;
-        else next.eq_high_db = db;
+        else if (band === "high-mid") next.eq_high_mid_db = db;
+        else if (band === "high") next.eq_high_db = db;
+        else next.eq_sparkle_db = db;
         return next;
       });
     },
