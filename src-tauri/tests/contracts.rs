@@ -5,17 +5,17 @@ use album_mastering_studio_lib::*;
 #[test]
 fn position_nudge_promotes_unsure_first_and_last() {
     let mut first = stub_analysis_with(TrackRole::AlbumTrack, InferenceConfidence::Unsure);
-    engine::nudge_role_by_position(&mut first, 0, 5);
+    analysis::nudge_role_by_position(&mut first, 0, 5);
     assert_eq!(first.inferred_role, Some(TrackRole::Opener));
     assert_eq!(first.role_confidence, Some(InferenceConfidence::Moderate));
 
     let mut last = stub_analysis_with(TrackRole::AlbumTrack, InferenceConfidence::Unsure);
-    engine::nudge_role_by_position(&mut last, 4, 5);
+    analysis::nudge_role_by_position(&mut last, 4, 5);
     assert_eq!(last.inferred_role, Some(TrackRole::Closer));
     assert_eq!(last.role_confidence, Some(InferenceConfidence::Moderate));
 
     let mut middle = stub_analysis_with(TrackRole::AlbumTrack, InferenceConfidence::Unsure);
-    engine::nudge_role_by_position(&mut middle, 2, 5);
+    analysis::nudge_role_by_position(&mut middle, 2, 5);
     assert_eq!(middle.inferred_role, Some(TrackRole::AlbumTrack));
 }
 
@@ -24,13 +24,13 @@ fn position_nudge_respects_strong_inference() {
     // A clearly-strong Single at track 1 should NOT be rewritten as Opener.
     let mut strong_single =
         stub_analysis_with(TrackRole::Single, InferenceConfidence::Strong);
-    engine::nudge_role_by_position(&mut strong_single, 0, 5);
+    analysis::nudge_role_by_position(&mut strong_single, 0, 5);
     assert_eq!(strong_single.inferred_role, Some(TrackRole::Single));
 
     // A moderate Ballad at track 1 should also be left alone (only weak inferences
     // get position-overridden).
     let mut mod_ballad = stub_analysis_with(TrackRole::Ballad, InferenceConfidence::Moderate);
-    engine::nudge_role_by_position(&mut mod_ballad, 0, 5);
+    analysis::nudge_role_by_position(&mut mod_ballad, 0, 5);
     assert_eq!(mod_ballad.inferred_role, Some(TrackRole::Ballad));
 }
 
@@ -39,7 +39,7 @@ fn position_nudge_promotes_moderate_album_track() {
     // A Moderate AlbumTrack is fallback territory — the position nudge IS
     // strong enough signal to override.
     let mut middling = stub_analysis_with(TrackRole::AlbumTrack, InferenceConfidence::Moderate);
-    engine::nudge_role_by_position(&mut middling, 0, 5);
+    analysis::nudge_role_by_position(&mut middling, 0, 5);
     assert_eq!(middling.inferred_role, Some(TrackRole::Opener));
 }
 

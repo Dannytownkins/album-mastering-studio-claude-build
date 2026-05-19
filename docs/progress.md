@@ -4606,3 +4606,35 @@ Next recommended slice:
 
 Commit 4: lift album render plumbing into `src-tauri/src/album_render.rs` as a
 sibling to the pure planner in `album.rs`.
+
+## 2026-05-19 - Remove analysis re-export shim
+
+Goal:
+
+Make `analysis.rs` the canonical public home for position role nudging.
+
+What changed:
+
+- Removed the `engine::nudge_role_by_position` re-export shim.
+- Updated the position-nudge contract tests to call
+  `analysis::nudge_role_by_position` directly.
+- Kept `nudge_role_by_position` as `pub` because the integration tests compile
+  as a separate crate and cannot call `pub(crate)` library items.
+
+Verification:
+
+- `cargo test`: 160 lib tests plus integration suite pass.
+
+Real-audio fixture used:
+
+No. This only removed an internal analysis API shim.
+
+What failed or remains partial:
+
+- Supersedes the commit-3 progress note that said engine.rs re-exported
+  `nudge_role_by_position`; the engine path is now intentionally gone.
+
+Next recommended slice:
+
+Commit 4: lift album render plumbing into `src-tauri/src/album_render.rs` as a
+sibling to the pure planner in `album.rs`.

@@ -1,9 +1,8 @@
 use crate::types::*;
 use crate::analysis::{
     analyze_one, compute_dynamic_range_p95_p10, compute_energy_density_score,
-    compute_spectral_balance_6band, compute_transient_flux, sanitize_lufs,
+    compute_spectral_balance_6band, compute_transient_flux, nudge_role_by_position, sanitize_lufs,
 };
-pub use crate::analysis::nudge_role_by_position;
 use crate::wav_writer::{wav_spec, write_samples_into_writer, write_wav};
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
