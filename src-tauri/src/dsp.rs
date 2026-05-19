@@ -2794,6 +2794,195 @@ mod tests {
         }
     }
 
+    mod preset_byte_identity {
+        use super::*;
+        use sha2::{Digest, Sha256};
+
+        const SR_HZ: u32 = 48_000;
+        const STEREO: usize = 2;
+        const DURATION_SEC: usize = 1;
+        const PROBE_PEAK: f32 = 0.3;
+
+        /// Paul Kellet six-stage pinking IIR fed by a deterministic LCG.
+        /// Mirrors the existing preset distinctness source so chain-output
+        /// snapshots run on stable, pink-noise-shaped stereo material.
+        fn synth_pink_stereo(samples_per_channel: usize, target_peak: f32) -> Vec<f32> {
+            let mut state: u32 = 0xCAFE_BABE;
+            let mut b0p = 0.0_f32;
+            let mut b1p = 0.0_f32;
+            let mut b2p = 0.0_f32;
+            let mut b3p = 0.0_f32;
+            let mut b4p = 0.0_f32;
+            let mut b5p = 0.0_f32;
+
+            let mut pink_mono = Vec::with_capacity(samples_per_channel);
+            for _ in 0..samples_per_channel {
+                state = state.wrapping_mul(1_103_515_245).wrapping_add(12345);
+                let w = ((state >> 16) & 0x7FFF) as f32 / 32_768.0 - 0.5;
+                b0p = 0.99886 * b0p + w * 0.0555179;
+                b1p = 0.99332 * b1p + w * 0.0750759;
+                b2p = 0.96900 * b2p + w * 0.1538520;
+                b3p = 0.86650 * b3p + w * 0.3104856;
+                b4p = 0.55000 * b4p + w * 0.5329522;
+                b5p = -0.7616 * b5p - w * 0.0168980;
+                let b6p = w * 0.115926;
+                let p = b0p + b1p + b2p + b3p + b4p + b5p + w * 0.5362 + b6p;
+                pink_mono.push(p);
+            }
+
+            let measured_peak = pink_mono
+                .iter()
+                .map(|s| s.abs())
+                .fold(0.0_f32, f32::max)
+                .max(f32::MIN_POSITIVE);
+            let scale = target_peak / measured_peak;
+
+            let mut interleaved = Vec::with_capacity(samples_per_channel * STEREO);
+            for s in pink_mono {
+                let scaled = s * scale;
+                interleaved.push(scaled);
+                interleaved.push(scaled);
+            }
+            interleaved
+        }
+
+        fn default_settings_for(preset: Preset) -> MasteringSettings {
+            MasteringSettings {
+                preset,
+                intensity: 0.5,
+                eq_low_db: 0.0,
+                eq_low_mid_db: 0.0,
+                eq_mid_db: 0.0,
+                eq_high_db: 0.0,
+                volume_match: false,
+                source_lufs_integrated: None,
+                input_gain_db: 0.0,
+                output_gain_db: 0.0,
+                delivery_profile: DeliveryProfile::Custom,
+                album: None,
+                advanced: AdvancedSettings::default(),
+            }
+        }
+
+        fn render_preset(preset: Preset) -> Vec<f32> {
+            let samples_per_channel = SR_HZ as usize * DURATION_SEC;
+            let input = synth_pink_stereo(samples_per_channel, PROBE_PEAK);
+            let settings = default_settings_for(preset);
+            let mut chain = MasteringChain::new(SR_HZ, STEREO, &settings);
+            let mut output = input;
+            for frame in output.chunks_mut(STEREO) {
+                chain.process_frame_inplace(frame);
+            }
+            output
+        }
+
+        fn sha256_f32_le(samples: &[f32]) -> String {
+            let mut hasher = Sha256::new();
+            for sample in samples {
+                hasher.update(sample.to_le_bytes());
+            }
+            format!("{:x}", hasher.finalize())
+        }
+
+        fn assert_preset_sha(name: &str, preset: Preset, expected_sha: &str) {
+            let observed = sha256_f32_le(&render_preset(preset));
+            assert_eq!(
+                observed, expected_sha,
+                "{name} chain-output SHA changed; investigate DSP drift before updating snapshots"
+            );
+        }
+
+        #[test]
+        fn synth_pink_stereo_is_fixed_seed_deterministic() {
+            let a = synth_pink_stereo(512, PROBE_PEAK);
+            let b = synth_pink_stereo(512, PROBE_PEAK);
+            assert_eq!(a, b);
+        }
+
+        #[test]
+        fn universal_chain_output_sha_snapshot_matches() {
+            assert_preset_sha(
+                "Universal",
+                Preset::Universal,
+                "18f199b5ddb6f17a52d82e62ba18c1e3ee96a04388844c8bb58dd722101da12d",
+            );
+        }
+
+        #[test]
+        fn clarity_chain_output_sha_snapshot_matches() {
+            assert_preset_sha(
+                "Clarity",
+                Preset::Clarity,
+                "8abb6c37372da3bd28ecbc75f2c74563655c74b1cb82d4fd14d5ef699fa37ff2",
+            );
+        }
+
+        #[test]
+        fn tape_chain_output_sha_snapshot_matches() {
+            assert_preset_sha(
+                "Tape",
+                Preset::Tape,
+                "fb03785bb39648118ee9b9c1727fdda93d86a5d3a2ce81ccfbf57da53c138803",
+            );
+        }
+
+        #[test]
+        fn spatial_chain_output_sha_snapshot_matches() {
+            assert_preset_sha(
+                "Spatial",
+                Preset::Spatial,
+                "8185f556c3faa4ccb5983778ac428f1976a971f9bcc3e68a59d65a7bfe0e98a0",
+            );
+        }
+
+        #[test]
+        fn oomph_chain_output_sha_snapshot_matches() {
+            assert_preset_sha(
+                "Oomph",
+                Preset::Oomph,
+                "e3eb1c8d27939206839ee34377a6c670d20c84daf05d6a3049f9c035e06d9df2",
+            );
+        }
+
+        #[test]
+        fn warmth_chain_output_sha_snapshot_matches() {
+            assert_preset_sha(
+                "Warmth",
+                Preset::Warmth,
+                "9d1433b7bdcebf1fd45010ffeab5bbf2dba82099673bb5b5d38dace993cf95cc",
+            );
+        }
+
+        #[test]
+        fn punch_chain_output_sha_snapshot_matches() {
+            assert_preset_sha(
+                "Punch",
+                Preset::Punch,
+                "e9d8fe1423c6a31a4b3a9f5a99c15ef1da1f90cd45531a2345f24b870946d716",
+            );
+        }
+
+        #[test]
+        fn loud_chain_output_sha_snapshot_matches() {
+            assert_preset_sha(
+                "Loud",
+                Preset::Loud,
+                "695c05a8cded5e7bd994ff14a4fd139aab4a83cc393faad63737e9512952cf4e",
+            );
+        }
+
+        #[test]
+        fn custom_chain_output_sha_snapshot_matches() {
+            assert_preset_sha(
+                "Custom",
+                Preset::Custom {
+                    id: "byte-identity".to_string(),
+                },
+                "d678eddc263064eea169959047e581f8c589a23a84896c9d534966e60919c3b0",
+            );
+        }
+    }
+
     #[test]
     fn compression_density_default_is_identity() {
         let c = ChainCoeffs::from_settings(44_100, &default_master_settings());

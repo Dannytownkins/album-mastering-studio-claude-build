@@ -4607,6 +4607,45 @@ Next recommended slice:
 Commit 4: lift album render plumbing into `src-tauri/src/album_render.rs` as a
 sibling to the pure planner in `album.rs`.
 
+## 2026-05-19 - Phase B.0: per-preset chain-output SHA snapshots
+
+Goal:
+
+Establish a rollback-friendly byte-identity gate before expanding the user EQ
+chain from four to seven bands.
+
+What changed:
+
+- Added a `preset_byte_identity` Rust test module in `dsp.rs`.
+- Rendered fixed-seed pink-noise stereo material through
+  `MasteringChain::process_frame_inplace` for Universal, Clarity, Tape,
+  Spatial, Oomph, Warmth, Punch, Loud, and Custom.
+- Pinned SHA-256 snapshots over little-endian `f32` output bytes for each
+  preset.
+- Added an explicit fixed-seed determinism check for the pink-noise source.
+
+Verification:
+
+- `cargo test preset_byte_identity`: 10/10 targeted tests pass.
+- `cargo test --lib`: 170/170 lib tests pass.
+- `cargo test`: 170 lib tests plus integration suite pass.
+
+Real-audio fixture used:
+
+No. This pre-flight gate uses deterministic synthetic pink-noise input and did
+not touch private audio fixtures.
+
+What failed or remains partial:
+
+- The pinned SHA constants are empirical Windows values. If macOS produces
+  different `tanh`-affected bits, gate with target-OS constants rather than
+  changing DSP behavior in this slice.
+
+Next recommended slice:
+
+Commit 1: Rust state + DSP extension for Sub, High-Mid, and Sparkle while
+preserving the existing `process_sample` low-mid divergence.
+
 ## 2026-05-19 - Lift album render module
 
 Goal:
