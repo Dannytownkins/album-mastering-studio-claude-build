@@ -4561,3 +4561,48 @@ Next recommended slice:
 
 Commit 3: lift the pre-master analysis cluster into `src-tauri/src/analysis.rs`
 while leaving LUFS landing helpers in engine.rs.
+
+## 2026-05-19 - Lift analysis module
+
+Goal:
+
+Move pre-master analysis and inference helpers out of engine.rs while leaving
+render landing math in place.
+
+What changed:
+
+- Added `src-tauri/src/analysis.rs` for `analyze_one`, role nudging, role and
+  character inference, LUFS sanitizing, and feature computations.
+- Moved the analysis-focused unit tests with the analysis helpers.
+- Kept LUFS landing helpers and post-render LUFS measurement in engine.rs.
+- Re-exported `nudge_role_by_position` from engine.rs to preserve the existing
+  integration-test/API path.
+- Exposed only the analysis helpers still used by engine.rs as `pub(crate)`.
+
+Verification:
+
+- `cargo test analysis`: 6/6 analysis-module tests pass.
+- `cargo test`: 160 lib tests plus integration suite pass.
+
+Real-audio fixture used:
+
+No. This slice only moved analysis/inference code and did not touch the DSP
+chain, WAV writer, or LUFS landing math.
+
+What failed or remains partial:
+
+- Judgment call: moved `sanitize_lufs` into analysis.rs as `pub(crate)` because
+  it sanitizes meter readings for both analysis and render paths; engine.rs now
+  imports it rather than analysis.rs reaching back into engine.rs.
+- Judgment call: moved `nudge_role_by_position` into analysis.rs because caller
+  audit found it belongs to analysis flow, not album planning. engine.rs
+  re-exports it so existing `engine::nudge_role_by_position` callers keep
+  working.
+- `analyze_one` is now `pub(crate)` because caller audit found no external
+  integration-test or cross-crate caller; Tauri still reaches analysis through
+  `analyze_tracks`.
+
+Next recommended slice:
+
+Commit 4: lift album render plumbing into `src-tauri/src/album_render.rs` as a
+sibling to the pure planner in `album.rs`.

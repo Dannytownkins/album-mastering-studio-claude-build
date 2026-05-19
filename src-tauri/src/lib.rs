@@ -1,4 +1,5 @@
 pub mod album;
+pub mod analysis;
 pub mod audio;
 pub mod decode;
 pub mod dsp;
