@@ -1,25 +1,25 @@
 # Claude Build Instructions
 
-This is a from-zero build repo for Album Mastering Studio. Do not import source code from the existing Codex repo unless the user explicitly asks for it.
+This is the working repo for YES Master. Do not import source code from the older Codex/Python reference path unless the user explicitly asks for it.
 
-This repo is meant to be an independent parallel build. Do not treat Codex's implementation plan as the default path, and do not look at Codex reference docs unless the user explicitly asks or a specific historical detail is required.
+The app is now a real Tauri + Rust desktop build, not a from-zero scaffold. Use current repo code, `docs/HANDOFF.md`, and `docs/progress.md` as the implementation state.
 
 ## Required Reading
 
 Before planning or coding:
 
 1. Read `docs/PRODUCT.md`.
-2. Read `docs/CLAUDE_BUILD_BRIEF.md`.
-3. Read `docs/CLAUDE_WORK_LOOP.md`.
-4. Read `docs/PARALLEL_BUILD_NOTES.md`.
+2. Read `docs/HANDOFF.md`.
+3. Read `docs/HANDOFF_2026-05-18_evening.md`.
+4. Read `docs/CLAUDE_WORK_LOOP.md`.
 5. Read `docs/PRIVATE_AUDIO_FIXTURES.md` before using real audio.
-6. Skim `docs/research/README.md`.
+6. Skim `docs/research/README.md` when DSP, metering, delivery, or codec work is in scope.
 
 Do not read `docs/reference/` by default. Those files are optional Codex-path context, not startup reading.
 
 ## Product Non-Negotiables
 
-- Private Windows desktop mastering app.
+- Private local desktop mastering app.
 - Track Master first, Album Master near-term.
 - Universal-first workflow: drop audio, analyze, safe settings, preview, export.
 - Real-time or near-real-time audition is required for final Track Master quality.
@@ -50,7 +50,7 @@ Do not choose a framework without documenting why it can meet:
 - Low-latency audition.
 - Export parity.
 - Offline rendering quality.
-- Windows packaging.
+- Desktop packaging.
 - File/project safety.
 - Testability.
 
@@ -70,9 +70,27 @@ real-audio fixture tests only run when explicitly opted in.
 **Fast lane (default — under 30 s):**
 
 ```powershell
-# From repo root or src-tauri/
-cargo test --lib       # ~1 s, lib unit tests only
-cargo test             # ~15-25 s, full suite with real-fixture tests skipped
+# PowerShell / Windows
+# Frontend from repo root
+npm test
+npm run build
+
+# Backend from src-tauri/
+cd src-tauri
+cargo test --lib       # lib unit tests only
+cargo test             # full suite with real-fixture tests skipped
+```
+
+```bash
+# Bash / macOS or Linux
+# Frontend from repo root
+npm test
+npm run build
+
+# Backend from src-tauri/
+cd src-tauri
+cargo test --lib       # lib unit tests only
+cargo test             # full suite with real-fixture tests skipped
 ```
 
 The four real-fixture tests in `src-tauri/tests/contracts.rs`
@@ -85,14 +103,22 @@ return early unless the env var below is set.
 **Slow lane (migration / pre-merge gating — ~4 minutes):**
 
 ```powershell
+# PowerShell / Windows
 $env:AMS_RUN_REAL_FIXTURE = "1"
 cargo test
+Remove-Item Env:\AMS_RUN_REAL_FIXTURE
 ```
 
 Or one-shot:
 
 ```powershell
 $env:AMS_RUN_REAL_FIXTURE = "1"; cargo test; Remove-Item Env:\AMS_RUN_REAL_FIXTURE
+```
+
+```bash
+# Bash / macOS or Linux
+AMS_RUN_REAL_FIXTURE=1 cargo test
+unset AMS_RUN_REAL_FIXTURE
 ```
 
 The slow lane requires `private-audio-fixtures/<some-audio-file>` to

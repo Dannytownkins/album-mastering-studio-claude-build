@@ -1,14 +1,14 @@
 # Album Mastering Studio Implementation Plan (Claude Build)
 
-Last updated: 2026-05-15
+Last updated: 2026-05-19
 
 This is the execution map for the Claude-build repo of Album Mastering Studio (`album-mastering-studio-claude-build`). `docs/PRODUCT.md` is the product canon; this file is the living implementation plan. If anything below conflicts with `docs/PRODUCT.md`, treat `PRODUCT.md` as authoritative and flag the drift.
 
-This repo is a clean, independent parallel build. A sibling Codex/Tauri/Python repo has working engine, Tauri shell, sidecar, reports, and smoke tests. That work proves the product is buildable but no Codex source is imported here unless the user explicitly asks. The plan below assumes a zero-state repo and is written so a long-running Claude session can pick up at any phase without depending on Codex artifacts.
+This repo is now the active Tauri + Rust implementation. Older Codex/Python reference work may still be useful for historical comparison, but no source should be imported from it unless the user explicitly asks.
 
 ## Current Strategic Direction
 
-Build a top-tier private Windows desktop mastering app around two modes:
+Build a top-tier private local desktop mastering app around two modes:
 
 1. Track Master.
 2. Album Master.
@@ -85,7 +85,7 @@ Goal: take this repo from zero-state to a buildable Tauri app shell, with the ar
 
 Tasks:
 
-- Write `docs/adr/0001-tauri-rust-stack.md`. Compare Tauri+Rust audio, JUCE, Rust-native UI/audio, and hybrid shells against `docs/PRODUCT.md` gates: real-time audition, export parity, Windows packaging, offline rendering quality, file safety, testability. Recommend Tauri 2.x shell + Rust audio engine (`cpal` for output, `symphonia` for decode, `hound` for WAV write, hand-rolled DSP initially). Note JUCE and Rust-native UI as reversible fallbacks if the Phase 5 real-time spike misses latency targets. List risks and what stays reversible.
+- Write `docs/adr/0001-tauri-rust-stack.md`. Compare Tauri+Rust audio, JUCE, Rust-native UI/audio, and hybrid shells against `docs/PRODUCT.md` gates: real-time audition, export parity, desktop packaging, offline rendering quality, file safety, testability. Recommend Tauri 2.x shell + Rust audio engine (`cpal` for output, `symphonia` for decode, `hound` for WAV write, hand-rolled DSP initially). Note JUCE and Rust-native UI as reversible fallbacks if the Phase 5 real-time spike misses latency targets. List risks and what stays reversible.
 - Scaffold workspace structure:
   - Root: `package.json`, `vite.config.ts`, `tsconfig.json`, `index.html`.
   - Frontend in `src/`: React + TypeScript + Vite, with a placeholder `App.tsx` and a single CSS file.
@@ -97,6 +97,16 @@ Tasks:
 Baseline verification commands:
 
 ```powershell
+# PowerShell / Windows
+npm install
+npm run tauri dev        # opens a placeholder window
+cd src-tauri
+cargo check
+cargo test               # zero tests, must pass
+```
+
+```bash
+# Bash / macOS or Linux
 npm install
 npm run tauri dev        # opens a placeholder window
 cd src-tauri
@@ -381,7 +391,7 @@ No-victory-lap check:
 
 ## Phase 8: Album Master Mode
 
-**Status: PARTIAL.** `src-tauri/src/album.rs` has album planning + character bias; per-track adaptation logic in place; album-simple + album-plan render paths share the ceiling-bounded landing helper. Album UX (track reordering, the album dashboard, per-track override surface) is still thin in the frontend.
+**Status: PARTIAL.** `src-tauri/src/album.rs` has album planning + character bias; per-track adaptation logic in place; album-simple + album-plan render paths share the ceiling-bounded landing helper. Track Master and Album Master destination pickers shipped 2026-05-18/19. Album UX (track reordering, the album dashboard/report, per-track override surface) is still thin in the frontend.
 
 Goal: build the album workflow on the Track Master foundation.
 
@@ -447,7 +457,7 @@ Primitives to implement, in order of priority:
 
 ## Phase 11: DSP Audit And Modernization
 
-**Status: ONGOING.** Phase A4 mechanical-correctness fixes (B1–B7 audit queue + four perf concerns) ship as part of this stream. PRODUCT.md's 10 DSP Correctness Commitments (BS.1770-5 LUFS, ≥4× oversampled true-peak, ISP awareness, lookahead+oversampled limiter, TPDF dither once at final reduction, polyphase SRC, canonical chain order, mastering-appropriate filters, corpus-grounded preset calibration, spectral-subtraction reference matching) are the audit checklist for this phase.
+**Status: ONGOING.** Phase A4 mechanical-correctness fixes (B1–B7 audit queue + four perf concerns) ship as part of this stream. Preset subsonic HPF infrastructure and preset transient shaper infrastructure shipped 2026-05-18 with mechanical gates; per-preset cutoff/strength tuning remains in `docs/followups/listening-batch-2026-05-19.md`. PRODUCT.md's 10 DSP Correctness Commitments (BS.1770-5 LUFS, ≥4× oversampled true-peak, ISP awareness, lookahead+oversampled limiter, TPDF dither once at final reduction, polyphase SRC, canonical chain order, mastering-appropriate filters, corpus-grounded preset calibration, spectral-subtraction reference matching) are the audit checklist for this phase.
 
 Goal: improve actual mastering quality, not just UI.
 
@@ -525,7 +535,7 @@ Establish baselines, then refine budgets per phase.
 
 ## Phase 14: Release And Installer Hardening
 
-**Status: NOT STARTED.** Listed in PRODUCT.md "Still Open" as installer / distribution polish.
+**Status: PARTIAL.** Mac packaging shipped 2026-05-18 (`build:mac`, `.app` + DMG, ad-hoc signed). Windows packaging script shipped 2026-05-19 (`build:windows`, MSI + NSIS setup EXE targets). Windows installer execution + Authenticode signing are deferred to `docs/followups/infrastructure-2026-05-19.md`. Apple Developer notarization is deferred to the same follow-up doc.
 
 Goal: make the app usable outside the repo.
 
@@ -539,13 +549,19 @@ Required:
 - App handles missing/corrupt files gracefully.
 - Startup overhead measured and documented.
 
-Build command target:
+Build command targets:
 
 ```powershell
-npm run tauri build
+# PowerShell / Windows
+npm run build:windows
 ```
 
-The release build should produce a Windows installer (NSIS or MSI per Tauri config), signed if and when distribution is decided.
+```bash
+# Bash / macOS
+npm run build:mac
+```
+
+The release build should produce platform installable artifacts: Windows MSI/NSIS setup EXE and Mac DMG. Signing/notarization are distribution decisions, not blockers for local private testing.
 
 ## Public Release Risk Notes
 
