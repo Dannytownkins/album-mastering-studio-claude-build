@@ -4318,3 +4318,50 @@ What failed or remains partial:
 Next recommended slice:
 
 Continue with the final eagle-eye audit.
+
+## 2026-05-19 - preset and signal chain grid alignment
+
+Goal:
+
+Align the preset row and signal-chain row on the same visual 8-column rhythm,
+make presets a little more prominent, slightly tighten the signal chain, and
+reduce the Preset header/plus visual weight.
+
+What changed:
+
+- Changed the signal-chain track from flex spacing to an 8-column grid that
+  matches the preset tile row rhythm.
+- Replaced per-gap chain links with one subtle rail behind the centered stage
+  icons so every signal stage sits under its preset column.
+- Increased preset row heights and icon sizing by roughly 10%.
+- Reduced signal-chain row heights by roughly 5%.
+- Made the Preset label slightly smaller.
+- Made the `+` save button smaller and quieter.
+- Added a CSS regression test for the shared grid and compact header controls.
+- Rebuilt the Mac `.app` and DMG, then updated `/Applications/YES Master.app`.
+
+Verification:
+
+- Red test first: `npm test -- src/App.layout-css.test.ts` failed because the
+  signal chain still used flex spacing and the compact header override did not
+  exist yet.
+- `npm test -- src/App.layout-css.test.ts`: 2/2 pass.
+- `npm test`: 79/79 pass.
+- `npm run build`: clean production build.
+- `npm run build:mac`: rebuilt `.app` and DMG.
+- `diff -qr /Applications/YES Master.app src-tauri/target/release/bundle/macos/YES Master.app`:
+  no differences after install copy update.
+
+Real-audio fixture used:
+
+No. This is a frontend-only layout change.
+
+What failed or remains partial:
+
+- No functional failure remains from this slice.
+- If YES Master is open while the app bundle is replaced, the visible window
+  still needs a quit/reopen to show the installed update.
+
+Next recommended slice:
+
+Continue with the final eagle-eye audit.

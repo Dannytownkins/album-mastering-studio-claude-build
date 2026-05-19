@@ -1529,9 +1529,14 @@ button.primary:disabled {
   gap: 0.5rem;
 }
 
+.presets .section-label {
+  font-size: 0.72rem;
+  letter-spacing: 0.105em;
+}
+
 .preset-save-plus {
-  width: 22px;
-  height: 22px;
+  width: 18px;
+  height: 18px;
   border-radius: 50%;
   border: 1px solid rgba(111, 163, 255, 0.32);
   background: rgba(77, 139, 255, 0.10);
@@ -1539,11 +1544,11 @@ button.primary:disabled {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  font-size: 1rem;
+  font-size: 0.72rem;
   font-weight: 700;
   line-height: 1;
   cursor: pointer;
-  box-shadow: 0 0 14px rgba(77, 139, 255, 0.10);
+  box-shadow: 0 0 10px rgba(77, 139, 255, 0.10);
   transition: background 100ms ease, border-color 100ms ease, color 100ms ease;
 }
 
@@ -1618,13 +1623,13 @@ button.primary:disabled {
 
 .tile {
   /* Restructure 2026-05-14 slice B — compact preset strip.
-     Dropped min-height from 136 → 72 px so the preset row reads as
+     Dropped min-height from 136 → a compact hero strip so presets read as
      a secondary selector rather than dominating the workspace.
      `--tile-accent` still tints the border + radial wash so each
      preset keeps its character cue. Per Dan's UX review: presets
      should be accessible but not oversized — primary working area
      is waveform + transport + mastering controls below. */
-  min-height: 84px;
+  min-height: 92px;
   background:
     radial-gradient(
       circle at 50% 30%,
@@ -1672,8 +1677,8 @@ button.primary:disabled {
    strip slice B: imagery stays compact, but the removed save row gives
    the presets enough room to read larger without crowding the console. */
 .tile-icon {
-  width: clamp(34px, 3vw, 52px);
-  height: clamp(34px, 3vw, 52px);
+  width: clamp(37px, 3.3vw, 57px);
+  height: clamp(37px, 3.3vw, 57px);
   object-fit: contain;
   margin-bottom: 0.1rem;
   flex-shrink: 0;
@@ -3632,7 +3637,7 @@ button.primary:disabled {
    (the same values are in the Macros knobs / right rail). */
 
 .signal-chain {
-  padding: 0.5rem 1rem 0.55rem;
+  padding: 0.44rem 0.95rem 0.48rem;
   background:
     radial-gradient(circle at 20% 0%, rgba(77, 139, 255, 0.16) 0%, transparent 60%),
     linear-gradient(180deg, rgba(20, 25, 36, 0.7) 0%, rgba(12, 15, 23, 0.88) 100%);
@@ -3645,10 +3650,24 @@ button.primary:disabled {
 }
 
 .signal-chain-track {
-  display: flex;
+  display: grid;
+  grid-template-columns: repeat(8, minmax(0, 1fr));
   align-items: center;
-  gap: 0;
-  justify-content: space-between;
+  gap: 0.5rem;
+  position: relative;
+}
+
+.signal-chain-track::before {
+  content: "";
+  position: absolute;
+  top: 13px;
+  left: calc(100% / 16);
+  right: calc(100% / 16);
+  height: 2px;
+  border-radius: 999px;
+  background: linear-gradient(90deg, rgba(77, 139, 255, 0.36), rgba(111, 163, 255, 0.14));
+  opacity: 0.76;
+  pointer-events: none;
 }
 
 .chain-stage {
@@ -3657,13 +3676,15 @@ button.primary:disabled {
   align-items: center;
   gap: 0.1rem;
   text-align: center;
-  flex: 0 0 auto;
-  min-width: 42px;
+  justify-self: stretch;
+  min-width: 0;
+  position: relative;
+  z-index: 1;
 }
 
 .chain-stage-disc {
-  width: 28px;
-  height: 28px;
+  width: 27px;
+  height: 27px;
   border-radius: 50%;
   display: inline-flex;
   align-items: center;
@@ -3680,8 +3701,8 @@ button.primary:disabled {
 
 .chain-stage-disc svg {
   display: block;
-  width: 16px;
-  height: 16px;
+  width: 15px;
+  height: 15px;
 }
 
 .chain-stage.is-active .chain-stage-disc {
@@ -3722,6 +3743,7 @@ button.primary:disabled {
 }
 
 .chain-link {
+  display: none;
   flex: 1 1 12px;
   height: 2px;
   background: var(--border);
@@ -4002,9 +4024,9 @@ button.primary:disabled {
     display: grid;
     grid-template-rows:
       minmax(330px, 1.55fr)
-      116px
-      58px
-      minmax(154px, 0.75fr)
+      128px
+      55px
+      minmax(145px, 0.75fr)
       38px;
     gap: 0.55rem;
     overflow: hidden;
@@ -4294,8 +4316,8 @@ button.primary:disabled {
   }
 
   .tile-icon {
-    width: clamp(34px, 2.7vw, 46px);
-    height: clamp(34px, 2.7vw, 46px);
+    width: clamp(37px, 2.95vw, 51px);
+    height: clamp(37px, 2.95vw, 51px);
   }
 
   .tile-label {
@@ -4304,7 +4326,7 @@ button.primary:disabled {
 
   .signal-chain {
     min-height: 0;
-    padding: 0.36rem 0.85rem 0.4rem;
+    padding: 0.32rem 0.85rem 0.36rem;
     overflow: hidden;
   }
 
@@ -4313,16 +4335,16 @@ button.primary:disabled {
   }
 
   .chain-stage-disc {
-    width: 26px;
-    height: 26px;
+    width: 25px;
+    height: 25px;
   }
 
   .chain-stage-label {
-    font-size: 0.6rem;
+    font-size: 0.58rem;
   }
 
   .chain-link {
-    margin-bottom: 27px;
+    margin-bottom: 25px;
   }
 
   .console-controls {
@@ -4463,9 +4485,9 @@ button.primary:disabled {
   .track-master-console {
     grid-template-rows:
       minmax(410px, 1.56fr)
-      140px
-      66px
-      minmax(206px, 0.84fr)
+      154px
+      63px
+      minmax(195px, 0.84fr)
       42px;
     gap: 0.68rem;
   }
@@ -4504,8 +4526,8 @@ button.primary:disabled {
   }
 
   .tile-icon {
-    width: 54px;
-    height: 54px;
+    width: 60px;
+    height: 60px;
   }
 
   .tile-label {
@@ -4547,9 +4569,9 @@ button.primary:disabled {
   .track-master-console {
     grid-template-rows:
       minmax(300px, 1.45fr)
-      106px
-      52px
-      minmax(134px, 0.68fr)
+      117px
+      49px
+      minmax(126px, 0.68fr)
       36px;
     gap: 0.45rem;
   }
