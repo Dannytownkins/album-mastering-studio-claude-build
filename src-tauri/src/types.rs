@@ -469,6 +469,10 @@ impl Default for AlbumPlan {
 pub struct MasteringSettings {
     pub preset: Preset,
     pub intensity: f32,
+    /// Phase B.1: 80 Hz peaking EQ. User offset on top of preset baseline.
+    /// `#[serde(default)]` keeps older project files loading at 0.0.
+    #[serde(default)]
+    pub eq_sub_db: f32,
     pub eq_low_db: f32,
     /// Phase A2: low-mid peaking EQ (400 Hz, Q=0.9). User offset on top of
     /// the preset's baseline `low_mid_db`. `#[serde(default)]` so projects
@@ -477,7 +481,15 @@ pub struct MasteringSettings {
     #[serde(default)]
     pub eq_low_mid_db: f32,
     pub eq_mid_db: f32,
+    /// Phase B.1: 3.5 kHz peaking EQ. User offset on top of preset baseline.
+    /// `#[serde(default)]` keeps older project files loading at 0.0.
+    #[serde(default)]
+    pub eq_high_mid_db: f32,
     pub eq_high_db: f32,
+    /// Phase B.1: 12 kHz high-shelf EQ. User offset on top of preset baseline.
+    /// `#[serde(default)]` keeps older project files loading at 0.0.
+    #[serde(default)]
+    pub eq_sparkle_db: f32,
     pub volume_match: bool,
     /// Source-track integrated LUFS, injected by the playback driver
     /// before each `updateChain` so the chain can compute a proper
@@ -835,10 +847,13 @@ mod effective_settings_tests {
         MasteringSettings {
             preset: Preset::Universal,
             intensity: 0.5,
+            eq_sub_db: 0.0,
             eq_low_db: 0.0,
             eq_low_mid_db: 0.0,
             eq_mid_db: 0.0,
+            eq_high_mid_db: 0.0,
             eq_high_db: 0.0,
+            eq_sparkle_db: 0.0,
             volume_match: false,
             source_lufs_integrated: None,
             input_gain_db: 0.0,
@@ -914,10 +929,8 @@ mod effective_settings_tests {
             (DeliveryProfile::BroadcastUs, -24.0),
         ];
         for (profile, expected) in cases {
-            let s = settings_with_profile_and_advanced(
-                profile.clone(),
-                AdvancedSettings::default(),
-            );
+            let s =
+                settings_with_profile_and_advanced(profile.clone(), AdvancedSettings::default());
             assert_eq!(
                 s.effective_target_lufs(),
                 Some(*expected),

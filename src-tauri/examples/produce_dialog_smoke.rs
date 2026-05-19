@@ -37,10 +37,13 @@ fn main() {
     let default_settings = MasteringSettings {
         preset: Preset::Universal,
         intensity: 0.5,
+        eq_sub_db: 0.0,
         eq_low_db: 0.0,
         eq_low_mid_db: 0.0,
         eq_mid_db: 0.0,
+        eq_high_mid_db: 0.0,
         eq_high_db: 0.0,
+        eq_sparkle_db: 0.0,
         volume_match: false,
         source_lufs_integrated: None,
         input_gain_db: 0.0,

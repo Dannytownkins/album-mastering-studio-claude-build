@@ -4607,6 +4607,56 @@ Next recommended slice:
 Commit 4: lift album render plumbing into `src-tauri/src/album_render.rs` as a
 sibling to the pure planner in `album.rs`.
 
+## 2026-05-19 - Phase B.1: Rust 7-band EQ chain extension
+
+Goal:
+
+Extend the Rust mastering state and DSP chain from four user-facing EQ bands
+to seven while keeping the new bands neutral by default and preserving the
+legacy `process_sample` low-mid divergence for a separate fix slice.
+
+What changed:
+
+- Added `eq_sub_db`, `eq_high_mid_db`, and `eq_sparkle_db` to
+  `MasteringSettings` with serde defaults for older projects.
+- Added Sub, High-Mid, and Sparkle preset calibration fields, coefficients,
+  channel states, and chain stages.
+- Kept all new preset calibration defaults at 0.0 dB.
+- Inserted the new stages in frequency order for `process_frame_inplace` and
+  preserved the existing `process_sample` low-mid skip while adding the new
+  stages around it.
+- Added per-band frequency-response tests for 80 Hz Sub, 3.5 kHz High-Mid,
+  and 12 kHz Sparkle.
+- Added a guard test pinning the intentional `process_sample` low-mid
+  divergence.
+- Updated Rust settings fixtures and the dialog smoke example for the expanded
+  settings shape.
+
+Verification:
+
+- `cargo test --lib`: 174/174 lib tests pass.
+- `cargo test`: 174 lib tests plus integration suite pass.
+- `AMS_RUN_REAL_FIXTURE=1 cargo test`: 174 lib tests plus integration suite
+  pass, including the real-fixture tests.
+
+Real-audio fixture used:
+
+Yes. The slow lane ran with `AMS_RUN_REAL_FIXTURE=1`.
+
+What failed or remains partial:
+
+- First targeted band-test run had an overly tight neighbor-band tolerance for
+  the 3.5 kHz bell at 1.5 kHz; the center-frequency assertion stayed tight and
+  the adjacent-band guard was relaxed to match the actual Q=0.9 response.
+- `process_sample` still intentionally skips low-mid. The guard test should be
+  removed only in the separate fix slice that restores low-mid there and
+  accepts the byte-identity change.
+
+Next recommended slice:
+
+Commit 2: TypeScript bindings, defaults, setter widening, Macros prop plumbing,
+and TS fixture updates.
+
 ## 2026-05-19 - Phase B.0: per-preset chain-output SHA snapshots
 
 Goal:

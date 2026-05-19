@@ -37,10 +37,13 @@ fn oomph_settings(volume_match: bool) -> MasteringSettings {
     MasteringSettings {
         preset: Preset::Oomph,
         intensity: 1.0,
+        eq_sub_db: 0.0,
         eq_low_db: 0.0,
         eq_low_mid_db: 0.0,
         eq_mid_db: 0.0,
+        eq_high_mid_db: 0.0,
         eq_high_db: 0.0,
+        eq_sparkle_db: 0.0,
         volume_match,
         source_lufs_integrated: Some(-13.0),
         input_gain_db: 0.0,

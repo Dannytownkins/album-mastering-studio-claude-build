@@ -257,8 +257,9 @@ impl BiquadState {
 //   Loud       -> loud-aggressive
 //   Custom     -> neutral (no Codex source)
 //
-// User-facing EQ knobs (`eq_low_db`, `eq_low_mid_db`, `eq_mid_db`,
-// `eq_high_db`) add ON TOP of these preset baselines.
+// User-facing EQ controls (`eq_sub_db`, `eq_low_db`, `eq_low_mid_db`,
+// `eq_mid_db`, `eq_high_mid_db`, `eq_high_db`, `eq_sparkle_db`) add ON TOP of
+// these preset baselines.
 //
 // Phase A4 (2026-05-14) — preset compressor identity is now APPLIED. Each
 // preset's `compressor_threshold_dbfs` / `compressor_ratio` /
@@ -278,6 +279,9 @@ impl BiquadState {
 
 #[derive(Debug, Clone, Copy)]
 pub struct PresetCalibration {
+    /// 80 Hz peaking baseline gain in dB. Drag-only on Visual EQ. Adds to
+    /// `eq_sub_db`.
+    pub sub_db: f32,
     /// 200 Hz low-shelf baseline gain in dB. Adds to `eq_low_db`.
     pub low_shelf_db: f32,
     /// 400 Hz peaking baseline gain in dB. NEW band in Phase A2. Heavy
@@ -287,9 +291,16 @@ pub struct PresetCalibration {
     /// 1.5 kHz peaking baseline gain in dB (Codex `presence_db`). Adds
     /// to `eq_mid_db`.
     pub presence_db: f32,
+    /// 3.5 kHz peaking baseline gain in dB. Drag-only on Visual EQ. Adds to
+    /// `eq_high_mid_db`.
+    pub high_mid_db: f32,
     /// 6 kHz high-shelf baseline gain in dB (Codex `air_db`). Adds to
     /// `eq_high_db`.
     pub air_db: f32,
+    /// 12 kHz high-shelf baseline gain in dB. Distinct from `air_db` (6 kHz)
+    /// and `AdvancedSettings::presence_air` (10 kHz). Adds to
+    /// `eq_sparkle_db`.
+    pub sparkle_db: f32,
     /// Saturation drive amount (Codex `warmth`, 0..1 unitless). Drives
     /// the post-EQ tanh stage.
     pub warmth: f32,
@@ -340,10 +351,13 @@ pub struct PresetCalibration {
 const PRESET_UNIVERSAL: PresetCalibration = PresetCalibration {
     // Conservative target (PRESET_REFERENCE_ANALYSIS_2026-05-14, line 252).
     // Cross-genre safe default. Light transparent compressor.
+    sub_db: 0.0,
     low_shelf_db: 0.2,
     low_mid_db: -0.1,
     presence_db: 0.0,
+    high_mid_db: 0.0,
     air_db: 1.1,
+    sparkle_db: 0.0,
     warmth: 0.03,
     stereo_width: 1.04,
     // Light lift keeps the safe default slightly alive without making transients a named feature.
@@ -356,18 +370,20 @@ const PRESET_UNIVERSAL: PresetCalibration = PresetCalibration {
     compressor_ratio: 1.8,
     compressor_attack_ms: 15.0,
     compressor_release_ms: 250.0,
-    science_note:
-        "Light transparent program compression, gentle air lift, neutral mids.",
+    science_note: "Light transparent program compression, gentle air lift, neutral mids.",
     baseline_gain_push_db: 1.2,
 };
 
 const PRESET_CLARITY: PresetCalibration = PresetCalibration {
     // Conservative target line 253. Vocal / detail / definition.
     // Drops the 1.5 kHz region, lifts air, fast release for articulation.
+    sub_db: 0.0,
     low_shelf_db: 0.2,
     low_mid_db: -1.0,
     presence_db: -0.8,
+    high_mid_db: 0.0,
     air_db: 1.7,
+    sparkle_db: 0.0,
     warmth: 0.025,
     stereo_width: 1.02,
     // Small lift adds articulation to match the air shelf without turning Clarity into Punch.
@@ -380,8 +396,7 @@ const PRESET_CLARITY: PresetCalibration = PresetCalibration {
     compressor_ratio: 1.8,
     compressor_attack_ms: 12.0,
     compressor_release_ms: 150.0,
-    science_note:
-        "Lower mids tucked, air shelf forward; fast release keeps articulation \
+    science_note: "Lower mids tucked, air shelf forward; fast release keeps articulation \
          open between transients.",
     baseline_gain_push_db: 0.8,
 };
@@ -389,10 +404,13 @@ const PRESET_CLARITY: PresetCalibration = PresetCalibration {
 const PRESET_TAPE: PresetCalibration = PresetCalibration {
     // Conservative target line 254. Glue, softened top, fuller low body.
     // Heavier saturation + slower compressor for crest reduction.
+    sub_db: 0.0,
     low_shelf_db: -0.2,
     low_mid_db: 0.3,
     presence_db: -1.4,
+    high_mid_db: 0.0,
     air_db: 2.0,
+    sparkle_db: 0.0,
     warmth: 0.10,
     stereo_width: 0.99,
     // Negative punch rounds attacks so the tape-glue character reads softened, not snappy.
@@ -405,18 +423,20 @@ const PRESET_TAPE: PresetCalibration = PresetCalibration {
     compressor_ratio: 2.4,
     compressor_attack_ms: 30.0,
     compressor_release_ms: 400.0,
-    science_note:
-        "Deeper saturation and slow program compression deliver glue and a \
+    science_note: "Deeper saturation and slow program compression deliver glue and a \
          visibly reduced crest factor.",
     baseline_gain_push_db: 1.5,
 };
 
 const PRESET_SPATIAL: PresetCalibration = PresetCalibration {
     // Conservative target line 255. Wide, dimensional, transparent compression.
+    sub_db: 0.0,
     low_shelf_db: 0.1,
     low_mid_db: -0.8,
     presence_db: -0.3,
+    high_mid_db: 0.0,
     air_db: 1.3,
+    sparkle_db: 0.0,
     warmth: 0.04,
     stereo_width: 1.16,
     // Tiny lift keeps widened material from feeling smeared without pushing attacks forward.
@@ -429,8 +449,7 @@ const PRESET_SPATIAL: PresetCalibration = PresetCalibration {
     compressor_ratio: 1.8,
     compressor_attack_ms: 15.0,
     compressor_release_ms: 250.0,
-    science_note:
-        "Widest side image with a clean low-mid floor and transparent program \
+    science_note: "Widest side image with a clean low-mid floor and transparent program \
          compression — width without pumping.",
     baseline_gain_push_db: 1.0,
 };
@@ -438,10 +457,13 @@ const PRESET_SPATIAL: PresetCalibration = PresetCalibration {
 const PRESET_OOMPH: PresetCalibration = PresetCalibration {
     // Conservative target line 256. Sub/low lift + low-mid scoop.
     // Medium compressor controls the lows without flattening.
+    sub_db: 0.0,
     low_shelf_db: 2.4,
     low_mid_db: -3.0,
     presence_db: -2.6,
+    high_mid_db: 0.0,
     air_db: -0.8,
+    sparkle_db: 0.0,
     warmth: 0.045,
     stereo_width: 0.95,
     // Moderate lift restores kick and bass impact after the deep low-mid scoop.
@@ -454,18 +476,20 @@ const PRESET_OOMPH: PresetCalibration = PresetCalibration {
     compressor_ratio: 2.6,
     compressor_attack_ms: 25.0,
     compressor_release_ms: 280.0,
-    science_note:
-        "Strong sub lift with deep low-mid scoop; medium-rate compressor \
+    science_note: "Strong sub lift with deep low-mid scoop; medium-rate compressor \
          keeps the weight controlled rather than muddy.",
     baseline_gain_push_db: 1.8,
 };
 
 const PRESET_WARMTH: PresetCalibration = PresetCalibration {
     // Conservative target line 257. Fuller body, softer top, soft glue.
+    sub_db: 0.0,
     low_shelf_db: 0.8,
     low_mid_db: 0.7,
     presence_db: -1.8,
+    high_mid_db: 0.0,
     air_db: -0.8,
+    sparkle_db: 0.0,
     warmth: 0.08,
     stereo_width: 0.98,
     // Negative punch softens edges so the added body reads smooth rather than assertive.
@@ -478,8 +502,7 @@ const PRESET_WARMTH: PresetCalibration = PresetCalibration {
     compressor_ratio: 2.0,
     compressor_attack_ms: 20.0,
     compressor_release_ms: 280.0,
-    science_note:
-        "Softened presence/air with gentle saturation and soft glue \
+    science_note: "Softened presence/air with gentle saturation and soft glue \
          compression — smooth body, no edge.",
     baseline_gain_push_db: 1.0,
 };
@@ -487,10 +510,13 @@ const PRESET_WARMTH: PresetCalibration = PresetCalibration {
 const PRESET_PUNCH: PresetCalibration = PresetCalibration {
     // Conservative target line 258. Faster attack/release, transient-forward.
     // Higher threshold + faster release = preserves more crest than Loud.
+    sub_db: 0.0,
     low_shelf_db: 0.8,
     low_mid_db: -1.8,
     presence_db: 1.6,
+    high_mid_db: 0.0,
     air_db: 0.8,
+    sparkle_db: 0.0,
     warmth: 0.035,
     stereo_width: 1.04,
     // Largest lift because Punch's job is impact and forwardness, not density.
@@ -503,8 +529,7 @@ const PRESET_PUNCH: PresetCalibration = PresetCalibration {
     compressor_ratio: 2.8,
     compressor_attack_ms: 10.0,
     compressor_release_ms: 100.0,
-    science_note:
-        "Tight lows, presence bite, fast attack/release keep impact and \
+    science_note: "Tight lows, presence bite, fast attack/release keep impact and \
          forwardness without dragging into Loud territory.",
     baseline_gain_push_db: 1.6,
 };
@@ -512,10 +537,13 @@ const PRESET_PUNCH: PresetCalibration = PresetCalibration {
 const PRESET_LOUD: PresetCalibration = PresetCalibration {
     // Conservative target line 259. Strongest density/limiting.
     // Lowest threshold, highest ratio, controlled time constants for density.
+    sub_db: 0.0,
     low_shelf_db: 0.4,
     low_mid_db: -1.6,
     presence_db: 1.8,
+    high_mid_db: 0.0,
     air_db: 1.2,
+    sparkle_db: 0.0,
     warmth: 0.055,
     stereo_width: 1.03,
     // Strong lift preserves attack after dense compression without outrunning Punch.
@@ -528,8 +556,7 @@ const PRESET_LOUD: PresetCalibration = PresetCalibration {
     compressor_ratio: 3.5,
     compressor_attack_ms: 15.0,
     compressor_release_ms: 180.0,
-    science_note:
-        "Strongest density and limiting; assertive but not smashed — \
+    science_note: "Strongest density and limiting; assertive but not smashed — \
          enough movement remains to read as a master, not a preview.",
     baseline_gain_push_db: 2.5,
 };
@@ -540,10 +567,13 @@ const PRESET_CUSTOM_NEUTRAL: PresetCalibration = PresetCalibration {
     // something useful when the user dials it up, but default density
     // for Custom is 0 (see `from_settings`) so a fresh-Custom session
     // is an identity chain.
+    sub_db: 0.0,
     low_shelf_db: 0.0,
     low_mid_db: 0.0,
     presence_db: 0.0,
+    high_mid_db: 0.0,
     air_db: 0.0,
+    sparkle_db: 0.0,
     warmth: 0.0,
     stereo_width: 1.0,
     // Zero keeps transient behavior user-driven for neutral Custom sessions.
@@ -579,6 +609,8 @@ pub struct ChainCoeffs {
     /// Per-preset LR4 subsonic high-pass. One Butterworth stage is stored
     /// here and run through two state stages for a 24 dB/oct slope.
     pub sub_highpass: BiquadCoeffs,
+    /// 80 Hz peaking band. Drag-only on Visual EQ.
+    pub sub: BiquadCoeffs,
     pub low: BiquadCoeffs,
     /// Phase A2: low-mid peaking @ 400 Hz, Q=0.9. Heavy presets cut this
     /// band to clean up the mud zone (250–800 Hz). Identity biquad when
@@ -586,7 +618,11 @@ pub struct ChainCoeffs {
     /// byte-equivalent to the pre-A2 output for any neutral configuration.
     pub low_mid: BiquadCoeffs,
     pub mid: BiquadCoeffs,
+    /// 3.5 kHz peaking band. Drag-only on Visual EQ.
+    pub high_mid: BiquadCoeffs,
     pub high: BiquadCoeffs,
+    /// 12 kHz high-shelf band. Drag-only on Visual EQ.
+    pub sparkle: BiquadCoeffs,
     /// Phase 12.2 — surgical low-mid warmth shelf, additive on top of the
     /// preset and the main Low band. Low-shelf @ 300 Hz, slope 0.7. Slider
     /// 0..1 in `AdvancedSettings::warmth` maps to 0..+4 dB; clamped on read.
@@ -688,21 +724,25 @@ impl ChainCoeffs {
         // first pass — Phase 12.1 listening on real material will calibrate.
         let preset_scale = 0.4 + 1.2 * intensity;
 
-        // Phase A2: per-preset baselines come from the PresetCalibration table
-        // (ported from Codex's 36-hour listening calibration). EQ map:
+        // Phase B.1: per-preset baselines come from the PresetCalibration
+        // table. EQ map:
+        //   preset.sub_db        → 80 Hz peaking
         //   preset.low_shelf_db  → 200 Hz low-shelf
-        //   preset.low_mid_db    → 400 Hz peaking  (NEW band in A2)
+        //   preset.low_mid_db    → 400 Hz peaking
         //   preset.presence_db   → 1.5 kHz peaking (our "mid")
+        //   preset.high_mid_db   → 3.5 kHz peaking
         //   preset.air_db        → 6 kHz high-shelf (our "high")
-        // The user's eq_low_db / eq_low_mid_db / eq_mid_db / eq_high_db
-        // sliders add ON TOP of the scaled preset values.
+        //   preset.sparkle_db    → 12 kHz high-shelf
+        // The user's eq_*_db controls add ON TOP of the scaled preset values.
         let preset = preset_calibration(&settings.preset);
 
+        let effective_sub_db = preset.sub_db * preset_scale + settings.eq_sub_db;
         let effective_low_db = preset.low_shelf_db * preset_scale + settings.eq_low_db;
-        let effective_low_mid_db =
-            preset.low_mid_db * preset_scale + settings.eq_low_mid_db;
+        let effective_low_mid_db = preset.low_mid_db * preset_scale + settings.eq_low_mid_db;
         let effective_mid_db = preset.presence_db * preset_scale + settings.eq_mid_db;
+        let effective_high_mid_db = preset.high_mid_db * preset_scale + settings.eq_high_mid_db;
         let effective_high_db = preset.air_db * preset_scale + settings.eq_high_db;
+        let effective_sparkle_db = preset.sparkle_db * preset_scale + settings.eq_sparkle_db;
 
         // Intentionally a cascaded 2-biquad Butterworth (4-pole / 24 dB per
         // octave), even though standalone HPF does not need LR4 sum-flat
@@ -714,10 +754,13 @@ impl ChainCoeffs {
         } else {
             BiquadCoeffs::identity()
         };
+        let sub = BiquadCoeffs::peaking(sr, 80.0, 0.8, effective_sub_db);
         let low = BiquadCoeffs::low_shelf(sr, 200.0, effective_low_db, 0.7);
         let low_mid = BiquadCoeffs::peaking(sr, 400.0, 0.9, effective_low_mid_db);
         let mid = BiquadCoeffs::peaking(sr, 1500.0, 0.8, effective_mid_db);
+        let high_mid = BiquadCoeffs::peaking(sr, 3500.0, 0.9, effective_high_mid_db);
         let high = BiquadCoeffs::high_shelf(sr, 6000.0, effective_high_db, 0.7);
+        let sparkle = BiquadCoeffs::high_shelf(sr, 12_000.0, effective_sparkle_db, 0.7);
 
         // Compatibility shims for the rest of from_settings, which expects
         // legacy names. preset_gain_db / preset_sat / preset_width map to
@@ -730,12 +773,7 @@ impl ChainCoeffs {
         // into [0, 1] then scaled to a 0..+4 dB lift. When the slider is None or
         // zero, `BiquadCoeffs::low_shelf` returns identity via its built-in
         // early-return at `gain_db < 1e-4`.
-        let warmth_db = settings
-            .advanced
-            .warmth
-            .unwrap_or(0.0)
-            .clamp(0.0, 1.0)
-            * 4.0;
+        let warmth_db = settings.advanced.warmth.unwrap_or(0.0).clamp(0.0, 1.0) * 4.0;
         let warmth = BiquadCoeffs::low_shelf(sr, 300.0, warmth_db, 0.7);
 
         // Phase 12.2 — Advanced presence/air (high-shelf @ 10 kHz). Same clamp +
@@ -852,13 +890,14 @@ impl ChainCoeffs {
             .clamp(0.0, 1.0);
 
         let preset_engagement = (density * 2.0).min(1.0); // 0..1, full at density >= 0.5
-        let overdrive = (density * 2.0 - 1.0).max(0.0);   // 0 below 0.5, up to 1.0 at density=1
+        let overdrive = (density * 2.0 - 1.0).max(0.0); // 0 below 0.5, up to 1.0 at density=1
         const OVERDRIVE_THRESHOLD_DB: f32 = -3.0;
         const OVERDRIVE_RATIO: f32 = 0.5;
 
         let preset_threshold_db = preset.compressor_threshold_dbfs * preset_engagement
             + OVERDRIVE_THRESHOLD_DB * overdrive;
-        let preset_ratio = (1.0 + (preset.compressor_ratio - 1.0) * preset_engagement
+        let preset_ratio = (1.0
+            + (preset.compressor_ratio - 1.0) * preset_engagement
             + OVERDRIVE_RATIO * overdrive)
             .max(1.0);
 
@@ -977,17 +1016,12 @@ impl ChainCoeffs {
             let avg_makeup_db =
                 (comp_low_makeup_db + comp_mid_makeup_db + comp_high_makeup_db) / 3.0;
             let saturation_correction_db = 5.0 * saturation_amount.max(0.0);
-            let raw_push_db = input_gain_db
-                + avg_makeup_db
-                + saturation_correction_db
-                + user_output_gain_db;
+            let raw_push_db =
+                input_gain_db + avg_makeup_db + saturation_correction_db + user_output_gain_db;
             const TYPICAL_CREST_DB: f32 = 6.0;
-            let effective_push_db = if let Some(source_lufs) =
-                settings.source_lufs_integrated
-            {
+            let effective_push_db = if let Some(source_lufs) = settings.source_lufs_integrated {
                 let ceiling_dbtp = settings.effective_ceiling_dbtp();
-                let max_real_push_db =
-                    (ceiling_dbtp - TYPICAL_CREST_DB - source_lufs).max(0.0);
+                let max_real_push_db = (ceiling_dbtp - TYPICAL_CREST_DB - source_lufs).max(0.0);
                 raw_push_db.min(max_real_push_db)
             } else {
                 // No source LUFS available — fall back to raw estimate.
@@ -1007,10 +1041,7 @@ impl ChainCoeffs {
         let comp_mid_lp = BiquadCoeffs::butter_lp(sr, LR4_CROSSOVER_HIGH_HZ, BUTTERWORTH_Q);
         let comp_high_hp = BiquadCoeffs::butter_hp(sr, LR4_CROSSOVER_HIGH_HZ, BUTTERWORTH_Q);
 
-        let comp_link_stereo = settings
-            .advanced
-            .compression_link_stereo
-            .unwrap_or(true);
+        let comp_link_stereo = settings.advanced.compression_link_stereo.unwrap_or(true);
 
         // The chain skips the compressor stage entirely when no band is
         // doing anything: effective preset threshold is at the ceiling
@@ -1031,20 +1062,21 @@ impl ChainCoeffs {
             && settings.advanced.compression_high_ratio.is_none()
             && settings.advanced.compression_high_attack_ms.is_none()
             && settings.advanced.compression_high_release_ms.is_none();
-        let comp_link_unset = !matches!(
-            settings.advanced.compression_link_stereo,
-            Some(false)
-        );
-        let compression_active = !(preset_compressor_inactive && comp_no_overrides && comp_link_unset);
+        let comp_link_unset = !matches!(settings.advanced.compression_link_stereo, Some(false));
+        let compression_active =
+            !(preset_compressor_inactive && comp_no_overrides && comp_link_unset);
 
         let comp_knee_db = 6.0_f32;
 
         Self {
             sub_highpass,
+            sub,
             low,
             low_mid,
             mid,
+            high_mid,
             high,
+            sparkle,
             warmth,
             presence_air,
             transient_amount,
@@ -1114,11 +1146,14 @@ pub(crate) fn apply_width_stereo(frame: &mut [f32], side_scale: f32) {
 pub struct ChannelState {
     sub_hp1: BiquadState,
     sub_hp2: BiquadState,
+    sub: BiquadState,
     low: BiquadState,
     /// Phase A2: state for the 400 Hz peaking band.
     low_mid: BiquadState,
     mid: BiquadState,
+    high_mid: BiquadState,
     high: BiquadState,
+    sparkle: BiquadState,
     warmth: BiquadState,
     presence_air: BiquadState,
     transient_fast_env: f32,
@@ -1611,10 +1646,8 @@ impl IntegratedLufs {
         // reference filters here for consistency.
         let hs_coeffs = BiquadCoeffs::k_weighting_pre(sample_rate);
         let hp_coeffs = BiquadCoeffs::k_weighting_rlb(sample_rate);
-        let block_size =
-            ((LUFS_INTEGRATED_BLOCK_MS * 0.001 * sr).round() as usize).max(1);
-        let block_step =
-            ((LUFS_INTEGRATED_STEP_MS * 0.001 * sr).round() as usize).max(1);
+        let block_size = ((LUFS_INTEGRATED_BLOCK_MS * 0.001 * sr).round() as usize).max(1);
+        let block_step = ((LUFS_INTEGRATED_STEP_MS * 0.001 * sr).round() as usize).max(1);
         Self {
             hs_coeffs,
             hp_coeffs,
@@ -1799,7 +1832,7 @@ impl MasteringChain {
         }
     }
 
-    /// Process one interleaved frame in place. Runs gain → 3-band EQ →
+    /// Process one interleaved frame in place. Runs gain → 7-band EQ →
     /// (optional stereo width) → saturation per channel, then the
     /// linked-stereo lookahead limiter across the frame. Width is inserted
     /// between EQ and saturation so the M/S decode sees the equalized signal
@@ -1811,7 +1844,7 @@ impl MasteringChain {
         if channels == 0 {
             return;
         }
-        // Pass 1: per-channel input gain + 4-band EQ.
+        // Pass 1: per-channel input gain + 7-band EQ.
         // Phase A2: low-mid peaking band inserted between low and mid so the
         // mud-zone cleanup (250–800 Hz) sits in the natural frequency order.
         for ch in 0..channels {
@@ -1819,10 +1852,13 @@ impl MasteringChain {
             let mut y = frame[ch] * self.coeffs.input_gain_lin;
             let hp1 = state.sub_hp1.process(&self.coeffs.sub_highpass, y);
             y = state.sub_hp2.process(&self.coeffs.sub_highpass, hp1);
+            y = state.sub.process(&self.coeffs.sub, y);
             y = state.low.process(&self.coeffs.low, y);
             y = state.low_mid.process(&self.coeffs.low_mid, y);
             y = state.mid.process(&self.coeffs.mid, y);
+            y = state.high_mid.process(&self.coeffs.high_mid, y);
             y = state.high.process(&self.coeffs.high, y);
+            y = state.sparkle.process(&self.coeffs.sparkle, y);
             y = state.warmth.process(&self.coeffs.warmth, y);
             y = state.presence_air.process(&self.coeffs.presence_air, y);
             frame[ch] = y;
@@ -1905,14 +1941,38 @@ impl MasteringChain {
         for ch in 0..ch_active {
             let state = &mut self.states[ch];
             let x = frame[ch];
-            let low_a = state.comp_split.low_lp1.process(&self.coeffs.comp_low_lp, x);
-            let low = state.comp_split.low_lp2.process(&self.coeffs.comp_low_lp, low_a);
-            let m1 = state.comp_split.mid_hp1.process(&self.coeffs.comp_mid_hp, x);
-            let m2 = state.comp_split.mid_hp2.process(&self.coeffs.comp_mid_hp, m1);
-            let m3 = state.comp_split.mid_lp1.process(&self.coeffs.comp_mid_lp, m2);
-            let mid = state.comp_split.mid_lp2.process(&self.coeffs.comp_mid_lp, m3);
-            let h1 = state.comp_split.high_hp1.process(&self.coeffs.comp_high_hp, x);
-            let high = state.comp_split.high_hp2.process(&self.coeffs.comp_high_hp, h1);
+            let low_a = state
+                .comp_split
+                .low_lp1
+                .process(&self.coeffs.comp_low_lp, x);
+            let low = state
+                .comp_split
+                .low_lp2
+                .process(&self.coeffs.comp_low_lp, low_a);
+            let m1 = state
+                .comp_split
+                .mid_hp1
+                .process(&self.coeffs.comp_mid_hp, x);
+            let m2 = state
+                .comp_split
+                .mid_hp2
+                .process(&self.coeffs.comp_mid_hp, m1);
+            let m3 = state
+                .comp_split
+                .mid_lp1
+                .process(&self.coeffs.comp_mid_lp, m2);
+            let mid = state
+                .comp_split
+                .mid_lp2
+                .process(&self.coeffs.comp_mid_lp, m3);
+            let h1 = state
+                .comp_split
+                .high_hp1
+                .process(&self.coeffs.comp_high_hp, x);
+            let high = state
+                .comp_split
+                .high_hp2
+                .process(&self.coeffs.comp_high_hp, h1);
             bands[ch] = [low, mid, high];
         }
 
@@ -1955,17 +2015,17 @@ impl MasteringChain {
                 }
             }
             for ch in 0..ch_active {
-                let detector = if link {
-                    linked_x
-                } else {
-                    bands[ch][b].abs()
-                };
+                let detector = if link { linked_x } else { bands[ch][b].abs() };
                 let env_ref = match b {
                     0 => &mut self.states[ch].comp_low_env,
                     1 => &mut self.states[ch].comp_mid_env,
                     _ => &mut self.states[ch].comp_high_env,
                 };
-                let alpha = if detector > *env_ref { alpha_a } else { alpha_r };
+                let alpha = if detector > *env_ref {
+                    alpha_a
+                } else {
+                    alpha_r
+                };
                 *env_ref = alpha * (*env_ref) + (1.0 - alpha) * detector;
                 let env = *env_ref;
                 let env_db = if env <= 1.0e-7 {
@@ -2028,9 +2088,15 @@ impl MasteringChain {
 
         use std::sync::atomic::Ordering;
         let to_u = |db: f32| (db.max(0.0) * 100.0) as u32;
-        self.gr_snapshots.low.fetch_max(to_u(max_gr_db_low), Ordering::Relaxed);
-        self.gr_snapshots.mid.fetch_max(to_u(max_gr_db_mid), Ordering::Relaxed);
-        self.gr_snapshots.high.fetch_max(to_u(max_gr_db_high), Ordering::Relaxed);
+        self.gr_snapshots
+            .low
+            .fetch_max(to_u(max_gr_db_low), Ordering::Relaxed);
+        self.gr_snapshots
+            .mid
+            .fetch_max(to_u(max_gr_db_mid), Ordering::Relaxed);
+        self.gr_snapshots
+            .high
+            .fetch_max(to_u(max_gr_db_high), Ordering::Relaxed);
     }
 
     pub fn process_interleaved(&mut self, samples: &mut [f32], channels: usize) {
@@ -2056,21 +2122,51 @@ impl MasteringChain {
         let mut y = sample * self.coeffs.input_gain_lin;
         let hp1 = state.sub_hp1.process(&self.coeffs.sub_highpass, y);
         y = state.sub_hp2.process(&self.coeffs.sub_highpass, hp1);
+        y = state.sub.process(&self.coeffs.sub, y);
         y = state.low.process(&self.coeffs.low, y);
+        // NOTE: state.low_mid intentionally skipped here. This mirrors the
+        // pre-existing divergence vs process_frame_inplace. Fixing it is a
+        // separate slice with its own byte-identity change accepted explicitly.
         y = state.mid.process(&self.coeffs.mid, y);
+        y = state.high_mid.process(&self.coeffs.high_mid, y);
         y = state.high.process(&self.coeffs.high, y);
+        y = state.sparkle.process(&self.coeffs.sparkle, y);
         y = state.warmth.process(&self.coeffs.warmth, y);
         y = state.presence_air.process(&self.coeffs.presence_air, y);
         if self.coeffs.compression_active {
             let state = &mut self.states[idx];
-            let low_a = state.comp_split.low_lp1.process(&self.coeffs.comp_low_lp, y);
-            let low = state.comp_split.low_lp2.process(&self.coeffs.comp_low_lp, low_a);
-            let m1 = state.comp_split.mid_hp1.process(&self.coeffs.comp_mid_hp, y);
-            let m2 = state.comp_split.mid_hp2.process(&self.coeffs.comp_mid_hp, m1);
-            let m3 = state.comp_split.mid_lp1.process(&self.coeffs.comp_mid_lp, m2);
-            let mid = state.comp_split.mid_lp2.process(&self.coeffs.comp_mid_lp, m3);
-            let h1 = state.comp_split.high_hp1.process(&self.coeffs.comp_high_hp, y);
-            let high = state.comp_split.high_hp2.process(&self.coeffs.comp_high_hp, h1);
+            let low_a = state
+                .comp_split
+                .low_lp1
+                .process(&self.coeffs.comp_low_lp, y);
+            let low = state
+                .comp_split
+                .low_lp2
+                .process(&self.coeffs.comp_low_lp, low_a);
+            let m1 = state
+                .comp_split
+                .mid_hp1
+                .process(&self.coeffs.comp_mid_hp, y);
+            let m2 = state
+                .comp_split
+                .mid_hp2
+                .process(&self.coeffs.comp_mid_hp, m1);
+            let m3 = state
+                .comp_split
+                .mid_lp1
+                .process(&self.coeffs.comp_mid_lp, m2);
+            let mid = state
+                .comp_split
+                .mid_lp2
+                .process(&self.coeffs.comp_mid_lp, m3);
+            let h1 = state
+                .comp_split
+                .high_hp1
+                .process(&self.coeffs.comp_high_hp, y);
+            let high = state
+                .comp_split
+                .high_hp2
+                .process(&self.coeffs.comp_high_hp, h1);
             let bands = [low, mid, high];
             let band_params: [(f32, f32, f32, f32); 3] = [
                 (
@@ -2107,7 +2203,11 @@ impl MasteringChain {
                     _ => &mut state.comp_high_env,
                 };
                 let detector = bands[b].abs();
-                let alpha = if detector > *env_ref { alpha_a } else { alpha_r };
+                let alpha = if detector > *env_ref {
+                    alpha_a
+                } else {
+                    alpha_r
+                };
                 *env_ref = alpha * (*env_ref) + (1.0 - alpha) * detector;
                 let env = *env_ref;
                 let env_db = if env <= 1.0e-7 {
@@ -2258,7 +2358,9 @@ mod tests {
     #[test]
     fn custom_highpass_is_identity() {
         let mut settings = default_master_settings();
-        settings.preset = Preset::Custom { id: "neutral".into() };
+        settings.preset = Preset::Custom {
+            id: "neutral".into(),
+        };
         let coeffs = ChainCoeffs::from_settings(48_000, &settings);
         assert!(approx_eq(coeffs.sub_highpass.b0, 1.0, 1e-6));
         assert!(approx_eq(coeffs.sub_highpass.b1, 0.0, 1e-6));
@@ -2278,7 +2380,9 @@ mod tests {
         let warmth_coeffs = ChainCoeffs::from_settings(48_000, &warmth);
 
         let mut custom = default_master_settings();
-        custom.preset = Preset::Custom { id: "neutral".into() };
+        custom.preset = Preset::Custom {
+            id: "neutral".into(),
+        };
         let custom_coeffs = ChainCoeffs::from_settings(48_000, &custom);
 
         assert!(
@@ -2390,8 +2494,16 @@ mod tests {
     fn apply_width_stereo_one_is_identity() {
         let mut frame = [0.3f32, -0.7];
         apply_width_stereo(&mut frame, 1.0);
-        assert!(approx_eq(frame[0], 0.3, 1e-6), "L drift at width=1: got {}", frame[0]);
-        assert!(approx_eq(frame[1], -0.7, 1e-6), "R drift at width=1: got {}", frame[1]);
+        assert!(
+            approx_eq(frame[0], 0.3, 1e-6),
+            "L drift at width=1: got {}",
+            frame[0]
+        );
+        assert!(
+            approx_eq(frame[1], -0.7, 1e-6),
+            "R drift at width=1: got {}",
+            frame[1]
+        );
     }
 
     /// Width 1.5 amplifies the side component. Hand-computed expected values
@@ -2444,12 +2556,17 @@ mod tests {
     #[test]
     fn chain_coeffs_default_width_is_neutral() {
         let settings = MasteringSettings {
-            preset: Preset::Custom { id: "t".to_string() },
+            preset: Preset::Custom {
+                id: "t".to_string(),
+            },
             intensity: 0.0,
+            eq_sub_db: 0.0,
             eq_low_db: 0.0,
             eq_low_mid_db: 0.0,
             eq_mid_db: 0.0,
+            eq_high_mid_db: 0.0,
             eq_high_db: 0.0,
+            eq_sparkle_db: 0.0,
             volume_match: false,
             source_lufs_integrated: None,
             input_gain_db: 0.0,
@@ -2472,12 +2589,17 @@ mod tests {
     #[test]
     fn chain_coeffs_clamps_width_into_safe_range() {
         let base = MasteringSettings {
-            preset: Preset::Custom { id: "t".to_string() },
+            preset: Preset::Custom {
+                id: "t".to_string(),
+            },
             intensity: 0.0,
+            eq_sub_db: 0.0,
             eq_low_db: 0.0,
             eq_low_mid_db: 0.0,
             eq_mid_db: 0.0,
+            eq_high_mid_db: 0.0,
             eq_high_db: 0.0,
+            eq_sparkle_db: 0.0,
             volume_match: false,
             source_lufs_integrated: None,
             input_gain_db: 0.0,
@@ -2513,12 +2635,17 @@ mod tests {
     #[test]
     fn process_frame_applies_width_inside_full_chain() {
         let settings = MasteringSettings {
-            preset: Preset::Custom { id: "t".to_string() },
+            preset: Preset::Custom {
+                id: "t".to_string(),
+            },
             intensity: 0.0,
+            eq_sub_db: 0.0,
             eq_low_db: 0.0,
             eq_low_mid_db: 0.0,
             eq_mid_db: 0.0,
+            eq_high_mid_db: 0.0,
             eq_high_db: 0.0,
+            eq_sparkle_db: 0.0,
             volume_match: false,
             source_lufs_integrated: None,
             input_gain_db: 0.0,
@@ -2559,12 +2686,17 @@ mod tests {
     #[test]
     fn process_frame_with_neutral_width_preserves_side_signal() {
         let settings = MasteringSettings {
-            preset: Preset::Custom { id: "t".to_string() },
+            preset: Preset::Custom {
+                id: "t".to_string(),
+            },
             intensity: 0.0,
+            eq_sub_db: 0.0,
             eq_low_db: 0.0,
             eq_low_mid_db: 0.0,
             eq_mid_db: 0.0,
+            eq_high_mid_db: 0.0,
             eq_high_db: 0.0,
+            eq_sparkle_db: 0.0,
             volume_match: false,
             source_lufs_integrated: None,
             input_gain_db: 0.0,
@@ -2604,12 +2736,17 @@ mod tests {
     #[test]
     fn warmth_default_is_identity() {
         let settings = MasteringSettings {
-            preset: Preset::Custom { id: "t".to_string() },
+            preset: Preset::Custom {
+                id: "t".to_string(),
+            },
             intensity: 0.0,
+            eq_sub_db: 0.0,
             eq_low_db: 0.0,
             eq_low_mid_db: 0.0,
             eq_mid_db: 0.0,
+            eq_high_mid_db: 0.0,
             eq_high_db: 0.0,
+            eq_sparkle_db: 0.0,
             volume_match: false,
             source_lufs_integrated: None,
             input_gain_db: 0.0,
@@ -2619,11 +2756,31 @@ mod tests {
             advanced: AdvancedSettings::default(),
         };
         let c = ChainCoeffs::from_settings(44_100, &settings);
-        assert!(approx_eq(c.warmth.b0, 1.0, 1e-6), "warmth.b0 should be 1.0, got {}", c.warmth.b0);
-        assert!(approx_eq(c.warmth.b1, 0.0, 1e-6), "warmth.b1 should be 0.0, got {}", c.warmth.b1);
-        assert!(approx_eq(c.warmth.b2, 0.0, 1e-6), "warmth.b2 should be 0.0, got {}", c.warmth.b2);
-        assert!(approx_eq(c.warmth.a1, 0.0, 1e-6), "warmth.a1 should be 0.0, got {}", c.warmth.a1);
-        assert!(approx_eq(c.warmth.a2, 0.0, 1e-6), "warmth.a2 should be 0.0, got {}", c.warmth.a2);
+        assert!(
+            approx_eq(c.warmth.b0, 1.0, 1e-6),
+            "warmth.b0 should be 1.0, got {}",
+            c.warmth.b0
+        );
+        assert!(
+            approx_eq(c.warmth.b1, 0.0, 1e-6),
+            "warmth.b1 should be 0.0, got {}",
+            c.warmth.b1
+        );
+        assert!(
+            approx_eq(c.warmth.b2, 0.0, 1e-6),
+            "warmth.b2 should be 0.0, got {}",
+            c.warmth.b2
+        );
+        assert!(
+            approx_eq(c.warmth.a1, 0.0, 1e-6),
+            "warmth.a1 should be 0.0, got {}",
+            c.warmth.a1
+        );
+        assert!(
+            approx_eq(c.warmth.a2, 0.0, 1e-6),
+            "warmth.a2 should be 0.0, got {}",
+            c.warmth.a2
+        );
     }
 
     /// Phase 12.2 — warmth control. Slider at 1.0 must lift the 300 Hz low
@@ -2632,12 +2789,17 @@ mod tests {
     #[test]
     fn warmth_at_one_lifts_300hz_band() {
         let settings = MasteringSettings {
-            preset: Preset::Custom { id: "t".to_string() },
+            preset: Preset::Custom {
+                id: "t".to_string(),
+            },
             intensity: 0.0,
+            eq_sub_db: 0.0,
             eq_low_db: 0.0,
             eq_low_mid_db: 0.0,
             eq_mid_db: 0.0,
+            eq_high_mid_db: 0.0,
             eq_high_db: 0.0,
+            eq_sparkle_db: 0.0,
             volume_match: false,
             source_lufs_integrated: None,
             input_gain_db: 0.0,
@@ -2672,12 +2834,17 @@ mod tests {
     #[test]
     fn chain_coeffs_clamps_warmth_into_range() {
         let make = |w: f32| MasteringSettings {
-            preset: Preset::Custom { id: "t".to_string() },
+            preset: Preset::Custom {
+                id: "t".to_string(),
+            },
             intensity: 0.0,
+            eq_sub_db: 0.0,
             eq_low_db: 0.0,
             eq_low_mid_db: 0.0,
             eq_mid_db: 0.0,
+            eq_high_mid_db: 0.0,
             eq_high_db: 0.0,
+            eq_sparkle_db: 0.0,
             volume_match: false,
             source_lufs_integrated: None,
             input_gain_db: 0.0,
@@ -2691,15 +2858,21 @@ mod tests {
         };
         let c_high = ChainCoeffs::from_settings(44_100, &make(5.0));
         let c_max = ChainCoeffs::from_settings(44_100, &make(1.0));
-        assert!(approx_eq(c_high.warmth.b0, c_max.warmth.b0, 1e-6),
+        assert!(
+            approx_eq(c_high.warmth.b0, c_max.warmth.b0, 1e-6),
             "warmth=5.0 should clamp to 1.0 (b0 mismatch: {} vs {})",
-            c_high.warmth.b0, c_max.warmth.b0);
+            c_high.warmth.b0,
+            c_max.warmth.b0
+        );
 
         let c_neg = ChainCoeffs::from_settings(44_100, &make(-1.0));
         let c_zero = ChainCoeffs::from_settings(44_100, &make(0.0));
-        assert!(approx_eq(c_neg.warmth.b0, c_zero.warmth.b0, 1e-6),
+        assert!(
+            approx_eq(c_neg.warmth.b0, c_zero.warmth.b0, 1e-6),
             "warmth=-1.0 should clamp to 0.0 (b0 mismatch: {} vs {})",
-            c_neg.warmth.b0, c_zero.warmth.b0);
+            c_neg.warmth.b0,
+            c_zero.warmth.b0
+        );
     }
 
     /// Phase 12.2 — presence_air control. Default `None` must produce an
@@ -2707,12 +2880,17 @@ mod tests {
     #[test]
     fn presence_air_default_is_identity() {
         let settings = MasteringSettings {
-            preset: Preset::Custom { id: "t".to_string() },
+            preset: Preset::Custom {
+                id: "t".to_string(),
+            },
             intensity: 0.0,
+            eq_sub_db: 0.0,
             eq_low_db: 0.0,
             eq_low_mid_db: 0.0,
             eq_mid_db: 0.0,
+            eq_high_mid_db: 0.0,
             eq_high_db: 0.0,
+            eq_sparkle_db: 0.0,
             volume_match: false,
             source_lufs_integrated: None,
             input_gain_db: 0.0,
@@ -2722,8 +2900,11 @@ mod tests {
             advanced: AdvancedSettings::default(),
         };
         let c = ChainCoeffs::from_settings(44_100, &settings);
-        assert!(approx_eq(c.presence_air.b0, 1.0, 1e-6),
-            "presence_air.b0 should be 1.0, got {}", c.presence_air.b0);
+        assert!(
+            approx_eq(c.presence_air.b0, 1.0, 1e-6),
+            "presence_air.b0 should be 1.0, got {}",
+            c.presence_air.b0
+        );
         assert!(approx_eq(c.presence_air.b1, 0.0, 1e-6));
         assert!(approx_eq(c.presence_air.b2, 0.0, 1e-6));
         assert!(approx_eq(c.presence_air.a1, 0.0, 1e-6));
@@ -2736,12 +2917,17 @@ mod tests {
     #[test]
     fn presence_air_at_one_lifts_10khz_band() {
         let settings = MasteringSettings {
-            preset: Preset::Custom { id: "t".to_string() },
+            preset: Preset::Custom {
+                id: "t".to_string(),
+            },
             intensity: 0.0,
+            eq_sub_db: 0.0,
             eq_low_db: 0.0,
             eq_low_mid_db: 0.0,
             eq_mid_db: 0.0,
+            eq_high_mid_db: 0.0,
             eq_high_db: 0.0,
+            eq_sparkle_db: 0.0,
             volume_match: false,
             source_lufs_integrated: None,
             input_gain_db: 0.0,
@@ -2778,12 +2964,17 @@ mod tests {
 
     fn default_master_settings() -> MasteringSettings {
         MasteringSettings {
-            preset: Preset::Custom { id: "t".to_string() },
+            preset: Preset::Custom {
+                id: "t".to_string(),
+            },
             intensity: 0.0,
+            eq_sub_db: 0.0,
             eq_low_db: 0.0,
             eq_low_mid_db: 0.0,
             eq_mid_db: 0.0,
+            eq_high_mid_db: 0.0,
             eq_high_db: 0.0,
+            eq_sparkle_db: 0.0,
             volume_match: false,
             source_lufs_integrated: None,
             input_gain_db: 0.0,
@@ -2850,10 +3041,13 @@ mod tests {
             MasteringSettings {
                 preset,
                 intensity: 0.5,
+                eq_sub_db: 0.0,
                 eq_low_db: 0.0,
                 eq_low_mid_db: 0.0,
                 eq_mid_db: 0.0,
+                eq_high_mid_db: 0.0,
                 eq_high_db: 0.0,
+                eq_sparkle_db: 0.0,
                 volume_match: false,
                 source_lufs_integrated: None,
                 input_gain_db: 0.0,
@@ -3261,7 +3455,13 @@ mod tests {
     /// Feed `seconds` of a sine at `amp_dbfs` (peak) into the integrator and
     /// return the final integrated LUFS reading. Used by the tests below to
     /// build representative listening-pass signals.
-    fn feed_sine(meter: &mut IntegratedLufs, sample_rate: u32, seconds: f32, freq_hz: f32, amp_dbfs: f32) {
+    fn feed_sine(
+        meter: &mut IntegratedLufs,
+        sample_rate: u32,
+        seconds: f32,
+        freq_hz: f32,
+        amp_dbfs: f32,
+    ) {
         let amp_lin = 10.0_f32.powf(amp_dbfs / 20.0);
         let total = (sample_rate as f32 * seconds) as u32;
         let omega = 2.0 * std::f32::consts::PI * freq_hz / sample_rate as f32;
@@ -3428,9 +3628,21 @@ mod tests {
     #[test]
     fn k_weighting_rlb_matches_bs1770_reference_at_48k() {
         let c = BiquadCoeffs::k_weighting_rlb(48_000);
-        assert!((c.b0 - 1.0_f32).abs() < 1.0e-6, "b0 expected 1.0, got {}", c.b0);
-        assert!((c.b1 - (-2.0_f32)).abs() < 1.0e-6, "b1 expected -2.0, got {}", c.b1);
-        assert!((c.b2 - 1.0_f32).abs() < 1.0e-6, "b2 expected 1.0, got {}", c.b2);
+        assert!(
+            (c.b0 - 1.0_f32).abs() < 1.0e-6,
+            "b0 expected 1.0, got {}",
+            c.b0
+        );
+        assert!(
+            (c.b1 - (-2.0_f32)).abs() < 1.0e-6,
+            "b1 expected -2.0, got {}",
+            c.b1
+        );
+        assert!(
+            (c.b2 - 1.0_f32).abs() < 1.0e-6,
+            "b2 expected 1.0, got {}",
+            c.b2
+        );
         assert!(
             (c.a1 - (-1.990_047_5_f32)).abs() < 1.0e-6,
             "a1: expected ~-1.99004745, got {}",
@@ -3524,7 +3736,7 @@ mod tests {
     fn momentary_lufs_pink_noise_at_minus_23_dbfs_reads_minus_23_within_half_lu() {
         let sr = 48_000_u32;
         let n_samples = (sr as f32 * 1.0) as usize; // 1 s — well past the 400 ms window
-        // Deterministic LCG → Paul Kellet pinking IIR.
+                                                    // Deterministic LCG → Paul Kellet pinking IIR.
         let mut state: u32 = 0xCAFE_BABE;
         let mut b0p = 0.0_f32;
         let mut b1p = 0.0_f32;
@@ -3551,9 +3763,8 @@ mod tests {
             pink.push(p + b6p);
         }
         // Calibrate pink to -23 dBFS RMS.
-        let measured_rms: f32 = (pink.iter().map(|&x| x * x).sum::<f32>()
-            / n_samples as f32)
-            .sqrt();
+        let measured_rms: f32 =
+            (pink.iter().map(|&x| x * x).sum::<f32>() / n_samples as f32).sqrt();
         let target_rms = 10.0_f32.powf(-23.0 / 20.0);
         let scale = target_rms / measured_rms;
         // Feed to the LEFT channel only so the BS.1770 sum-of-channels
@@ -3600,6 +3811,116 @@ mod tests {
             at_1500.abs() < 1.5,
             "1500 Hz (above band): expected ~0 dB, got {:.3}",
             at_1500
+        );
+    }
+
+    #[test]
+    fn sub_band_centred_at_80hz_with_q_point_8() {
+        let sr = 48_000.0_f32;
+        let coeffs = BiquadCoeffs::peaking(sr, 80.0, 0.8, 6.0);
+        let at_80 = biquad_magnitude_db_at(&coeffs, 80.0, sr);
+        let at_20 = biquad_magnitude_db_at(&coeffs, 20.0, sr);
+        let at_400 = biquad_magnitude_db_at(&coeffs, 400.0, sr);
+        assert!(
+            (at_80 - 6.0).abs() < 0.3,
+            "80 Hz @ +6 dB gain: expected ~+6 dB, got {:.3}",
+            at_80
+        );
+        assert!(
+            at_20.abs() < 2.0,
+            "20 Hz (below band): expected near 0 dB, got {:.3}",
+            at_20
+        );
+        assert!(
+            at_400.abs() < 1.5,
+            "400 Hz (above band): expected near 0 dB, got {:.3}",
+            at_400
+        );
+    }
+
+    #[test]
+    fn high_mid_band_centred_at_3500hz_with_q_point_9() {
+        let sr = 48_000.0_f32;
+        let coeffs = BiquadCoeffs::peaking(sr, 3500.0, 0.9, 6.0);
+        let at_3500 = biquad_magnitude_db_at(&coeffs, 3500.0, sr);
+        let at_1500 = biquad_magnitude_db_at(&coeffs, 1500.0, sr);
+        let at_12000 = biquad_magnitude_db_at(&coeffs, 12_000.0, sr);
+        assert!(
+            (at_3500 - 6.0).abs() < 0.3,
+            "3500 Hz @ +6 dB gain: expected ~+6 dB, got {:.3}",
+            at_3500
+        );
+        assert!(
+            at_1500.abs() < 1.7,
+            "1500 Hz (below band): expected near 0 dB, got {:.3}",
+            at_1500
+        );
+        assert!(
+            at_12000.abs() < 1.5,
+            "12000 Hz (above band): expected near 0 dB, got {:.3}",
+            at_12000
+        );
+    }
+
+    #[test]
+    fn sparkle_band_centred_at_12khz_high_shelf_slope_point_7() {
+        let sr = 48_000.0_f32;
+        let coeffs = BiquadCoeffs::high_shelf(sr, 12_000.0, 6.0, 0.7);
+        let low_3000 = biquad_magnitude_db_at(&coeffs, 3000.0, sr);
+        let at_12000 = biquad_magnitude_db_at(&coeffs, 12_000.0, sr);
+        let high_20000 = biquad_magnitude_db_at(&coeffs, 20_000.0, sr);
+        assert!(
+            low_3000.abs() < 1.0,
+            "3000 Hz (well below shelf): expected near 0 dB, got {:.3}",
+            low_3000
+        );
+        assert!(
+            (at_12000 - 3.0).abs() < 0.3,
+            "12000 Hz shelf midpoint @ +6 dB gain: expected ~+3 dB, got {:.3}",
+            at_12000
+        );
+        assert!(
+            (high_20000 - 6.0).abs() < 0.5,
+            "20000 Hz (above shelf): expected near +6 dB, got {:.3}",
+            high_20000
+        );
+    }
+
+    #[test]
+    fn process_sample_intentionally_skips_low_mid_until_separate_fix_slice() {
+        let mut neutral = default_master_settings();
+        neutral.eq_low_mid_db = 0.0;
+        let mut boosted = neutral.clone();
+        boosted.eq_low_mid_db = 6.0;
+
+        let mut sample_neutral = MasteringChain::new(48_000, 1, &neutral);
+        let mut sample_boosted = MasteringChain::new(48_000, 1, &boosted);
+        let mut sample_max_delta = 0.0_f32;
+        for n in 0..2048 {
+            let x = 0.05 * (2.0 * std::f32::consts::PI * 400.0 * n as f32 / 48_000.0).sin();
+            let a = sample_neutral.process_sample(x, 0);
+            let b = sample_boosted.process_sample(x, 0);
+            sample_max_delta = sample_max_delta.max((a - b).abs());
+        }
+        assert!(
+            sample_max_delta < 1.0e-6,
+            "legacy process_sample should remain unchanged by low_mid until the dedicated fix slice; max_delta={sample_max_delta}"
+        );
+
+        let mut frame_neutral = MasteringChain::new(48_000, 1, &neutral);
+        let mut frame_boosted = MasteringChain::new(48_000, 1, &boosted);
+        let mut frame_max_delta = 0.0_f32;
+        for n in 0..2048 {
+            let x = 0.05 * (2.0 * std::f32::consts::PI * 400.0 * n as f32 / 48_000.0).sin();
+            let mut a = [x];
+            let mut b = [x];
+            frame_neutral.process_frame_inplace(&mut a);
+            frame_boosted.process_frame_inplace(&mut b);
+            frame_max_delta = frame_max_delta.max((a[0] - b[0]).abs());
+        }
+        assert!(
+            frame_max_delta > 0.01,
+            "process_frame_inplace should still include low_mid; max_delta={frame_max_delta}"
         );
     }
 
@@ -3702,10 +4023,10 @@ mod tests {
     fn volume_match_never_amplifies() {
         let mut s = default_master_settings();
         s.volume_match = true;
-        s.input_gain_db = -6.0;  // negative input
+        s.input_gain_db = -6.0; // negative input
         s.output_gain_db = -6.0; // negative output
-        // chain_push ≈ -6 (input) + 0 (no comp on Custom) + 0 + -6 (output) = -12
-        // → attenuation = -(-12) = +12, clamped to 0 → gain_lin = 1.0.
+                                 // chain_push ≈ -6 (input) + 0 (no comp on Custom) + 0 + -6 (output) = -12
+                                 // → attenuation = -(-12) = +12, clamped to 0 → gain_lin = 1.0.
         let c = ChainCoeffs::from_settings(48_000, &s);
         assert!(
             (c.volume_match_gain_lin - 1.0).abs() < 1e-4,
@@ -3927,10 +4248,7 @@ mod tests {
         assert_eq!(parsed.tracks[1].role_locked, true);
         assert_eq!(parsed.tracks[2].arc_lufs_offset_db, 1.8);
         assert_eq!(parsed.transitions.len(), 3);
-        assert!(matches!(
-            parsed.transitions[1].kind,
-            TransitionKind::Gap
-        ));
+        assert!(matches!(parsed.transitions[1].kind, TransitionKind::Gap));
         assert_eq!(parsed.transitions[1].duration_seconds, 1.5);
         match parsed.arc {
             AlbumArc::Preset { preset } => assert_eq!(preset, AlbumArcKind::Cinematic),
@@ -3946,8 +4264,7 @@ mod tests {
         let mut s = default_master_settings();
         s.album = Some(AlbumPlan::default());
         let json = serde_json::to_string(&s).expect("serialize");
-        let parsed: MasteringSettings =
-            serde_json::from_str(&json).expect("deserialize");
+        let parsed: MasteringSettings = serde_json::from_str(&json).expect("deserialize");
         assert!(parsed.album.is_some());
         let album = parsed.album.unwrap();
         assert_eq!(album.intensity, 1.0);
@@ -3970,8 +4287,7 @@ mod tests {
             "volume_match": false,
             "advanced": {}
         }"#;
-        let parsed: MasteringSettings =
-            serde_json::from_str(json).expect("deserialize");
+        let parsed: MasteringSettings = serde_json::from_str(json).expect("deserialize");
         assert!(parsed.album.is_none());
     }
 
@@ -3990,7 +4306,10 @@ mod tests {
         }"#;
         let parsed: MasteringSettings = serde_json::from_str(json).expect("deserialize");
         assert_eq!(parsed.delivery_profile, DeliveryProfile::StreamingUniversal);
+        assert_eq!(parsed.eq_sub_db, 0.0);
         assert_eq!(parsed.eq_low_mid_db, 0.0);
+        assert_eq!(parsed.eq_high_mid_db, 0.0);
+        assert_eq!(parsed.eq_sparkle_db, 0.0);
     }
 
     /// Heavy presets (Punch / Loud / Oomph) must carry low-mid CUTS in the
