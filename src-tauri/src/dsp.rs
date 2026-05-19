@@ -270,11 +270,10 @@ impl BiquadState {
 // identity but defaults to density 0 so a fresh-Custom session is still
 // an identity chain.
 //
-// Still CAPTURED but not directly APPLIED:
+// Still captured but not directly applied:
 //   * target_lufs — preset loudness intent only. DeliveryProfile owns
 //     actual LUFS landing through `effective_target_lufs()`, so this
 //     must not grow a second measure-and-target path.
-//   * transient_punch — needs a transient shaper (Phase A5).
 // ============================================================================
 
 #[derive(Debug, Clone, Copy)]
@@ -298,8 +297,8 @@ pub struct PresetCalibration {
     /// > 1 widens, < 1 narrows. The user's `advanced.width` slider takes
     /// precedence when set; this is what the preset uses out of the box.
     pub stereo_width: f32,
-    /// Captured for the future transient shaper (Phase A5). Not applied
-    /// in A2 since the shaper doesn't exist.
+    /// Preset transient shaper intent. Positive values lift attacks;
+    /// negative values soften them.
     pub transient_punch: f32,
     /// Per-preset subsonic high-pass cutoff in Hz. Applied as an LR4
     /// cascade before the musical EQ stages; 0.0 means identity.

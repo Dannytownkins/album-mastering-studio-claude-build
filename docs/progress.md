@@ -3669,3 +3669,126 @@ Next recommended slice:
 Install the DMG on this Mac and do a manual audio workflow pass:
 import audio, analyze, preview original/mastered, export, and listen.
 
+## 2026-05-18 - frontend loudness labels + compressor Auto readouts
+
+Goal:
+
+Close the two pure-frontend review slices before returning to DSP:
+make LoudnessTarget labels harder to misread and show the computed
+per-band compressor Auto values without requiring overrides.
+
+What changed:
+
+- Updated LoudnessTarget quick-select labels to:
+  "Streaming default (-14)", "Spotify Loud (-11)", "Hot master (-9)",
+  and "Off / Natural".
+- Added frontend compressor Auto readout helpers mirroring the Rust
+  preset compressor defaults and density macro.
+- Per-band compressor rows now show ghosted Auto values with units:
+  dB, :1, and ms.
+- Updated `dsp.rs` comments around `target_lufs`: captured as preset
+  loudness intent only; DeliveryProfile owns actual LUFS landing via
+  `effective_target_lufs()`.
+
+Verification:
+
+- Initial focused Vitest run failed on the old labels and missing helper.
+- `npm test -- --run src/lib/effective-settings.test.ts src/lib/compressor-auto.test.ts`: 16/16 pass.
+- `npm test`: 56/56 pass.
+- `npm run build`: clean production build.
+
+Real-audio fixture used:
+
+None. Pure frontend/helper/comment slice.
+
+What failed or remains partial:
+
+- No audio paths touched.
+
+Next recommended slice:
+
+Ship HPF as a mechanical DSP slice with frequency-response tests and
+the slow real-fixture lane.
+
+## 2026-05-18 - preset subsonic high-pass infrastructure
+
+Goal:
+
+Wire per-preset subsonic HPF infrastructure into the DSP chain with
+mechanical gates first; leave taste-level cutoff tuning for monitor time.
+
+What changed:
+
+- Added `highpass_hz` to `PresetCalibration`.
+- Applied each preset's HPF as a cascaded Butterworth/LR4-style
+  subsonic filter before the musical EQ stages.
+- Set conservative defaults in the 22-30 Hz range; Custom remains
+  identity at 0 Hz.
+- Added tests for preset cutoff bounds, LR4 subsonic attenuation, and
+  Custom identity.
+
+Verification:
+
+- Initial focused Rust test failed before implementation on missing
+  `highpass_hz` / `sub_highpass` wiring.
+- `cargo test -p album-mastering-studio --lib highpass -- --nocapture`: 3/3 pass.
+- `AMS_RUN_REAL_FIXTURE=1 cargo test -p album-mastering-studio`: full suite passed, including real-fixture tests.
+
+Real-audio fixture used:
+
+Yes. `AMS_RUN_REAL_FIXTURE=1` slow lane passed.
+
+What failed or remains partial:
+
+- `cargo fmt` initially reformatted unrelated Rust files; those changes
+  were reverted before committing so the HPF commit stayed one-file clean.
+- Per-preset cutoff taste tuning remains deferred to a batched monitor
+  listening session.
+
+Next recommended slice:
+
+Ship transient shaper primitive with envelope-behavior tests and the
+slow real-fixture lane.
+
+## 2026-05-18 - preset transient shaper infrastructure
+
+Goal:
+
+Wire `transient_punch` into real DSP behavior with mechanical envelope
+tests now; defer musical taste calls to monitor time.
+
+What changed:
+
+- Added a minimum viable transient shaper using fast/slow envelope
+  followers and their difference to drive gain.
+- Wired preset `transient_punch` into `ChainCoeffs` with positive values
+  lifting attacks and negative values softening attacks.
+- Placed the shaper before the multiband compressor, so compression
+  reacts to the shaped transient behavior.
+- Added tests for preset coefficient wiring and positive/negative
+  envelope behavior.
+
+Verification:
+
+- Initial focused Rust test failed before implementation on missing
+  `transient_amount` and missing shaper primitive.
+- `cargo test -p album-mastering-studio --lib transient -- --nocapture`: 4/4 pass.
+- `AMS_RUN_REAL_FIXTURE=1 cargo test -p album-mastering-studio`: full suite passed, including real-fixture tests.
+
+Real-audio fixture used:
+
+Yes. `AMS_RUN_REAL_FIXTURE=1` slow lane passed.
+
+What failed or remains partial:
+
+- First implementation pass used the default test intensity of 0.0, so
+  the preset wiring assertion expected too much transient amount. The
+  test now sets normal preset intensity explicitly.
+- Musical verification of transient strength remains deferred to a
+  batched monitor listening session.
+
+Next recommended slice:
+
+Objective UX work: add an export destination picker so Dan can choose
+where WAV/MP3 exports are written instead of hunting in Application
+Support.
