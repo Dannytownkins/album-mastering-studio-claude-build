@@ -4,9 +4,9 @@
 
 > **Current snapshot.** The 7-band EQ expansion landed across four commits on `codex/eq-7-band-expansion`, on top of master tip `ce11a83`. Safety tag `pre-eq-7-band-2026-05-19` is set at the pre-slice master. The slice expands the user-facing EQ from 4 bands to 7: knob-bound primary bands (Low / Mid / High at 200 / 1500 / 6000 Hz) keep their two control surfaces; new drag-only secondary bands (Sub / High-Mid / Sparkle at 80 / 3500 / 12000 Hz) join the existing Low-Mid (400 Hz) on the Visual EQ. All 8 presets default new band baselines to 0.0 dB; listening-batch tune-up is deferred. Per-preset SHA snapshots establish a byte-identity gate before any DSP change went in, and the gate held cleanly through all four commits.
 >
-> **Test totals (Mac, post-slice):** Rust lib **174/174** (was 160 pre-slice; +14 = 10 SHA snapshots + 1 determinism guard + 3 per-band freq-response + 1 `process_sample` divergence guard). Vitest **81/81** (was 79 pre-slice; +2 unaccounted, likely test-discovery edge — no new `it()` blocks named in the commits). Slow lane (`AMS_RUN_REAL_FIXTURE=1 cargo test`) passed on commits B.0, B.1, and the slice-final gate.
+> **Test totals (Windows, post-slice):** Rust lib **174/174** (was 160 pre-slice; +14 = 10 SHA snapshots + 1 determinism guard + 3 per-band freq-response + 1 `process_sample` divergence guard). Vitest **81/81** (was 79 pre-slice; +2 unaccounted, likely test-discovery edge — no new `it()` blocks named in the commits). Slow lane (`AMS_RUN_REAL_FIXTURE=1 cargo test`) passed on commits B.0, B.1, and the slice-final gate.
 >
-> **Slice-final verification (`b424b36`, Mac):** `npm test` 13 files / 81 tests pass · `npm run build` clean · `cargo test --lib` 174/174 · `cargo test` full suite green (lib + integration + SHA snapshots + doc-tests) · `AMS_RUN_REAL_FIXTURE=1 cargo test` full suite green including real-fixture render + metering. All five gates locked in via `docs/progress.md`'s slice-complete entry.
+> **Slice-final verification (`b424b36`, Windows):** `npm test` 13 files / 81 tests pass · `npm run build` clean · `cargo test --lib` 174/174 · `cargo test` full suite green (lib + integration + SHA snapshots + doc-tests) · `AMS_RUN_REAL_FIXTURE=1 cargo test` full suite green including real-fixture render + metering. All five gates locked in via `docs/progress.md`'s slice-complete entry. **All of this work — implementation, verification, merge — happened on Dan's Windows machine.**
 >
 > **What's open / next.** Slice landed on master via fast-forward; `codex/eq-7-band-expansion` retained until Dan deletes it. **In-flight CSS work stashed** before the merge — local `git stash` entry labeled "WIP CSS+AlbumPanel tweaks pre-merge 2026-05-19" (5 files: `src/App.css`, `src/App.layout-css.test.ts`, `src/App.tsx`, `src/components/AlbumPanel.tsx`, `src/components/VisualEqPanel.tsx`). Restored to the branch checkout after merge; `git stash list` to find it if needed. Per-preset listening tune-up for Sub/High-Mid/Sparkle is the natural follow-up. Windows SHA verification still pending (see Confidence below). Several deferred items captured below (see Deferred Follow-ups).
 
@@ -82,18 +82,17 @@ These are choices made during planning/review that future readers won't see in t
 
 ## Confidence and Uncertainty
 
-**Verified by passing tests + executed builds (Mac):**
-- All 174 lib tests pass on macOS (`cargo test --lib` from src-tauri/).
+**Verified by passing tests + executed builds (Windows):**
+- All 174 lib tests pass on Windows (`cargo test --lib` from src-tauri/).
 - All Vitest tests pass (`npm test` at 81/81).
 - `npm run build` clean.
-- Slow lane (`AMS_RUN_REAL_FIXTURE=1 cargo test`) ran green on B.0 and B.1.
+- Slow lane (`AMS_RUN_REAL_FIXTURE=1 cargo test`) ran green on B.0, B.1, and the slice-final gate.
 - The 10 per-preset chain-output SHAs from Commit B.0 remain unchanged after B.1's DSP extension — byte-identity gate held mathematically (new biquads at 0.0 dB are identity for all input).
 - Visual smoke at three viewports confirmed via Codex's agent-browser run: 7 nodes + 7 hit targets + 3 primary halos + 4 secondary nodes, no edge collisions.
 
 **Documented but pending verification:**
-- The 5-command slice-final verification suite (Codex run in flight at handoff time).
-- Cross-platform SHA portability. Commit B.0 SHAs are established on Mac. Windows run pending. If `f32::tanh` happens to be cross-platform deterministic on standard targets, SHAs match and no gating needed. If they diverge, OS-gated `#[cfg(target_os = "...")]` constants are acceptable in-slice; portable tanh is its own DSP-output-changing slice for later.
-- Visual smoke at the smallest viewport (1366×768) confirmed by Codex; Dan's human pass on real Mac hardware still pending.
+- **Cross-platform SHA portability (now: Mac run pending, not Windows).** Commit B.0 SHAs were established on Windows. Dan switches back to Mac next; the next opportunity to verify cross-platform behavior is when the Mac runs `cargo test`. If `f32::tanh` happens to be cross-platform deterministic on standard targets, SHAs match and no gating needed. If they diverge, OS-gated `#[cfg(target_os = "...")]` constants are acceptable as a small in-slice fix; portable tanh stays a future DSP-output-changing slice.
+- Visual smoke at the smallest viewport (1366×768) confirmed by Codex on Windows; Dan's human ear-listen pass on real studio monitors deferred until next monitor session.
 
 **Known minor uncertainty:**
 - Vitest count discrepancy 79 → 81 (+2) is unaccounted for from the commit diffs. `npm test` passes 81/81 cleanly; not a correctness concern.
@@ -140,7 +139,20 @@ In rough order of natural sequencing:
 - Visual EQ now shows USER OFFSETS only across 7 bands. Preset baselines stay invisible. Do not "add an effective curve display" without an explicit product decision — that's a deliberately closed door for now.
 - Tone Shape stays at 3 knobs (Low/Mid/High). Adding more knobs for the new bands is a product change requiring a fresh design pass, not a 7-band-expansion follow-up.
 - The byte-identity gate (per-preset SHA snapshots in `dsp.rs` `mod preset_byte_identity`) is the reference contract for "the chain's audible behavior is unchanged." Any future DSP slice should either preserve those SHAs OR update them deliberately alongside an accepted byte-identity-changing change. Don't update them silently to make tests pass.
-- The `pre-eq-7-band-2026-05-19` safety tag stays in place until after merge. Keep it as the recovery anchor in case of post-merge rollback.
+- The `pre-eq-7-band-2026-05-19` safety tag is **local-only on Dan's Windows machine** (per kickoff doc convention: "Create a local safety tag"). If rollback matters across machines, push it to origin first: `git push origin pre-eq-7-band-2026-05-19`. Otherwise it survives only as long as the Windows clone exists.
+
+## Cross-Machine Handoff — Windows → Mac
+
+This whole session ran on Dan's Windows machine. Dan is switching back to Mac next. Sequencing items that matter at the machine switch:
+
+- **In-flight CSS tweaks are uncommitted on Windows** (5 files: `src/App.css`, `src/App.layout-css.test.ts`, `src/App.tsx`, `src/components/AlbumPanel.tsx`, `src/components/VisualEqPanel.tsx`). If Dan switches to Mac without committing + pushing OR stashing-with-export, those tweaks stay stuck on the Windows clone. Three options:
+  1. Commit + push them now (cleanest — they live on origin/master, Mac pulls them).
+  2. Save the diff as a patch file (`git diff > my-css-tweaks.patch`), copy to Mac, apply there.
+  3. Abandon them on Windows and redo on Mac (only if they were exploratory).
+- **First action on Mac:** `git pull --ff-only` on master. Master tip should be `c65a6fa` (handoff doc) → `b424b36` (verification doc) → 5 slice commits.
+- **Cross-platform SHA verification — first opportunity.** On Mac, run `cargo test preset_byte_identity` first. If 10/10 pass with no SHA diff, cross-platform portability is confirmed and that uncertainty closes. If any SHA differs, the test will name the divergent preset — that's the signal to add `#[cfg(target_os = "...")]` constants for those specific presets in a small follow-up slice.
+- **The safety tag won't follow.** If Dan wants rollback safety on Mac, push the tag (`git push origin pre-eq-7-band-2026-05-19`) before leaving Windows, OR recreate it on Mac after pulling (`git tag pre-eq-7-band-2026-05-19 ce11a83`).
+- **Listening pass for per-preset Sub/High-Mid/Sparkle tuning is the natural next slice once Dan is back on studio monitors.** No urgency; the new bands are audibly inert at 0.0 dB defaults until that pass happens.
 
 ---
 
