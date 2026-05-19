@@ -4365,3 +4365,41 @@ What failed or remains partial:
 Next recommended slice:
 
 Continue with the final eagle-eye audit.
+
+## 2026-05-19 - Windows pickup handoff refresh
+
+Goal:
+
+Update the handoff trail before moving to the Windows machine.
+
+What changed:
+
+- Updated `docs/HANDOFF.md` with the latest UI-polish snapshot, Vitest total,
+  recent UI regression gates, and a Windows pickup prompt.
+- Updated `docs/HANDOFF_2026-05-18_evening.md` through commit `6ab4361`,
+  including the static signal chain, Preset-header save action, and aligned
+  preset/signal-chain grid slices.
+- Clarified that the latest UI polish is shared React/CSS and should affect
+  Windows after pulling and rebuilding.
+
+Verification:
+
+- `npm test`: 79/79 pass.
+- `cargo test --lib` from `src-tauri`: 154/154 pass.
+- `npm run build`: clean production build.
+- `git diff --check`: clean.
+
+Real-audio fixture used:
+
+No. This is a docs-only handoff update.
+
+What failed or remains partial:
+
+- Windows installer execution and visual smoke still need the Windows-machine
+  pass.
+
+Next recommended slice:
+
+On Windows: pull latest, run the documented fast gates, run
+`npm run build:windows`, confirm installer outputs, and record any
+Windows-specific setup fixes.

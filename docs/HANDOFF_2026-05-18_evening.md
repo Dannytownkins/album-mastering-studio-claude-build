@@ -5,8 +5,10 @@
 > Linux deferred — with Track Master and Album Master paths both present,
 > explicit export destination pickers, Mac packaging proven on this Mac, and
 > Windows packaging/configuration statically guarded for the next
-> Windows-machine pass. The latest verified state has Rust lib **154/154** on
-> macOS, Vitest **73/73**, and `npm run build` clean. Windows installer
+> Windows-machine pass. The latest shared UI polish keeps the signal chain
+> static, moves preset saving into the Preset header, and aligns the preset row
+> with the signal chain grid. The latest verified state has Rust lib **154/154**
+> on macOS, Vitest **79/79**, and `npm run build` clean. Windows installer
 > execution, Windows signing, and Apple notarization remain distribution
 > follow-ups, not completed facts.
 
@@ -31,11 +33,9 @@
 - Branch: `master`
 - Remote: pushed to `origin/master`
 - Latest completed implementation/config slice included in this handoff
-  inventory: `2368692`
-- The final cross-platform canon documentation commits after `2368692` are
-  summarized at the tail of `docs/progress.md`; inspect `git log` for their
-  exact hashes because the PRODUCT.md canon update is intentionally committed
-  separately.
+  inventory: `6ab4361`
+- A final docs-only Windows pickup refresh may appear after `6ab4361`; if so,
+  treat it as handoff/prompt cleanup rather than product behavior.
 - Local convention: verified slices commit and push to `master`.
 - Changelog decision: no separate `CHANGELOG.md`; commit history plus
   `docs/progress.md` are the change record.
@@ -68,6 +68,14 @@
 | `edb422e` | Update verification and release docs | Added bash/PowerShell verification parity and Phase 14 release-build status. |
 | `b53c58b` | Record cold-pickup wrap-up | Logged the wrap-up doc pass and no-changelog decision in `docs/progress.md`. |
 | `2368692` | Harden Windows packaging symmetry | Added explicit `bundle.windows.webviewInstallMode`, cross-shell `rimraf` cleanup, and mirrored Windows packaging assertions. |
+| `a7e3c72` | Refresh cross-platform handoff wrap-up | Caught up the dated handoff after the Windows packaging symmetry slice. |
+| `9a46f3c` | Update README for cross-platform app state | Reframed README around the real cross-platform Tauri/Rust app. |
+| `036e809` | Align verification and phase docs with cross-platform target | Updated CLAUDE/implementation-plan verification and packaging status. |
+| `f04c565` | Update product canon for cross-platform target | Updated `PRODUCT.md` after Dan approved the cross-platform wording. |
+| `9152aac` | Update HANDOFF_2026-05-18_evening.md | Finalized the dated handoff confidence inventory after the canon update. |
+| `7ad9f06` | Make signal chain bar static | Removed the inert signal-chain dropdown affordance and gated the static chain. |
+| `08c118a` | Move preset save into preset header | Removed the separate save-preset row and put the save action beside Preset. |
+| `6ab4361` | Align preset and signal chain grids | Aligned preset tiles and signal-chain stages on the same 8-column rhythm. |
 
 ## File-Size Deltas
 
@@ -90,15 +98,22 @@ New frontend helpers:
 - `src/lib/windows-app-packaging.test.ts` = static Windows packaging gate,
   including explicit `bundle.windows.webviewInstallMode`, cross-shell
   `rimraf`, and helper-binary hygiene
+- `src/components/SignalChain.test.tsx`,
+  `src/App.preset-save.test.tsx`, and `src/App.layout-css.test.ts` = latest
+  UI-polish regression gates for static chain, Preset-header save, and aligned
+  preset/signal-chain layout
 
 ## Test Status
 
 Current fast gates:
 
 - `cargo test --lib` from `src-tauri`: **154/154 pass on macOS**
-- `npm test`: **73/73 pass**
+- `npm test`: **79/79 pass**
 - `npm run build`: clean production build
 - `git diff --check`: clean in the latest verified pass
+- `npm run build:mac`: passed after the latest UI polish; the Mac `.app` and
+  DMG were rebuilt, and `/Applications/YES Master.app` matched the rebuilt
+  bundle after copy/install refresh
 
 Windows-only path gate:
 
@@ -130,12 +145,20 @@ Verified by passing tests:
 - Export location helper behavior: `src/lib/export-location.test.ts`.
 - Rust explicit output path/directory behavior: `src-tauri/src/engine.rs`
   tests, including the macOS-run native parent-creation test.
-- Full fast suites: Rust lib 154/154 on macOS and Vitest 73/73.
+- Latest UI polish: `src/components/SignalChain.test.tsx` verifies the signal
+  chain has no dropdown affordance; `src/App.preset-save.test.tsx` verifies the
+  Preset-header save action and absence of the old save row;
+  `src/App.layout-css.test.ts` verifies the preset and signal-chain rows share
+  the intended grid rhythm.
+- Full fast suites: Rust lib 154/154 on macOS and Vitest 79/79.
 
 Documented but not yet verified on real target hardware:
 
 - `npm run build:windows` execution, and inspection of the resulting NSIS
   setup EXE plus MSI, must happen on Dan's Windows machine.
+- Visual smoke of the latest shared UI polish on Windows is not yet verified.
+  The React/CSS changes are platform-shared, but the actual Windows WebView2
+  rendering still needs the Windows-machine pass.
 - The explicit Windows WebView2 install mode matches Tauri's documented
   default (`downloadBootstrapper`, silent), but the actual installer behavior
   still needs Dan's Windows-machine verification.
@@ -185,6 +208,12 @@ Known uncertainty:
 - Album Master export asks for an explicit output folder.
 - Track and album picker paths are gated for native macOS/Linux separators and
   Windows-style backslash separators.
+- Signal chain is now a static bar; the old inert dropdown affordance is gone.
+- Preset saving now lives behind a compact `+` beside the Preset label; the
+  separate save-preset row is removed.
+- The preset row and signal chain now share an aligned 8-column visual rhythm,
+  with the preset tiles slightly larger and the signal-chain row slightly
+  tighter.
 - Cross-machine plan handoff policy is captured in ADR 0002.
 - Album mode has one visible Export Album button.
 - Legacy frontend `exportAlbum` hook and stale frontend API wrapper are removed.
@@ -230,6 +259,8 @@ Product/UX:
   is not immediately eaten by compressor gain reduction.
 - Frontend slices should keep using `src/lib/` pure helpers + co-located Vitest
   when the logic is extractable.
+- The newest UI polish is shared frontend/CSS, not macOS-specific. Windows
+  should pick it up after pulling latest and rebuilding.
 - Listening calls are Dan's. If a future note is taste-based, capture the note
   first, then tune.
 
