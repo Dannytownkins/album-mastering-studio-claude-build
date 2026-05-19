@@ -1,10 +1,10 @@
 # YES Master
 
-YES Master is a private local desktop mastering app built with Tauri, React,
-TypeScript, and a Rust audio engine. Track Master and Album Master are both
-functional, exports are explicit and non-destructive, and the repo now carries
-build paths for the desktop targets Dan is actively using. The product stays
-local/offline by default; no private audio belongs in git.
+YES Master is a private cross-platform desktop mastering app — Mac and Windows
+targeted; Linux deferred — built with Tauri, React, TypeScript, and a Rust
+audio engine. Track Master and Album Master are both functional, exports are
+explicit and non-destructive, and the product stays local/offline by default;
+no private audio belongs in git.
 
 ## Current State
 
