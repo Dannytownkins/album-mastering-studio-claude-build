@@ -78,8 +78,6 @@ function App() {
           <>
             <AlbumHeader
               tracks={tm.tracks}
-              isExporting={tm.isExportingAlbum}
-              onExport={tm.exportAlbum}
             />
             <AlbumPanel
               tracks={tm.tracks}
@@ -2403,12 +2401,8 @@ function Toast({
 
 function AlbumHeader({
   tracks,
-  isExporting,
-  onExport,
 }: {
   tracks: ImportedTrack[];
-  isExporting: boolean;
-  onExport: () => void;
 }) {
   const totalSeconds = tracks.reduce(
     (acc, t) => acc + (t.duration_seconds ?? 0),
@@ -2428,14 +2422,6 @@ function AlbumHeader({
           )}
         </div>
       </div>
-      <button
-        type="button"
-        className="primary"
-        onClick={onExport}
-        disabled={isExporting}
-      >
-        {isExporting ? "Rendering album…" : "Export Album"}
-      </button>
     </section>
   );
 }

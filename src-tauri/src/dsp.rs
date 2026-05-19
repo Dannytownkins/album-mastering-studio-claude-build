@@ -2110,6 +2110,9 @@ impl MasteringChain {
             }
             y = sum_y;
         }
+        // Legacy path mirrors process_frame_inplace topology: compressor
+        // first, then transient shaping, so transient lift is not immediately
+        // folded back into compressor gain reduction.
         if self.coeffs.transient_amount.abs() > 1.0e-5 {
             let state = &mut self.states[idx];
             y = process_transient_shaper_sample(
@@ -2319,6 +2322,25 @@ mod tests {
         assert!(
             out < 0.5,
             "negative transient amount should soften an attack, got input 0.5 output {out}"
+        );
+    }
+
+    #[test]
+    fn process_sample_legacy_path_applies_transient_after_compression() {
+        let mut settings = default_master_settings();
+        settings.preset = Preset::Punch;
+        settings.intensity = 0.5;
+        settings.advanced.compression_density = Some(1.0);
+        let mut shaped = MasteringChain::new(48_000, 1, &settings);
+        let mut unshaped = MasteringChain::new(48_000, 1, &settings);
+        unshaped.coeffs.transient_amount = 0.0;
+
+        let shaped_out = shaped.process_sample(0.5, 0);
+        let unshaped_out = unshaped.process_sample(0.5, 0);
+
+        assert!(
+            shaped_out > unshaped_out,
+            "legacy process_sample should apply positive transient shaping after compression; shaped={shaped_out} unshaped={unshaped_out}"
         );
     }
 

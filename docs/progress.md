@@ -3889,3 +3889,56 @@ Next recommended slice:
 
 Run the Mac app smoke path for Track Master and Album Master export dialogs,
 then clean up the duplicate album export entry point if the UX feels redundant.
+
+## 2026-05-18 evening - self-review + album export button dedupe
+
+Goal:
+
+Re-check Vera's DSP/workflow flags against the actual code, capture deferred
+listening items in repo docs, and remove the duplicate Album Export action.
+
+What changed:
+
+- Confirmed the cascaded subsonic HPF rationale comment is present near
+  `sub_highpass` in `ChainCoeffs::from_settings`.
+- Confirmed transient shaping is post-compressor in `process_frame_inplace`.
+- Added a matching legacy-path comment plus a regression test showing
+  `process_sample` applies transient shaping after compression.
+- Added `docs/followups/listening-batch-2026-05-19.md` for HPF cutoff tuning,
+  per-preset transient verification, and the five carried-forward listening
+  checks from `HANDOFF_2026-05-15_evening.md`.
+- Removed the header-level Album Export button; the Album Master panel now has
+  the single visible export action.
+- Added a React/Vitest gate that album mode shows only one Album Export button.
+- Added a one-line `HANDOFF.md` addendum pointing to the new listening batch.
+
+Verification:
+
+- `npm test -- src/App.album-export.test.tsx`: first failed with 2 Album Export
+  buttons, then passed after removing the header button.
+- `npm test -- src/App.album-export.test.tsx src/hooks/useTrackMaster.integration.test.tsx`:
+  10/10 pass.
+- `cargo test -p album-mastering-studio --lib "transient" -- --nocapture`:
+  5/5 pass.
+- `npm test`: 62/62 pass.
+- `npm run build`: clean production build.
+- `AMS_RUN_REAL_FIXTURE=1 cargo test -p album-mastering-studio`: full suite
+  passed, including real-fixture tests.
+
+Real-audio fixture used:
+
+Yes. Slow lane was run conservatively because this pass touched `dsp.rs`, even
+though no DSP behavior changed.
+
+What failed or remains partial:
+
+- No drift found on HPF rationale, frame-path transient rationale, or picker
+  dialog option tests.
+- Drift found and fixed: the legacy `process_sample` transient placement was
+  present but did not have its own mechanical regression test.
+- The older `exportAlbum` hook remains as a non-UI legacy path, but it no
+  longer creates a duplicate visible button.
+
+Next recommended slice:
+
+Run full verification and commit/push this review + UX cleanup slice.
