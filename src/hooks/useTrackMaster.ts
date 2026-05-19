@@ -2,6 +2,12 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { open, save, getCurrentWebview } from "../lib/tauri-runtime";
 import { api, onPlaybackTick, onRenderProgress } from "../lib/api";
 import {
+  browserExportLocationStore,
+  defaultExportPath,
+  lastExportDirectory,
+  rememberExportDirectory,
+} from "../lib/export-location";
+import {
   applyAdvancedWithProfileFlip,
   applyChainDispatchOverrides,
 } from "../lib/settings-transitions";
@@ -78,13 +84,16 @@ function ensureWavExtension(path: string): string {
 }
 
 async function chooseAlbumExportFolder(): Promise<string | null> {
+  const store = browserExportLocationStore();
   const selected = await open({
     directory: true,
+    defaultPath: lastExportDirectory(store, "album") ?? undefined,
     multiple: false,
     title: "Choose album export folder",
   });
-  if (Array.isArray(selected)) return selected[0] ?? null;
-  return selected;
+  const outputDir = Array.isArray(selected) ? selected[0] ?? null : selected;
+  if (outputDir) rememberExportDirectory(store, "album", outputDir);
+  return outputDir;
 }
 
 export type PlaybackKindUI = "source" | "master";
@@ -1008,12 +1017,18 @@ export function useTrackMaster() {
     setError(null);
     try {
       if (!selectedTrack) return;
+      const store = browserExportLocationStore();
       const chosenPath = await save({
-        defaultPath: suggestedMasterFilename(selectedTrack),
+        defaultPath: defaultExportPath(
+          store,
+          "track",
+          suggestedMasterFilename(selectedTrack),
+        ),
         filters: [{ name: "WAV audio", extensions: ["wav"] }],
       });
       if (!chosenPath) return;
       const chosenOutputPath = ensureWavExtension(chosenPath);
+      rememberExportDirectory(store, "track", chosenOutputPath);
       setIsExporting(true);
       const job = await api.renderTrackMaster(
         selectedTrackId,

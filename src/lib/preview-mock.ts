@@ -311,7 +311,7 @@ export async function mockListen<T>(
 }
 
 export async function mockOpen(
-  opts?: { directory?: boolean; multiple?: boolean; title?: string },
+  opts?: { directory?: boolean; defaultPath?: string; multiple?: boolean; title?: string },
 ): Promise<string | string[] | null> {
   // Browser-preview can't access the OS filesystem. Returning null mimics
   // "user cancelled the dialog" so error paths render correctly.

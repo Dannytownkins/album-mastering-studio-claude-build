@@ -19,6 +19,7 @@ import type {
   RenderJob,
   WaveformPeaks,
 } from "../bindings";
+import { lastExportDirectory } from "../lib/export-location";
 import { useTrackMaster } from "./useTrackMaster";
 
 (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean })
@@ -290,7 +291,28 @@ function resetApiMocks() {
   mocks.onDragDropEvent.mockResolvedValue(() => {});
 }
 
+function installTestLocalStorage() {
+  const values = new Map<string, string>();
+  Object.defineProperty(globalThis, "localStorage", {
+    configurable: true,
+    value: {
+      getItem: (key: string) => values.get(key) ?? null,
+      setItem: (key: string, value: string) => {
+        values.set(key, String(value));
+      },
+      removeItem: (key: string) => {
+        values.delete(key);
+      },
+      clear: () => {
+        values.clear();
+      },
+    },
+  });
+}
+
 beforeEach(() => {
+  installTestLocalStorage();
+  localStorage.clear();
   resetApiMocks();
 });
 
@@ -421,6 +443,40 @@ describe("useTrackMaster integration dispatches", () => {
     expect(harness.current().lastExportReceipt?.outputPath).toBe(
       "/Users/daniel/Desktop/exported-master.wav",
     );
+    expect(lastExportDirectory(localStorage, "track")).toBe("/Users/daniel/Desktop");
+    await act(async () => {
+      harness.root.unmount();
+    });
+  });
+
+  it("accepts an existing track master path returned by the save dialog", async () => {
+    const track = makeTrack("export-overwrite", "C:/audio/export overwrite.wav");
+    const outputPath = "/Users/daniel/Desktop/existing-master.wav";
+    mocks.api.importTracks.mockResolvedValue([track]);
+    mocks.api.analyzeTracks.mockResolvedValue([makeAnalysis(track.id)]);
+    mocks.save.mockResolvedValue(outputPath);
+    mocks.api.renderTrackMaster.mockResolvedValue(makeRenderJob(outputPath));
+    mocks.api.runExportChecks.mockResolvedValue([]);
+    const harness = await renderHookHarness();
+
+    await act(async () => {
+      await harness.current().importFiles([track.path]);
+    });
+    await waitFor(() => {
+      expect(harness.current().selectedTrackId).toBe(track.id);
+    });
+
+    await act(async () => {
+      await harness.current().exportMaster();
+    });
+
+    expect(mocks.api.renderTrackMaster).toHaveBeenCalledWith(
+      track.id,
+      track.path,
+      DEFAULT_SETTINGS,
+      outputPath,
+    );
+    expect(harness.current().lastExportReceipt?.outputPath).toBe(outputPath);
     await act(async () => {
       harness.root.unmount();
     });
@@ -446,6 +502,41 @@ describe("useTrackMaster integration dispatches", () => {
 
     expect(mocks.save).toHaveBeenCalled();
     expect(mocks.api.renderTrackMaster).not.toHaveBeenCalled();
+    expect(harness.current().isExporting).toBe(false);
+    expect(harness.current().lastExportReceipt).toBeNull();
+    expect(lastExportDirectory(localStorage, "track")).toBeNull();
+    await act(async () => {
+      harness.root.unmount();
+    });
+  });
+
+  it("uses the last track export folder as the next save default", async () => {
+    const track = makeTrack("export-repeat", "C:/audio/export repeat.wav");
+    localStorage.setItem("yes-master:last-track-export-dir", "/Users/daniel/Desktop");
+    mocks.api.importTracks.mockResolvedValue([track]);
+    mocks.api.analyzeTracks.mockResolvedValue([makeAnalysis(track.id)]);
+    mocks.save.mockResolvedValue("/Users/daniel/Desktop/repeated-master.wav");
+    mocks.api.renderTrackMaster.mockResolvedValue(
+      makeRenderJob("/Users/daniel/Desktop/repeated-master.wav"),
+    );
+    mocks.api.runExportChecks.mockResolvedValue([]);
+    const harness = await renderHookHarness();
+
+    await act(async () => {
+      await harness.current().importFiles([track.path]);
+    });
+    await waitFor(() => {
+      expect(harness.current().selectedTrackId).toBe(track.id);
+    });
+
+    await act(async () => {
+      await harness.current().exportMaster();
+    });
+
+    expect(mocks.save).toHaveBeenCalledWith({
+      defaultPath: "/Users/daniel/Desktop/export-repeat__master.wav",
+      filters: [{ name: "WAV audio", extensions: ["wav"] }],
+    });
     await act(async () => {
       harness.root.unmount();
     });
@@ -496,6 +587,7 @@ describe("useTrackMaster integration dispatches", () => {
 
     expect(mocks.open).toHaveBeenCalledWith({
       directory: true,
+      defaultPath: undefined,
       multiple: false,
       title: "Choose album export folder",
     });
@@ -515,6 +607,54 @@ describe("useTrackMaster integration dispatches", () => {
     );
     expect(harness.current().albumExportReport?.album_wav_path).toBe(
       `${outputDir}/album_continuous_1.wav`,
+    );
+    expect(lastExportDirectory(localStorage, "album")).toBe(outputDir);
+    await act(async () => {
+      harness.root.unmount();
+    });
+  });
+
+  it("accepts an existing album export folder selected by the folder picker", async () => {
+    const first = makeTrack("album-existing-1", "C:/audio/album existing one.wav");
+    const second = makeTrack("album-existing-2", "C:/audio/album existing two.wav");
+    const plan = makeAlbumPlan([first.id, second.id]);
+    const outputDir = "/Users/daniel/Desktop/Album Masters";
+    localStorage.setItem("yes-master:last-album-export-dir", outputDir);
+    mocks.api.importTracks.mockResolvedValue([first, second]);
+    mocks.api.analyzeTracks.mockResolvedValue([
+      makeAnalysis(first.id),
+      makeAnalysis(second.id),
+    ]);
+    mocks.open.mockResolvedValue(outputDir);
+    mocks.api.planAlbum.mockResolvedValue(plan);
+    mocks.api.renderAlbumPlan.mockResolvedValue({
+      album_wav_path: `${outputDir}/album_continuous_1.wav`,
+      manifest_path: `${outputDir}/manifest.json`,
+      tracks: [],
+    });
+    const harness = await renderHookHarness();
+
+    await act(async () => {
+      await harness.current().importFiles([first.path, second.path]);
+    });
+    await waitFor(() => {
+      expect(harness.current().tracks).toHaveLength(2);
+    });
+
+    await act(async () => {
+      await harness.current().exportAlbumPlan();
+    });
+
+    expect(mocks.open).toHaveBeenCalledWith({
+      directory: true,
+      defaultPath: outputDir,
+      multiple: false,
+      title: "Choose album export folder",
+    });
+    expect(mocks.api.renderAlbumPlan).toHaveBeenCalledWith(
+      plan,
+      expect.any(Array),
+      outputDir,
     );
     await act(async () => {
       harness.root.unmount();
@@ -546,6 +686,9 @@ describe("useTrackMaster integration dispatches", () => {
     expect(mocks.open).toHaveBeenCalled();
     expect(mocks.api.planAlbum).not.toHaveBeenCalled();
     expect(mocks.api.renderAlbumPlan).not.toHaveBeenCalled();
+    expect(harness.current().albumRendering).toBe(false);
+    expect(harness.current().albumExportReport).toBeNull();
+    expect(lastExportDirectory(localStorage, "album")).toBeNull();
     await act(async () => {
       harness.root.unmount();
     });

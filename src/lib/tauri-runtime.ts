@@ -75,6 +75,7 @@ export async function listen<T>(
 
 type OpenDialogOptions = {
   directory?: boolean;
+  defaultPath?: string;
   multiple?: boolean;
   title?: string;
   filters?: Array<{ name: string; extensions: string[] }>;
