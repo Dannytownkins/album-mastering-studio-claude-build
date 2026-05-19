@@ -2101,7 +2101,7 @@ mod tests {
         );
     }
 
-    #[cfg(windows)]
+    #[cfg(target_os = "windows")]
     #[test]
     fn explicit_output_path_creates_parent_for_windows_backslash_path() {
         let tmp = tempfile::tempdir().expect("tempdir");
