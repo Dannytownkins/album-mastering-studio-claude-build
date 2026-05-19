@@ -2087,6 +2087,39 @@ mod tests {
         );
     }
 
+    #[test]
+    fn explicit_output_path_creates_parent_for_native_path() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let chosen = tmp.path().join("Masters").join("track master.wav");
+
+        let out_path = explicit_output_path(&chosen).expect("explicit output path");
+
+        assert_eq!(out_path, chosen);
+        assert!(
+            chosen.parent().expect("parent").is_dir(),
+            "selected output parent should be created"
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn explicit_output_path_creates_parent_for_windows_backslash_path() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let chosen = format!(
+            "{}\\Masters\\track master.wav",
+            tmp.path().to_string_lossy()
+        );
+        let chosen = PathBuf::from(chosen);
+
+        let out_path = explicit_output_path(&chosen).expect("explicit output path");
+
+        assert_eq!(out_path, chosen);
+        assert!(
+            out_path.parent().expect("parent").is_dir(),
+            "Windows backslash output parent should be created"
+        );
+    }
+
     /// Phase A4: at -90 dBFS the signal sits at ~1 LSB of a 16-bit
     /// quantizer. Without dither, `round()` quantizes the sine to a
     /// tiny set of integer values (mostly 0, with occasional ±1 at the

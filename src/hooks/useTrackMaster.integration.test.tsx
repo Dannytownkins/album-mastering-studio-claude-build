@@ -482,6 +482,39 @@ describe("useTrackMaster integration dispatches", () => {
     });
   });
 
+  it("passes Windows-style picker paths through to track rendering unchanged", async () => {
+    const track = makeTrack("export-windows", "C:\\audio\\export windows.wav");
+    const outputPath = "C:\\Users\\Dan\\Desktop\\existing-master.wav";
+    mocks.api.importTracks.mockResolvedValue([track]);
+    mocks.api.analyzeTracks.mockResolvedValue([makeAnalysis(track.id)]);
+    mocks.save.mockResolvedValue(outputPath);
+    mocks.api.renderTrackMaster.mockResolvedValue(makeRenderJob(outputPath));
+    mocks.api.runExportChecks.mockResolvedValue([]);
+    const harness = await renderHookHarness();
+
+    await act(async () => {
+      await harness.current().importFiles([track.path]);
+    });
+    await waitFor(() => {
+      expect(harness.current().selectedTrackId).toBe(track.id);
+    });
+
+    await act(async () => {
+      await harness.current().exportMaster();
+    });
+
+    expect(mocks.api.renderTrackMaster).toHaveBeenCalledWith(
+      track.id,
+      track.path,
+      DEFAULT_SETTINGS,
+      outputPath,
+    );
+    expect(lastExportDirectory(localStorage, "track")).toBe("C:\\Users\\Dan\\Desktop");
+    await act(async () => {
+      harness.root.unmount();
+    });
+  });
+
   it("does not render when the export save dialog is cancelled", async () => {
     const track = makeTrack("export-cancel", "C:/audio/export cancel.wav");
     mocks.api.importTracks.mockResolvedValue([track]);
@@ -656,6 +689,47 @@ describe("useTrackMaster integration dispatches", () => {
       expect.any(Array),
       outputDir,
     );
+    await act(async () => {
+      harness.root.unmount();
+    });
+  });
+
+  it("passes Windows-style album folders through to album rendering unchanged", async () => {
+    const first = makeTrack("album-windows-1", "C:\\audio\\album one.wav");
+    const second = makeTrack("album-windows-2", "C:\\audio\\album two.wav");
+    const plan = makeAlbumPlan([first.id, second.id]);
+    const outputDir = "C:\\Users\\Dan\\Desktop\\Album Masters";
+    mocks.api.importTracks.mockResolvedValue([first, second]);
+    mocks.api.analyzeTracks.mockResolvedValue([
+      makeAnalysis(first.id),
+      makeAnalysis(second.id),
+    ]);
+    mocks.open.mockResolvedValue(outputDir);
+    mocks.api.planAlbum.mockResolvedValue(plan);
+    mocks.api.renderAlbumPlan.mockResolvedValue({
+      album_wav_path: `${outputDir}\\album_continuous_1.wav`,
+      manifest_path: `${outputDir}\\manifest.json`,
+      tracks: [],
+    });
+    const harness = await renderHookHarness();
+
+    await act(async () => {
+      await harness.current().importFiles([first.path, second.path]);
+    });
+    await waitFor(() => {
+      expect(harness.current().tracks).toHaveLength(2);
+    });
+
+    await act(async () => {
+      await harness.current().exportAlbumPlan();
+    });
+
+    expect(mocks.api.renderAlbumPlan).toHaveBeenCalledWith(
+      plan,
+      expect.any(Array),
+      outputDir,
+    );
+    expect(lastExportDirectory(localStorage, "album")).toBe(outputDir);
     await act(async () => {
       harness.root.unmount();
     });
