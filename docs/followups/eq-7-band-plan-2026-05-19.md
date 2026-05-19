@@ -1,9 +1,25 @@
 # Plan — 7-Band EQ Expansion (4 → 7 user-facing bands)
 
-**Date:** 2026-05-19
+**Date:** 2026-05-19 (revised same day after Codex review)
 **Status:** Plan-doc per ADR 0002. Implementation gated on Dan's approval.
 **Drives from:** `docs/eq-7-band-plan-prompt-2026-05-19.md`
 **Reference:** `docs/EQ_ARCHITECTURE_RECON_2026-05-19.md`
+
+---
+
+## Revision note
+
+Initial plan reviewed by Codex on 2026-05-19. Four pushbacks accepted and incorporated:
+
+1. **Compile-order fix.** Commit 1 originally referenced `settings.eq_sub_db` etc. that weren't added until Commit 2. **Revised:** Commit 1 now bundles Rust state-model + DSP (compiles standalone); Commit 2 is TS plumbing.
+2. **Byte-identity gate added explicitly.** Original plan overclaimed that the existing slow lane provided byte-identical fixture protection — it doesn't (`contracts.rs:604` logs file size, no hash; the slow lane has no SHA snapshot). **Revised:** new pre-flight Commit 0 establishes per-preset SHA snapshots before any DSP changes go in. Same shape as the wav_writer pre-flight commit.
+3. **`process_sample` divergence preserved verbatim.** Codex caught a pre-existing latent bug at `dsp.rs:2059` — `process_sample` skips `state.low_mid` between `state.low` and `state.mid`, while `process_frame_inplace` has all four. This slice does NOT fix the legacy divergence; it preserves it exactly (adds sub/high_mid/sparkle but not low_mid to `process_sample`). A guard test pins the divergence so it doesn't drift silently. Fixing `process_sample` becomes its own slice afterward.
+4. **TS fixture list enumerated.** Original plan named Rust test fixtures but missed TS ones. **Revised:** Commit 2 explicitly lists TS test files needing updates.
+
+Plus two smaller revisions:
+
+5. **Visual smoke scope corrected.** Original mentioned no specific viewport; Codex flagged 1366×768/1600×940. **Revised:** primary smoke at 1920×1080 (per `src-tauri/tauri.conf.json:17-18` native window default), plus regression check at 1366×768 (existing CSS responsive floor).
+6. **Album character bias scope clarified.** `apply_album_shadow` at `album_render.rs:237` currently only biases low/low-mid/mid/high. The 3 new bands stay 4-band on the album-character side. Added to Out of Scope as a conscious deferral.
 
 ---
 
@@ -21,18 +37,42 @@ Add 3 new biquad stages to the DSP chain and surface them as 3 new drag-only nod
 | High | 6000 Hz | High-shelf | slope 0.7 (existing) | Knob + Visual EQ (primary) |
 | Sparkle (new) | 12 000 Hz | High-shelf | slope 0.7 | Visual EQ, drag-only (secondary) |
 
-**Naming:** the 12 kHz band is `sparkle`, not `air` — the codebase already has `PresetCalibration.air_db` (6 kHz High baseline) and `AdvancedSettings.presence_air` (10 kHz Advanced shelf); a third "air" reference would muddy disambiguation.
+**Naming:** 12 kHz band is `sparkle`, not `air` — codebase already has `PresetCalibration.air_db` (6 kHz High baseline) and `AdvancedSettings.presence_air` (10 kHz Advanced shelf); a third "air" would muddy disambiguation.
 
-**Chain order after this slice** (`process_frame_inplace` / `process_sample`):
+**Chain order after this slice** (`process_frame_inplace`):
 
 ```
 input_gain → sub_highpass×2 → sub → low → low_mid → mid → high_mid → high → sparkle
             → warmth → presence_air → [compressor] → [transient] → [width] → [sat] → limiter → ...
 ```
 
-Sub before Low. High-Mid between Mid and High. Sparkle after High. `warmth` (300 Hz) and `presence_air` (10 kHz) stay in their current post-EQ positions per the existing chain comment at `dsp.rs:1815-1816` — they're a "post-tonal-shape voicing pass," not part of the main monotonic EQ.
+**Chain order in `process_sample`** (preserves existing low_mid skip — see §process_sample divergence below):
 
-**All 8 presets default to 0.0 dB for the 3 new bands.** Listening tune-up is a separate slice owned by Dan. Slow-lane fixture output must be **byte-identical** to pre-change for every preset (new biquads at 0 dB are identity; any drift means the implementation is wrong).
+```
+input_gain → sub_highpass×2 → sub → low → mid → high_mid → high → sparkle
+            → warmth → presence_air → ...
+```
+
+**All 8 presets default to 0.0 dB for the 3 new bands.** Listening tune-up is a separate slice owned by Dan.
+
+---
+
+## `process_sample` divergence (pre-existing — preserve, don't fix)
+
+Codex's read at `dsp.rs:2057-2063` is correct: `process_sample` currently runs `sub_hp1 → sub_hp2 → low → mid → high → warmth → presence_air`, skipping `state.low_mid` between `state.low` (line 2059) and `state.mid` (line 2060). This is a pre-existing latent divergence vs. `process_frame_inplace` (`dsp.rs:1822-1827`) which has all 4 bands.
+
+**This slice does NOT fix the divergence.** Reasons:
+
+- Fixing `process_sample` to include low_mid changes its audio output, which would break the byte-identity gate this slice depends on.
+- The pre-existing bug deserves a dedicated slice with its own byte-identity-change accepted explicitly.
+- Conflating "extend chain by 3 bands" with "fix a different pre-existing bug" muddies the diff and the rollback story.
+
+**What this slice does instead:**
+
+- Adds `sub`, `high_mid`, `sparkle` to `process_sample` at their frequency-monotonic positions, **without** adding `low_mid`.
+- Adds a guard test (Commit 1): `process_sample_intentionally_skips_low_mid_until_separate_fix_slice` — pins the divergence so a future reader doesn't accidentally fix it without thinking about the byte-identity consequences.
+
+**Follow-up slice (out of scope for this plan):** restore `low_mid` to `process_sample`, accept the byte-identity change, document the corrected behavior. Likely needs a fresh per-preset SHA snapshot since output bytes will change for any caller of `process_sample`.
 
 ---
 
@@ -40,63 +80,39 @@ Sub before Low. High-Mid between Mid and High. Sparkle after High. `warmth` (300
 
 ### 1. `PresetCalibration` extension — `dsp.rs:280-335`
 
-Add 3 fields. Insertion order: keep the existing EQ block grouped together. Suggested placement: `sub_db` before `low_shelf_db`; `high_mid_db` between `presence_db` and `air_db`; `sparkle_db` after `air_db`.
+Add 3 fields. Keep the EQ cluster grouped.
 
 ```rust
 pub struct PresetCalibration {
-    /// 80 Hz peaking baseline gain in dB. Drag-only band on the Visual EQ
-    /// (no Tone Shape knob). Adds to `eq_sub_db`.
+    /// 80 Hz peaking baseline gain in dB. Drag-only on Visual EQ. Adds to `eq_sub_db`.
     pub sub_db: f32,                   // NEW
     pub low_shelf_db: f32,
     pub low_mid_db: f32,
     pub presence_db: f32,
-    /// 3.5 kHz peaking baseline gain in dB. Drag-only band on the Visual EQ
-    /// (no Tone Shape knob). Adds to `eq_high_mid_db`.
+    /// 3.5 kHz peaking baseline gain in dB. Drag-only on Visual EQ. Adds to `eq_high_mid_db`.
     pub high_mid_db: f32,              // NEW
     pub air_db: f32,
-    /// 12 kHz high-shelf baseline gain in dB. Distinct from
-    /// `AdvancedSettings.presence_air` (10 kHz) and `air_db` (6 kHz High).
-    /// Drag-only band on the Visual EQ (no Tone Shape knob). Adds to
-    /// `eq_sparkle_db`.
+    /// 12 kHz high-shelf baseline gain in dB. Distinct from `air_db` (6 kHz)
+    /// and `AdvancedSettings.presence_air` (10 kHz). Adds to `eq_sparkle_db`.
     pub sparkle_db: f32,               // NEW
     pub warmth: f32,
     // ... rest unchanged
 }
 ```
 
-**Default values for all 9 preset constants** (`dsp.rs:340-561`, including Custom):
-
-| Preset | `sub_db` | `high_mid_db` | `sparkle_db` |
-|---|---|---|---|
-| Universal | 0.0 | 0.0 | 0.0 |
-| Clarity | 0.0 | 0.0 | 0.0 |
-| Tape | 0.0 | 0.0 | 0.0 |
-| Spatial | 0.0 | 0.0 | 0.0 |
-| Oomph | 0.0 | 0.0 | 0.0 |
-| Warmth | 0.0 | 0.0 | 0.0 |
-| Punch | 0.0 | 0.0 | 0.0 |
-| Loud | 0.0 | 0.0 | 0.0 |
-| Custom (Neutral) | 0.0 | 0.0 | 0.0 |
-
-No tuning guesses. Listening calibration is a follow-up slice.
+**Default values for all 9 preset constants:** `sub_db = high_mid_db = sparkle_db = 0.0` across the board (Universal, Clarity, Tape, Spatial, Oomph, Warmth, Punch, Loud, Custom). No tuning guesses.
 
 ### 2. `ChainCoeffs` extension — `dsp.rs:578-666`
-
-Add 3 fields. Keep the EQ-cluster grouping intact.
 
 ```rust
 pub struct ChainCoeffs {
     pub sub_highpass: BiquadCoeffs,
-    /// Phase B: 80 Hz peaking. Drag-only on Visual EQ.
     pub sub: BiquadCoeffs,             // NEW
     pub low: BiquadCoeffs,
     pub low_mid: BiquadCoeffs,
     pub mid: BiquadCoeffs,
-    /// Phase B: 3.5 kHz peaking. Drag-only on Visual EQ.
     pub high_mid: BiquadCoeffs,        // NEW
     pub high: BiquadCoeffs,
-    /// Phase B: 12 kHz high-shelf. Drag-only on Visual EQ. Distinct from
-    /// `presence_air` (10 kHz, Advanced panel).
     pub sparkle: BiquadCoeffs,         // NEW
     pub warmth: BiquadCoeffs,
     pub presence_air: BiquadCoeffs,
@@ -105,8 +121,6 @@ pub struct ChainCoeffs {
 ```
 
 ### 3. `ChannelState` extension — `dsp.rs:1114-1135`
-
-Add 3 `BiquadState` fields matching the new coefficients.
 
 ```rust
 pub struct ChannelState {
@@ -125,17 +139,9 @@ pub struct ChannelState {
 }
 ```
 
-`BiquadState::default()` initializes to silence (z₁ = z₂ = 0), so the new states are byte-identical to "the band wasn't there" until the coefficients become non-identity.
-
 ### 4. `ChainCoeffs::from_settings` extension — `dsp.rs:701-720`
 
-Mirror the existing 4-band pattern. Three new `effective_*_db` calculations and three new `BiquadCoeffs::*` constructions.
-
 ```rust
-// Phase B: 3 new bands. Pattern matches existing 4-band runtime mapping.
-//   preset.sub_db        → 80 Hz peaking  (drag-only)
-//   preset.high_mid_db   → 3.5 kHz peaking (drag-only)
-//   preset.sparkle_db    → 12 kHz high-shelf (drag-only)
 let effective_sub_db      = preset.sub_db      * preset_scale + settings.eq_sub_db;
 let effective_low_db      = preset.low_shelf_db * preset_scale + settings.eq_low_db;
 let effective_low_mid_db  = preset.low_mid_db   * preset_scale + settings.eq_low_mid_db;
@@ -146,23 +152,22 @@ let effective_sparkle_db  = preset.sparkle_db   * preset_scale + settings.eq_spa
 
 // ... existing sub_highpass construction ...
 
-let sub      = BiquadCoeffs::peaking   (sr, 80.0,   0.8, effective_sub_db);
-let low      = BiquadCoeffs::low_shelf (sr, 200.0,  effective_low_db,      0.7);
-let low_mid  = BiquadCoeffs::peaking   (sr, 400.0,  0.9, effective_low_mid_db);
-let mid      = BiquadCoeffs::peaking   (sr, 1500.0, 0.8, effective_mid_db);
-let high_mid = BiquadCoeffs::peaking   (sr, 3500.0, 0.9, effective_high_mid_db);
-let high     = BiquadCoeffs::high_shelf(sr, 6000.0, effective_high_db,     0.7);
-let sparkle  = BiquadCoeffs::high_shelf(sr, 12000.0, effective_sparkle_db, 0.7);
+let sub      = BiquadCoeffs::peaking   (sr, 80.0,    0.8, effective_sub_db);
+let low      = BiquadCoeffs::low_shelf (sr, 200.0,   effective_low_db,      0.7);
+let low_mid  = BiquadCoeffs::peaking   (sr, 400.0,   0.9, effective_low_mid_db);
+let mid      = BiquadCoeffs::peaking   (sr, 1500.0,  0.8, effective_mid_db);
+let high_mid = BiquadCoeffs::peaking   (sr, 3500.0,  0.9, effective_high_mid_db);
+let high     = BiquadCoeffs::high_shelf(sr, 6000.0,  effective_high_db,     0.7);
+let sparkle  = BiquadCoeffs::high_shelf(sr, 12000.0, effective_sparkle_db,  0.7);
 ```
 
-The ChainCoeffs constructor at the bottom of `from_settings` (around `dsp.rs:1043+`) needs the 3 new fields added to its struct literal. Mirror the existing field order.
+The ChainCoeffs struct literal at the bottom of `from_settings` needs the 3 new fields added.
 
-### 5. Chain order extension — `dsp.rs:1817-1828` (`process_frame_inplace`) and `dsp.rs:2049-2065` (`process_sample`)
+### 5. Chain order extensions
 
-Insert the 3 new biquad processes in frequency-monotonic order.
+**`process_frame_inplace` at `dsp.rs:1817-1828`:**
 
 ```rust
-// process_frame_inplace:
 for ch in 0..channels {
     let state = &mut self.states[ch];
     let mut y = frame[ch] * self.coeffs.input_gain_lin;
@@ -181,15 +186,30 @@ for ch in 0..channels {
 }
 ```
 
-Mirror the same insertions in `process_sample` at `dsp.rs:2057-2063`.
+**`process_sample` at `dsp.rs:2057-2063` — DELIBERATELY preserves the existing `low_mid` skip:**
+
+```rust
+let hp1 = state.sub_hp1.process(&self.coeffs.sub_highpass, y);
+y = state.sub_hp2.process(&self.coeffs.sub_highpass, hp1);
+y = state.sub.process(&self.coeffs.sub, y);                 // NEW
+y = state.low.process(&self.coeffs.low, y);
+// NOTE: state.low_mid intentionally skipped here. This mirrors the
+// pre-existing divergence vs process_frame_inplace at dsp.rs:1823.
+// Fixing this divergence is a separate slice with its own byte-
+// identity change accepted explicitly. See guard test below.
+y = state.mid.process(&self.coeffs.mid, y);
+y = state.high_mid.process(&self.coeffs.high_mid, y);       // NEW
+y = state.high.process(&self.coeffs.high, y);
+y = state.sparkle.process(&self.coeffs.sparkle, y);         // NEW
+y = state.warmth.process(&self.coeffs.warmth, y);
+y = state.presence_air.process(&self.coeffs.presence_air, y);
+```
 
 ---
 
 ## State model changes
 
 ### 6. `MasteringSettings` (Rust, `src-tauri/src/types.rs:469-515`)
-
-Add 3 new fields with `#[serde(default)]` so old saved presets/projects deserialize cleanly (defaulting to 0.0).
 
 ```rust
 pub struct MasteringSettings {
@@ -209,7 +229,7 @@ pub struct MasteringSettings {
 }
 ```
 
-The `Default` impl for `MasteringSettings` (if one exists; otherwise wherever the test fixtures construct defaults around `types.rs:835`+) also needs the 3 new fields set to 0.0.
+`#[serde(default)]` ensures saved projects from before the slice deserialize with 0.0 for the new fields.
 
 ### 7. `MasteringSettings` TypeScript shape (`src/bindings.ts:147-173`)
 
@@ -217,38 +237,22 @@ The `Default` impl for `MasteringSettings` (if one exists; otherwise wherever th
 export interface MasteringSettings {
   preset: Preset;
   intensity: number;
-  /// Phase B — user offset on top of the preset's sub baseline
-  /// (80 Hz peaking @ Q=0.8). 0 = use preset value as-is. Drag-only.
   eq_sub_db: number;                 // NEW
   eq_low_db: number;
   eq_low_mid_db: number;
   eq_mid_db: number;
-  /// Phase B — user offset on top of the preset's high-mid baseline
-  /// (3.5 kHz peaking @ Q=0.9). 0 = use preset value as-is. Drag-only.
   eq_high_mid_db: number;            // NEW
   eq_high_db: number;
-  /// Phase B — user offset on top of the preset's sparkle baseline
-  /// (12 kHz high-shelf). 0 = use preset value as-is. Drag-only.
   eq_sparkle_db: number;             // NEW
   // ... rest unchanged
 }
 ```
 
-### 8. `useTrackMaster.ts` defaults + setter
+### 8. `useTrackMaster.ts` defaults + setter (`src/hooks/useTrackMaster.ts:41-44, 856-869`)
 
-**Defaults** (`useTrackMaster.ts:41-44`):
+Defaults: add `eq_sub_db: 0, eq_high_mid_db: 0, eq_sparkle_db: 0`.
 
-```typescript
-eq_sub_db: 0,                        // NEW
-eq_low_db: 0,
-eq_low_mid_db: 0,
-eq_mid_db: 0,
-eq_high_mid_db: 0,                   // NEW
-eq_high_db: 0,
-eq_sparkle_db: 0,                    // NEW
-```
-
-**Setter** (`useTrackMaster.ts:856-869`):
+Setter widening:
 
 ```typescript
 const setEqBand = useCallback(
@@ -273,16 +277,7 @@ const setEqBand = useCallback(
 
 ### 9. `App.tsx` `Macros` `onEq` prop signature (`App.tsx:1388`)
 
-Widen the band union:
-
-```typescript
-onEq: (
-  band: "sub" | "low" | "low-mid" | "mid" | "high-mid" | "high" | "sparkle",
-  db: number,
-) => void;
-```
-
-The 3 existing knob `onChange` calls at `App.tsx:1432, 1444, 1456` continue to pass `"low"`, `"mid"`, `"high"` — unchanged. The new bands enter only through `VisualEqPanel`'s drag callbacks.
+Widen the band union to the 7-band tuple. The 3 existing knob `onChange` calls at `App.tsx:1432, 1444, 1456` keep passing `"low"`, `"mid"`, `"high"`. New bands enter only through `VisualEqPanel` drag callbacks.
 
 ---
 
@@ -291,10 +286,8 @@ The 3 existing knob `onChange` calls at `App.tsx:1432, 1444, 1456` continue to p
 ### 10. `BANDS` constant extension (lines 46-51)
 
 ```typescript
-type BandId =
-  | "sub" | "low" | "low-mid" | "mid" | "high-mid" | "high" | "sparkle";
+type BandId = "sub" | "low" | "low-mid" | "mid" | "high-mid" | "high" | "sparkle";
 type BandTier = "primary" | "secondary";
-type BandKind = "shelf-low" | "peak" | "shelf-high";
 
 interface Band {
   id: BandId;
@@ -302,174 +295,196 @@ interface Band {
   hz: number;
   color: string;
   kind: BandKind;
-  tier: BandTier;          // NEW — drives visual hierarchy
+  tier: BandTier;          // NEW
   qOctaves: number;
 }
 
 const BANDS: readonly Band[] = [
-  { id: "sub",      label: "SUB",     hz: 80,    color: "TBD", kind: "peak",       tier: "secondary", qOctaves: 1.0 },
-  { id: "low",      label: "LOW",     hz: 200,   color: "#22d3ee", kind: "shelf-low",  tier: "primary",   qOctaves: 0   },
-  { id: "low-mid",  label: "LOW-MID", hz: 400,   color: "#4ade80", kind: "peak",       tier: "secondary", qOctaves: 1.0 },
-  { id: "mid",      label: "MID",     hz: 1500,  color: "#a78bfa", kind: "peak",       tier: "primary",   qOctaves: 1.2 },
-  { id: "high-mid", label: "HIGH-MID", hz: 3500, color: "TBD", kind: "peak",       tier: "secondary", qOctaves: 1.0 },
-  { id: "high",     label: "HIGH",    hz: 6000,  color: "#60a5fa", kind: "shelf-high", tier: "primary",   qOctaves: 0   },
-  { id: "sparkle",  label: "SPARKLE", hz: 12000, color: "TBD", kind: "shelf-high", tier: "secondary", qOctaves: 0   },
+  { id: "sub",      label: "SUB",      hz: 80,    color: "TBD",     kind: "peak",       tier: "secondary", qOctaves: 1.1 },
+  { id: "low",      label: "LOW",      hz: 200,   color: "#22d3ee", kind: "shelf-low",  tier: "primary",   qOctaves: 0   },
+  { id: "low-mid",  label: "LOW-MID",  hz: 400,   color: "#4ade80", kind: "peak",       tier: "secondary", qOctaves: 1.0 },
+  { id: "mid",      label: "MID",      hz: 1500,  color: "#a78bfa", kind: "peak",       tier: "primary",   qOctaves: 1.2 },
+  { id: "high-mid", label: "HIGH-MID", hz: 3500,  color: "TBD",     kind: "peak",       tier: "secondary", qOctaves: 1.0 },
+  { id: "high",     label: "HIGH",     hz: 6000,  color: "#60a5fa", kind: "shelf-high", tier: "primary",   qOctaves: 0   },
+  { id: "sparkle",  label: "SPARKLE",  hz: 12000, color: "TBD",     kind: "shelf-high", tier: "secondary", qOctaves: 0   },
 ];
 ```
 
-The 4 existing band entries keep their colors. The 3 new ones (`sub`, `high-mid`, `sparkle`) need color choices — see Uncertainties §1.
+### 11. Visual hierarchy
 
-The 3 existing secondary band (`low-mid`) keeps its current color (#4ade80, green-ish), but its **tier classification** now matches the new secondary bands. Visual hierarchy below treats `low-mid` as secondary.
-
-### 11. Visual hierarchy implementation
-
-Per the prompt-doc: primary vs secondary surface is the functional differentiation. Both kinds are legitimate shaping bands; the visual difference reflects "primary control surface (also has a knob)" vs "secondary control surface (Visual EQ only)."
-
-**Concrete proposal:**
-
-| Property | Primary band node | Secondary band node |
+| Property | Primary (knob-bound) | Secondary (drag-only) |
 |---|---|---|
-| Node radius | 8 (slightly up from existing 7) | 5 |
-| Hit-target radius | 18 (unchanged) | 18 |
+| Node radius | 8 | 5 |
+| Hit-target radius | 18 | 18 |
 | Fill opacity | 1.0 | 0.85 |
-| Outline ring | 1.5px ring at full opacity (anchor halo) | none |
-| Label text size | unchanged | unchanged |
-| Label opacity | unchanged | 0.7 (slightly subdued) |
-| Drag interaction | Vertical (existing) | Vertical (existing) |
+| Outline halo | 1.5px ring | none |
+| Label opacity | 1.0 | 0.7 |
+| Drag interaction | Vertical | Vertical |
 | Double-click reset | Yes | Yes |
 
-The differentiation should read at a glance — primary bands look like anchored "headline" nodes; secondary bands look like additional points. Color is the second axis (primary bands get the brighter / cyan/green/purple/blue existing palette; secondary bands get a quieter palette).
+Functional differentiation: primary bands have two control surfaces (knob + Visual EQ); secondary bands have one (Visual EQ only). Both kinds are legitimate user-shaping territory — visual hierarchy reflects surface, not opinion about use.
 
-**Color palette extension:** the 3 new bands need 3 distinct colors. Suggested starting point, leaning on `KnobTone` values already in the design system (`Knob.tsx:20-28`):
+### 12. Visual smoke check (REQUIRED before Commit 3 ships)
 
-- `sub` (80 Hz): muted blue or slate — sub region reads as "deep / foundation"
-- `high-mid` (3500 Hz): muted amber / gold — between mid (purple) and high (blue), warm-mid character
-- `sparkle` (12 kHz): pale gold or pale pink — top-end "shimmer" character
+- **Primary viewport: 1920×1080** (current Tauri native window default per `src-tauri/tauri.conf.json:17-18`).
+- **Floor regression: 1366×768** (existing CSS responsive floor per `App.css:1618`).
+- **Mid check: 1600×940** (existing layout-revision reference per `docs/UI_LAYOUT_REVISION_1600x940.md`).
 
-These are starting points only. Final colors should be validated against the existing CSS tokens and the design lead's call. Flagged uncertain — see §1.
+Check items at each viewport:
 
-### 12. Response curve renderer extension (`VisualEqPanel.tsx:91-116, 173-187`)
+- All 7 nodes render without label overlap.
+- 80 Hz and 12 kHz nodes don't collide with the panel edges.
+- Primary vs secondary visual differentiation reads at a glance.
+- Compact embedded mode (the variant used inside the Macros row) is the most space-constrained — verify there especially.
 
-The `totalResponseDb` function iterates over `BANDS` and sums each band's contribution. Extending `BANDS` to 7 entries means the curve renderer extends automatically — `bandResponseDb` already handles `peak` / `shelf-low` / `shelf-high` kinds. No structural change needed.
+### 13. Response curve renderer extension
 
-`N_SAMPLES = 180` (line 176) stays — 180 points across the log-frequency range is still smooth at 7 bands.
-
-The Gaussian-for-peaks approximation uses `qOctaves`; for `sub` and `high-mid` (Q=0.8 and 0.9 in DSP), the recon doc's existing `low-mid` mapping (DSP Q=0.9 → UI qOctaves=1.0) suggests `sub` at qOctaves≈1.1 and `high-mid` at qOctaves≈1.0. These are approximation tunings, not audible — see §2.
+`totalResponseDb` iterates over `BANDS` and sums each band's contribution. Extending `BANDS` to 7 entries means the renderer extends automatically — `bandResponseDb` already handles `peak`/`shelf-low`/`shelf-high` kinds. `N_SAMPLES = 180` is still smooth at 7 bands.
 
 ---
 
 ## Test surface
 
-### 13. New per-band frequency-response tests (`dsp.rs` `#[cfg(test)] mod tests`)
+### 14. New per-band frequency-response tests (`dsp.rs` `#[cfg(test)] mod tests`)
 
-Mirror the existing `low_mid_band_centred_at_400hz_with_q_point_9` test pattern at `dsp.rs:3394`:
+Mirror `low_mid_band_centred_at_400hz_with_q_point_9` at `dsp.rs:3394`:
+
+- `sub_band_centred_at_80hz_with_q_point_8`
+- `high_mid_band_centred_at_3500hz_with_q_point_9`
+- `sparkle_band_centred_at_12khz_high_shelf_slope_point_7`
+
+### 15. Guard test for `process_sample` divergence
 
 ```rust
 #[test]
-fn sub_band_centred_at_80hz_with_q_point_8() {
-    let sr = 48_000.0_f32;
-    let coeffs = BiquadCoeffs::peaking(sr, 80.0, 0.8, 6.0);
-    let at_80  = biquad_magnitude_db_at(&coeffs, 80.0, sr);
-    let at_30  = biquad_magnitude_db_at(&coeffs, 30.0, sr);
-    let at_200 = biquad_magnitude_db_at(&coeffs, 200.0, sr);
-    assert!((at_80 - 6.0).abs() < 0.3, ...);
-    assert!(at_30.abs()  < 1.5, ...);
-    assert!(at_200.abs() < 2.5, ...);  // 80 Hz Q=0.8 has wider skirts
-}
+fn process_sample_intentionally_skips_low_mid_until_separate_fix_slice() {
+    // This test pins the pre-existing divergence between process_sample
+    // and process_frame_inplace. process_sample currently runs the chain
+    // WITHOUT state.low_mid (dsp.rs:2057-2063), while process_frame_inplace
+    // includes it (dsp.rs:1822-1827).
+    //
+    // The 7-band EQ expansion deliberately preserved this divergence
+    // because fixing it would change byte output for any caller of
+    // process_sample and break the byte-identity gate.
+    //
+    // A future slice will fix this divergence as a dedicated change with
+    // its own byte-identity-change accepted explicitly. Until then, this
+    // test exists to prevent silent drift.
+    //
+    // To remove this test: do so as part of the slice that adds low_mid
+    // back into process_sample. Update per-preset SHA snapshots in
+    // wav_writer-style at the same time.
 
-#[test]
-fn high_mid_band_centred_at_3500hz_with_q_point_9() {
-    // Same pattern. Test points: 3500 (peak), 1500 (low neighbor), 6000 (high neighbor).
-}
-
-#[test]
-fn sparkle_band_centred_at_12khz_high_shelf_slope_point_7() {
-    // High-shelf pattern. At +6 dB gain: ~+6 dB at 18 kHz, ~+3 dB at 12 kHz,
-    // ~0 dB at 6 kHz (well below). Mirror existing high_shelf test conventions.
+    // Test body: feed a synthetic impulse through both paths with a non-
+    // identity low_mid coefficient (e.g. +6 dB at 400 Hz) and assert the
+    // outputs DIFFER at the expected magnitude. If they ever match
+    // unexpectedly, the divergence was fixed (intentionally or not) and
+    // this test should be removed alongside the SHA update.
 }
 ```
 
-Plus three "preset baseline + user offset combine cleanly" tests if those patterns exist for the current bands (grep `effective_low_db` / `effective_mid_db` in the existing test module for the right shape).
+### 16. Slow-lane gate downgraded to per-preset chain coefficient SHAs
 
-### 14. Slow-lane byte-identical fixture gate
+The original plan claimed "slow-lane byte-identical fixture output" — that overstated what the slow lane provides. The slow lane runs the real fixture through `mastering_render_with_progress` and measures LUFS / metering, but doesn't snapshot bytes (`tests/contracts.rs:604` logs file size, not hash).
 
-The slow lane (`AMS_RUN_REAL_FIXTURE=1 cargo test`) must produce **byte-identical WAV output** to pre-change for every preset, since:
+**Revised gate** (established in Commit 0): per-preset SHA snapshots of `process_frame_inplace` output on a fixed synthetic input (deterministic pink noise via `synth_pink_stereo` — the existing pattern at `tests/preset_distinctness.rs:68`). After the 7-band extension, all SHAs must match — proves the chain's audible behavior is unchanged for every preset.
 
-- All 8 presets default `sub_db = high_mid_db = sparkle_db = 0.0`.
-- `MasteringSettings` defaults all three `eq_*_db` user offsets to 0.0.
-- `BiquadCoeffs::peaking(sr, freq, q, 0.0)` returns identity (verified by the existing `BiquadCoeffs` early-return at `dsp.rs:194-220` for `gain_db.abs() < 1e-4`).
-- `BiquadCoeffs::high_shelf(sr, freq, 0.0, slope)` returns identity (same pattern at `dsp.rs:56-83`).
+**Why not real-fixture SHAs:**
 
-Same gate the wav_writer lift used in commits 1-2 of the engine.rs split sequence. If a byte differs, the implementation is wrong — likely an `f32` arithmetic path that doesn't actually short-circuit at gain=0.
+- Real fixtures live in private-audio-fixtures/ (not committed); SHAs would only verify on machines with the fixture.
+- Synthetic input is portable and runs in fast lane.
+- The proof "new biquads at 0 dB are identity" is mathematical — synthetic input is sufficient to verify; real input doesn't strengthen the proof.
 
-**Verification command** (per CLAUDE.md):
-```powershell
-$env:AMS_RUN_REAL_FIXTURE = "1"
-cargo test
-Remove-Item Env:\AMS_RUN_REAL_FIXTURE
-```
+**Cross-platform note:** the chain contains `tanh` in the saturation stage (`dsp.rs:1867+`), which is platform-dependent in some implementations. If Mac and Windows produce different SHAs, the test gets OS-conditional constants — same pattern as the existing `#[cfg(target_os = "windows")]` test at `engine.rs`. Empirical verification on both platforms is part of the Commit 0 acceptance.
 
-### 15. Existing tests to extend
+### 17. Existing Rust test files needing fixture updates
 
-Every test file that constructs `MasteringSettings` with the four `eq_*_db` fields needs the three new fields added (all set to 0.0). From the recon:
+Every file that constructs `MasteringSettings` with explicit `eq_*_db` fields needs the 3 new fields added (all at 0.0):
 
 - `tests/album_arc_trace.rs:31-34`
 - `tests/album_character_bias.rs:34-37`
 - `tests/album_plan_landing.rs:52-55`
 - `tests/album_render.rs:30-33`
 - `tests/album_simple_landing.rs:55-58`
-- `tests/contracts.rs:1776-1779` (and any other construction sites in that file)
+- `tests/contracts.rs:1776-1779` (and any other construction sites)
 - `tests/delivery_profile_render.rs:51-54`
 - `tests/dither_absence_of_harmonics.rs:37-40`
 - `tests/export_volume_match.rs:40-43`
 - `tests/preset_distinctness.rs:191-194`
 - `tests/preset_loudness_balance.rs:92-95`
 - `tests/preset_signature.rs:114-117`
+- In-file `types.rs:835+` test fixtures.
 
-Plus the in-file `types.rs:835`+ test fixtures.
+If a `Default` impl exists on `MasteringSettings`, the struct-update-syntax (`..Default::default()`) callers get the new fields free — only explicit-construction sites need updating.
 
-If `MasteringSettings` derives `Default` and the new fields use `#[serde(default)]`, only the explicit-construction sites need updating; struct-update-syntax callers (`MasteringSettings { eq_low_db: 0.0, ..Default::default() }`) get the new fields for free.
+### 18. Existing TypeScript test files needing fixture updates
 
-`tests/preset_distinctness.rs` and `tests/preset_signature.rs` exercise the per-preset character envelope. They use Goertzel filters at specific frequencies (`tests/preset_distinctness.rs:125, 142`, `tests/preset_signature.rs:89`). These tests should **still pass unchanged** since the new bands at 0.0 dB are identity — verify this explicitly.
+`grep "MasteringSettings" src/` to enumerate exhaustively. Known sites from Codex's review:
+
+- `src/lib/compressor-auto.test.ts`
+- `src/lib/effective-settings.test.ts`
+- `src/lib/settings-transitions.test.ts`
+- `src/components/SignalChain.test.tsx`
+- `src/hooks/useTrackMaster.integration.test.tsx`
+- `src/App.loudness-target.test.tsx`
+- `src/App.preset-save.test.tsx`
+
+Plus any helpers like `src/lib/preview-mock.ts` that construct `MasteringSettings` literals. `npm test` will catch missed sites via TypeScript build errors, but the plan lists them so the diff scope is honest.
 
 ---
 
-## Commit shape
+## Commit shape (REVISED — 4 commits)
 
-Three commits proposed, audio.rs-split discipline. Slow lane runs on every commit that touches DSP coefficients or the chain.
+### Commit 0 — Pre-flight: per-preset chain-output SHA snapshots
 
-### Commit 1 — DSP extension + preset calibration zeros + runtime mapping
+**Purpose:** establish the byte-identity gate before any DSP changes.
 
-- `PresetCalibration` extension (3 new fields).
-- All 9 preset constants extended with 0.0 defaults for the new fields.
-- `ChainCoeffs` and `ChannelState` extensions (3 new BiquadCoeffs / BiquadState fields each).
-- `from_settings` extension (3 new effective_*_db calculations + biquad construction + struct literal update).
-- Chain order extension in `process_frame_inplace` and `process_sample`.
-- New `dsp.rs` frequency-response tests for sub/high-mid/sparkle.
-- Update in-file test fixtures in `dsp.rs` `mod tests`.
+- New test module `src-tauri/src/dsp.rs` `#[cfg(test)] mod preset_byte_identity` (or similar location).
+- For each of 9 presets (Universal, Clarity, Tape, Spatial, Oomph, Warmth, Punch, Loud, Custom): render a fixed deterministic synthetic input (e.g. `synth_pink_stereo(48_000, 0.3)` for 1s of pink noise at -10 dBFS peak) through `MasteringChain::process_frame_inplace`, capture rendered output, compute SHA-256 over the f32 bytes.
+- Pin SHA as a string constant per preset.
+- Test: each preset's rendered output hashes to the pinned constant.
+- Verification on macOS first; flag any Mac/Windows divergence empirically and gate with `#[cfg(target_os = "...")]` if needed.
 
-**Slow-lane gate:** `AMS_RUN_REAL_FIXTURE=1 cargo test` must produce byte-identical WAV output for every preset.
+**Verification:** `cargo test preset_byte_identity` — 9/9 pass. Fast lane.
 
-### Commit 2 — State model extension (Rust + TS + setter + tests)
+**Commit message:** `Phase B.0: per-preset chain-output SHA snapshots` with verification block.
 
-- `MasteringSettings` extension in `types.rs` (3 new fields, `#[serde(default)]`).
-- `MasteringSettings` extension in `bindings.ts`.
-- `useTrackMaster.ts` defaults + `setEqBand` band-union widening.
-- `Macros` `onEq` prop signature widening in `App.tsx`.
-- All external test fixtures in `tests/*.rs` extended with the 3 new fields at 0.0.
+### Commit 1 — Rust state + DSP extension
 
-**Fast lane only.** State plumbing doesn't change audio output; the byte-identity gate from commit 1 still holds.
+- `MasteringSettings` Rust extension (3 new fields, `#[serde(default)]`).
+- `PresetCalibration` extension (3 new fields, all 9 preset defaults 0.0).
+- `ChainCoeffs` + `ChannelState` extensions.
+- `from_settings` extension (effective_*_db + new biquad construction).
+- Chain order extension in `process_frame_inplace`.
+- Chain order extension in `process_sample` (PRESERVES low_mid skip).
+- New per-band frequency-response tests (sub/high_mid/sparkle).
+- Guard test for `process_sample` divergence (§15).
+- Rust test fixture updates (§17).
 
-### Commit 3 — Visual EQ component (BANDS + visual hierarchy + colors)
+**Verification:**
 
-- `VisualEqPanel.tsx` BANDS constant extension to 7 bands with `tier` field.
+- `cargo test` (fast lane): all pass, including new per-band tests, guard test, and the Commit 0 SHA snapshots **unchanged**.
+- `AMS_RUN_REAL_FIXTURE=1 cargo test` (slow lane): all pass (metering snapshots unchanged within tolerance).
+
+If any Commit 0 SHA differs, the implementation is wrong — stop and debug.
+
+### Commit 2 — TS state + setter + Macros prop + TS fixture churn
+
+- `bindings.ts` MasteringSettings extension.
+- `useTrackMaster.ts` defaults + `setEqBand` widening.
+- `App.tsx` Macros `onEq` prop widening.
+- TS test fixture updates (§18, plus any others surfaced by `grep`).
+
+**Verification:** `npm test` + `npm run build` (TypeScript build catches any missed fixture). Fast lane only — no audio path changes.
+
+### Commit 3 — Visual EQ component
+
+- `VisualEqPanel.tsx` `BANDS` extension with `tier` field.
 - Visual hierarchy implementation (primary vs secondary node sizes, opacities, halo).
 - Color choices for the 3 new bands.
-- Response curve renderer continues to work unchanged (just iterates BANDS).
+- Visual smoke at 1920×1080 (primary), 1600×940 (mid), 1366×768 (floor) — see §12.
 
-**Fast lane only.** No audio changes.
-
-Optional **commit 4** (if test-extension churn is large): consolidate the test-fixture extensions into a focused commit so the state-model changes (commit 2) stay tight.
+**Verification:** `npm test` + `npm run build` + manual visual smoke at all three viewports.
 
 ---
 
@@ -477,67 +492,64 @@ Optional **commit 4** (if test-extension churn is large): consolidate the test-f
 
 ### 1. Color choices for the 3 new bands
 
-The existing 4 band colors are hardcoded hex values, not drawn from `KnobTone`. I'm proposing colors based on "muted to differentiate from primary, harmonious with existing palette":
+Existing 4 colors are hardcoded hex values, not drawn from `KnobTone`. Starting suggestions:
 
-- `sub`: muted blue/slate (deep / foundation character)
-- `high-mid`: muted amber/gold (warm-mid between purple and blue)
-- `sparkle`: pale gold / pale pink (top-end shimmer)
+- `sub` (80 Hz): muted blue/slate — deep/foundation
+- `high-mid` (3500 Hz): muted amber/gold — warm-mid between purple and blue
+- `sparkle` (12 kHz): pale gold or pale pink — top-end shimmer
 
-But I don't know the design system's tokens beyond the inline values in `BANDS` and the `TONE_COLOR` map in `Knob.tsx:30+`. Final choices should be validated against existing CSS tokens. If Dan or a design pass produces specific hex values, lock them in commit 3.
+Final choices validated against existing CSS tokens. If Dan / design pass produces specific hex values, lock in Commit 3.
 
 ### 2. Sparkle slope at 12 kHz (0.7 vs 0.5)
 
-Plan defaults to slope 0.7 to match the existing High shelf at 6 kHz and `presence_air` at 10 kHz. A gentler slope (0.5) might serve shaping use better at 12 kHz — wider transition band, less "abrupt edge" feel — but it's speculation without a listening pass. Conservative default holds for this slice; reconsider in a future tuning pass.
+Plan defaults to slope 0.7 to match existing 6 kHz / 10 kHz convention. Gentler slope (0.5) might shape better at 12 kHz but it's speculation. Conservative default holds; reconsider in future tuning pass.
 
 ### 3. Sparkle naming
 
-Recommending `sparkle` to resolve the three-way "air" collision (`PresetCalibration.air_db` at 6 kHz, `AdvancedSettings.presence_air` at 10 kHz, proposed new band at 12 kHz). Alternatives considered: `top`, `shimmer`, `extreme-high`, `ultra`. None feel as strong. If Dan prefers another name, change is mechanical — rename `sparkle_db` / `eq_sparkle_db` / band `id: "sparkle"` / label `"SPARKLE"`.
+`sparkle` resolves the three-way "air" collision. Alternatives: `top`, `shimmer`, `extreme-high`. If Dan prefers another name, the rename is mechanical.
 
-### 4. Saved-preset deserialization (serde defaults)
+### 4. Cross-platform SHA portability
 
-`#[serde(default)]` on the 3 new `MasteringSettings` fields should let old saved projects deserialize cleanly with the new fields defaulting to 0.0. Verification before merge: deserialize an old `.ams` project (or whatever the persistence format is — TBD) and confirm:
-
-- The 3 new fields are populated with 0.0.
-- No deserialization error.
-- The mastered output is byte-identical to what it was before the upgrade (because all the new EQ user offsets default to 0.0 and the preset's new EQ baselines also default to 0.0).
-
-If projects are persisted as fully-serialized `MasteringSettings` (not a delta), this is mechanical. If there's a more nuanced persistence layer, audit before merging commit 2.
+`tanh` in saturation may produce different bits on Mac vs Windows. Commit 0 establishes SHAs empirically; if cross-platform divergence shows up, gate constants with `#[cfg(target_os = "...")]`.
 
 ### 5. `PresetCalibration` field ordering
 
-The struct currently has EQ fields clustered together (`low_shelf_db`, `low_mid_db`, `presence_db`, `air_db`). Inserting `sub_db` before `low_shelf_db` and `high_mid_db` between `presence_db` and `air_db` and `sparkle_db` after `air_db` keeps the EQ cluster grouped. But `PresetCalibration` doesn't derive `Deserialize` (it's a `pub struct` with `Debug, Clone, Copy` only at `dsp.rs:279`), so field-order doesn't affect serde — it's just readability. Worth a quick check whether `PresetCalibration` is ever serialized anywhere; if not, the field ordering proposal is purely cosmetic.
+The struct has `#[derive(Debug, Clone, Copy)]` only at `dsp.rs:279`, no `Deserialize` — field-order is cosmetic, not serde-load-bearing. Worth a quick grep to confirm `PresetCalibration` isn't serialized anywhere; if it is, field-order matters.
 
 ### 6. `qOctaves` values for sub and high-mid in `VisualEqPanel`
 
-The existing mapping in `BANDS` doesn't perfectly mirror DSP Q values (e.g., `low-mid` is DSP Q=0.9 → UI qOctaves=1.0). Suggesting `sub` qOctaves≈1.1 and `high-mid` qOctaves≈1.0 by analogy. This affects the visual response-curve approximation only, not actual audio. Confirm or adjust during commit 3.
+Suggesting `sub` qOctaves≈1.1 and `high-mid` qOctaves≈1.0 by analogy with the existing `low-mid` mapping (DSP Q=0.9 → UI qOctaves=1.0). Affects visual response-curve approximation only, not audio.
 
 ---
 
 ## Out of scope (sanity check list)
 
-These are NOT part of this slice:
+NOT part of this slice:
 
-- Freq/Q sweep (horizontal drag on Visual EQ). Stays disabled. `VisualEqPanel.tsx:14-18` constraint stays true.
-- Surfacing preset baselines on the Visual EQ. Nodes still show user offsets only.
-- New knobs in the Tone Shape row. Stays at exactly 3 (Low / Mid / High).
-- Promoting `sub_highpass` to the user-facing surface. Stays preset-locked.
-- Touching `warmth` (300 Hz Advanced shelf) or `presence_air` (10 kHz Advanced shelf). Out of scope.
-- Per-preset tuning of the new bands. All defaults 0.0 dB. Tuning is a separate listening-batch slice.
-- `science_note` tooltip on preset orbs. Separate future slice.
-- Product positioning copy in README/onboarding. Separate future slice.
+- **Freq/Q sweep (horizontal drag on Visual EQ).** Stays disabled per `VisualEqPanel.tsx:14-18`.
+- **Surfacing preset baselines on the Visual EQ.** Nodes still show user offsets only.
+- **New knobs in the Tone Shape row.** Stays at exactly 3 (Low / Mid / High).
+- **Promoting `sub_highpass` to user-facing surface.** Stays preset-locked.
+- **Touching `warmth` (300 Hz Advanced shelf) or `presence_air` (10 kHz Advanced shelf).** Out of scope.
+- **Per-preset tuning of the new bands.** All defaults 0.0 dB. Tuning is a separate listening-batch slice.
+- **`science_note` tooltip on preset orbs.** Separate future slice.
+- **Product positioning copy in README/onboarding.** Separate future slice.
+- **Fixing `process_sample`'s pre-existing `low_mid` skip.** Separate slice afterward (see §process_sample divergence).
+- **Extending `apply_album_shadow` to the 3 new bands.** `album_render.rs:237` currently biases low/low-mid/mid/high only; the 3 new bands stay 4-band on the album-character side until a future slice extends per-album-character biasing. Conscious deferral.
 
 ---
 
 ## Verification path before merge
 
-1. **Commit 1 fast lane:** `cargo test --lib` from `src-tauri/`. New per-band tests + all existing tests pass.
-2. **Commit 1 slow lane:** `AMS_RUN_REAL_FIXTURE=1 cargo test`. Byte-identical WAV output for every preset. If any byte differs, stop and debug.
-3. **Commit 2 fast lane:** `npm test` + `npm run build` + `cargo test`. State plumbing changes; no audio path. Existing tests should pass unchanged.
-4. **Commit 3 fast lane:** `npm test` + `npm run build`. Visual EQ extension; no audio path.
-5. **Final slow lane:** `AMS_RUN_REAL_FIXTURE=1 cargo test` after commit 3 to confirm byte identity end-to-end across the three commits.
+1. **Commit 0:** `cargo test preset_byte_identity` — 9/9 pass on macOS. If Windows is available, run there too and gate any divergent SHAs with `cfg(target_os)`.
+2. **Commit 1 fast lane:** `cargo test --lib` from `src-tauri/`. New per-band tests + guard test + all existing tests pass. Commit 0 SHAs unchanged.
+3. **Commit 1 slow lane:** `AMS_RUN_REAL_FIXTURE=1 cargo test`. All pass. Metering snapshots within existing tolerance.
+4. **Commit 2 fast lane:** `npm test` + `npm run build` + `cargo test`. State plumbing only; no audio path. Existing tests pass unchanged.
+5. **Commit 3 fast lane:** `npm test` + `npm run build` + visual smoke at 1920×1080, 1600×940, 1366×768.
+6. **Final slow lane after commit 3:** `AMS_RUN_REAL_FIXTURE=1 cargo test` to confirm end-to-end. Commit 0 SHAs still unchanged.
 
 Per CLAUDE.md commit-shape convention, each commit includes a `Verification:` block in its message with the specific command outputs.
 
 ---
 
-*Plan drafted by Vera, 2026-05-19. Awaiting Dan's review before implementation begins.*
+*Plan drafted by Vera, 2026-05-19. Revised same day after Codex review. Awaiting Dan's approval before implementation begins.*
