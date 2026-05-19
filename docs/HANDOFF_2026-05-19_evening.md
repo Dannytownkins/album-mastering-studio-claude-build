@@ -30,15 +30,16 @@
 
 ```
 master (post-merge):
-  b424b36  Document Phase B final verification          ← HEAD
+  b424b36  Document Phase B final verification
   98cad1a  Phase B.3: expand visual EQ to seven bands
   e8bc98e  Phase B.2: wire seven-band EQ settings in TS
   4b00cde  Phase B.1: extend Rust EQ chain to seven bands
   3042708  Phase B.0: per-preset chain-output SHA snapshots
-  450a14f  Create eq-7-band-codex-kickoff-2026-05-19.md
+  450a14f  Create eq-7-band-codex-kickoff-2026-05-19.md  ← safety tag: pre-eq-7-band-2026-05-19 (pushed to origin)
   ce11a83  Revise EQ 7-band plan v1.2; ADR 0002 addendum on plan claims
-                                                        ← safety tag: pre-eq-7-band-2026-05-19
 ```
+
+(Master is currently several doc commits ahead — `c65a6fa` handoff, `4aba442` CSS tweaks, `94ed0d1` Windows corrections — and this section captures the slice-landing structure for reference.)
 
 **Post-merge state:**
 - Fast-forward merge of `codex/eq-7-band-expansion` → `master` landed 5 commits (`3042708` through `b424b36`) on `2026-05-19`.
@@ -139,19 +140,16 @@ In rough order of natural sequencing:
 - Visual EQ now shows USER OFFSETS only across 7 bands. Preset baselines stay invisible. Do not "add an effective curve display" without an explicit product decision — that's a deliberately closed door for now.
 - Tone Shape stays at 3 knobs (Low/Mid/High). Adding more knobs for the new bands is a product change requiring a fresh design pass, not a 7-band-expansion follow-up.
 - The byte-identity gate (per-preset SHA snapshots in `dsp.rs` `mod preset_byte_identity`) is the reference contract for "the chain's audible behavior is unchanged." Any future DSP slice should either preserve those SHAs OR update them deliberately alongside an accepted byte-identity-changing change. Don't update them silently to make tests pass.
-- The `pre-eq-7-band-2026-05-19` safety tag is **local-only on Dan's Windows machine** (per kickoff doc convention: "Create a local safety tag"). If rollback matters across machines, push it to origin first: `git push origin pre-eq-7-band-2026-05-19`. Otherwise it survives only as long as the Windows clone exists.
+- The `pre-eq-7-band-2026-05-19` safety tag **was pushed to origin** at session-close (points at `450a14f`, the master tip before B.0 landed). Available from any clone via `git fetch --tags`. Delete only after a confidence window of stable use.
 
 ## Cross-Machine Handoff — Windows → Mac
 
 This whole session ran on Dan's Windows machine. Dan is switching back to Mac next. Sequencing items that matter at the machine switch:
 
-- **In-flight CSS tweaks are uncommitted on Windows** (5 files: `src/App.css`, `src/App.layout-css.test.ts`, `src/App.tsx`, `src/components/AlbumPanel.tsx`, `src/components/VisualEqPanel.tsx`). If Dan switches to Mac without committing + pushing OR stashing-with-export, those tweaks stay stuck on the Windows clone. Three options:
-  1. Commit + push them now (cleanest — they live on origin/master, Mac pulls them).
-  2. Save the diff as a patch file (`git diff > my-css-tweaks.patch`), copy to Mac, apply there.
-  3. Abandon them on Windows and redo on Mac (only if they were exploratory).
+- **In-flight CSS tweaks were committed to master** at `4aba442 css tweaks` (5 files: `src/App.css`, `src/App.layout-css.test.ts`, `src/App.tsx`, `src/components/AlbumPanel.tsx`, `src/components/VisualEqPanel.tsx`). Mac will pick them up on `git pull --ff-only`.
 - **First action on Mac:** `git pull --ff-only` on master. Master tip should be `c65a6fa` (handoff doc) → `b424b36` (verification doc) → 5 slice commits.
 - **Cross-platform SHA verification — first opportunity.** On Mac, run `cargo test preset_byte_identity` first. If 10/10 pass with no SHA diff, cross-platform portability is confirmed and that uncertainty closes. If any SHA differs, the test will name the divergent preset — that's the signal to add `#[cfg(target_os = "...")]` constants for those specific presets in a small follow-up slice.
-- **The safety tag won't follow.** If Dan wants rollback safety on Mac, push the tag (`git push origin pre-eq-7-band-2026-05-19`) before leaving Windows, OR recreate it on Mac after pulling (`git tag pre-eq-7-band-2026-05-19 ce11a83`).
+- **Safety tag already pushed to origin** at session-close — Mac will see it after `git fetch --tags`. No action needed.
 - **Listening pass for per-preset Sub/High-Mid/Sparkle tuning is the natural next slice once Dan is back on studio monitors.** No urgency; the new bands are audibly inert at 0.0 dB defaults until that pass happens.
 
 ---
