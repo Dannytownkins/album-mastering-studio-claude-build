@@ -34,6 +34,7 @@ import {
   LOUDNESS_PROFILES,
   loudnessTargetDisplay,
 } from "./lib/effective-settings";
+import { compressorAutoReadouts } from "./lib/compressor-auto";
 import { shouldFlipToCustomOnLoudnessPick } from "./lib/settings-transitions";
 import "./App.css";
 
@@ -1792,7 +1793,7 @@ function AdvancedPanel({
         onInputGain={onInputGain}
         onOutputGain={onOutputGain}
       />
-      <PerBandCompressorCard a={a} onUpdate={update} />
+      <PerBandCompressorCard settings={settings} a={a} onUpdate={update} />
       <DeliveryFormatCard a={a} update={update} />
     </>
   );
@@ -1924,9 +1925,11 @@ function AdvancedControlsCard({
 }
 
 function PerBandCompressorCard({
+  settings,
   a,
   onUpdate,
 }: {
+  settings: MasteringSettings;
   a: MasteringSettings["advanced"];
   onUpdate: (
     field: keyof MasteringSettings["advanced"],
@@ -1935,11 +1938,16 @@ function PerBandCompressorCard({
 }) {
   type Band = "low" | "mid" | "high";
   const [active, setActive] = useState<Band>("low");
+  const autoReadouts = compressorAutoReadouts(settings);
   const bandFields: Record<Band, {
     threshold: number | null;
     ratio: number | null;
     attack: number | null;
     release: number | null;
+    autoThreshold: string;
+    autoRatio: string;
+    autoAttack: string;
+    autoRelease: string;
     onThreshold: (v: number | null) => void;
     onRatio: (v: number | null) => void;
     onAttack: (v: number | null) => void;
@@ -1950,6 +1958,10 @@ function PerBandCompressorCard({
       ratio: a.compression_low_ratio,
       attack: a.compression_low_attack_ms,
       release: a.compression_low_release_ms,
+      autoThreshold: autoReadouts.low.thresholdLabel,
+      autoRatio: autoReadouts.low.ratioLabel,
+      autoAttack: autoReadouts.low.attackLabel,
+      autoRelease: autoReadouts.low.releaseLabel,
       onThreshold: (v) => onUpdate("compression_low_threshold_db", v),
       onRatio: (v) => onUpdate("compression_low_ratio", v),
       onAttack: (v) => onUpdate("compression_low_attack_ms", v),
@@ -1960,6 +1972,10 @@ function PerBandCompressorCard({
       ratio: a.compression_mid_ratio,
       attack: a.compression_mid_attack_ms,
       release: a.compression_mid_release_ms,
+      autoThreshold: autoReadouts.mid.thresholdLabel,
+      autoRatio: autoReadouts.mid.ratioLabel,
+      autoAttack: autoReadouts.mid.attackLabel,
+      autoRelease: autoReadouts.mid.releaseLabel,
       onThreshold: (v) => onUpdate("compression_mid_threshold_db", v),
       onRatio: (v) => onUpdate("compression_mid_ratio", v),
       onAttack: (v) => onUpdate("compression_mid_attack_ms", v),
@@ -1970,6 +1986,10 @@ function PerBandCompressorCard({
       ratio: a.compression_high_ratio,
       attack: a.compression_high_attack_ms,
       release: a.compression_high_release_ms,
+      autoThreshold: autoReadouts.high.thresholdLabel,
+      autoRatio: autoReadouts.high.ratioLabel,
+      autoAttack: autoReadouts.high.attackLabel,
+      autoRelease: autoReadouts.high.releaseLabel,
       onThreshold: (v) => onUpdate("compression_high_threshold_db", v),
       onRatio: (v) => onUpdate("compression_high_ratio", v),
       onAttack: (v) => onUpdate("compression_high_attack_ms", v),
@@ -2067,6 +2087,10 @@ function CompressionBandColumn({
   ratio,
   attack,
   release,
+  autoThreshold,
+  autoRatio,
+  autoAttack,
+  autoRelease,
   onThreshold,
   onRatio,
   onAttack,
@@ -2077,6 +2101,10 @@ function CompressionBandColumn({
   ratio: number | null;
   attack: number | null;
   release: number | null;
+  autoThreshold: string;
+  autoRatio: string;
+  autoAttack: string;
+  autoRelease: string;
   onThreshold: (v: number | null) => void;
   onRatio: (v: number | null) => void;
   onAttack: (v: number | null) => void;
@@ -2092,6 +2120,7 @@ function CompressionBandColumn({
         min={-60}
         max={0}
         format={(v) => `${v.toFixed(1)} dB`}
+        autoReadout={autoThreshold}
         onChange={onThreshold}
       />
       <NumberField
@@ -2101,6 +2130,7 @@ function CompressionBandColumn({
         min={1}
         max={20}
         format={(v) => `${v.toFixed(1)}:1`}
+        autoReadout={autoRatio}
         onChange={onRatio}
       />
       <NumberField
@@ -2110,6 +2140,7 @@ function CompressionBandColumn({
         min={0.5}
         max={200}
         format={(v) => `${v.toFixed(1)} ms`}
+        autoReadout={autoAttack}
         onChange={onAttack}
       />
       <NumberField
@@ -2119,6 +2150,7 @@ function CompressionBandColumn({
         min={5}
         max={2000}
         format={(v) => `${v.toFixed(0)} ms`}
+        autoReadout={autoRelease}
         onChange={onRelease}
       />
     </div>
@@ -2208,6 +2240,7 @@ function NumberField({
   max,
   step,
   format,
+  autoReadout,
   onChange,
 }: {
   label: string;
@@ -2216,6 +2249,7 @@ function NumberField({
   max: number;
   step: number;
   format: (v: number) => string;
+  autoReadout?: string;
   onChange: (v: number | null) => void;
 }) {
   const effective = value ?? min;
@@ -2265,7 +2299,21 @@ function NumberField({
               : `Drag or type a value. Double-click slider to reset to Auto.`
           }
         />
-        <span className="adv-value">{value === null ? "Auto" : format(value)}</span>
+        <span
+          className="adv-value"
+          title={value === null && autoReadout ? `Auto: ${autoReadout}` : undefined}
+        >
+          {value === null ? (
+            <>
+              Auto
+              {autoReadout && (
+                <span className="adv-auto-readout"> · {autoReadout}</span>
+              )}
+            </>
+          ) : (
+            format(value)
+          )}
+        </span>
         <input
           ref={inputRef}
           type="number"

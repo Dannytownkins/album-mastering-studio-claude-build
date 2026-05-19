@@ -3563,6 +3563,12 @@ button.primary:disabled {
   font-style: italic;
 }
 
+.adv-auto-readout {
+  color: var(--text-1);
+  font-style: normal;
+  white-space: nowrap;
+}
+
 .adv-auto-pill {
   display: inline-block;
   margin-left: 0.45rem;

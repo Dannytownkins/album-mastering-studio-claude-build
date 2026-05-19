@@ -129,6 +129,13 @@ describe("LOUDNESS_PROFILES (quick-select dropdown options)", () => {
     // profileIdForLufs lookup both consume this array.
     const ids = LOUDNESS_PROFILES.map((p) => p.id);
     expect(ids).toEqual(["streaming", "loud-streaming", "cd-master", "off"]);
+    const labels = LOUDNESS_PROFILES.map((p) => p.label);
+    expect(labels).toEqual([
+      "Streaming default (-14)",
+      "Spotify Loud (-11)",
+      "Hot master (-9)",
+      "Off / Natural",
+    ]);
     const lufs = LOUDNESS_PROFILES.map((p) => p.lufs);
     expect(lufs).toEqual([-14, -11, -9, null]);
   });

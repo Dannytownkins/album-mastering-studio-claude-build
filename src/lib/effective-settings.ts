@@ -23,9 +23,9 @@ export const LOUDNESS_PROFILES: ReadonlyArray<{
   label: string;
   lufs: number | null;
 }> = [
-  { id: "streaming", label: "Streaming (-14)", lufs: -14 },
-  { id: "loud-streaming", label: "Loud streaming (-11)", lufs: -11 },
-  { id: "cd-master", label: "CD master (-9)", lufs: -9 },
+  { id: "streaming", label: "Streaming default (-14)", lufs: -14 },
+  { id: "loud-streaming", label: "Spotify Loud (-11)", lufs: -11 },
+  { id: "cd-master", label: "Hot master (-9)", lufs: -9 },
   { id: "off", label: "Off / Natural", lufs: null },
 ];
 

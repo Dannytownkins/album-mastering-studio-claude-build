@@ -270,9 +270,10 @@ impl BiquadState {
 // identity but defaults to density 0 so a fresh-Custom session is still
 // an identity chain.
 //
-// Still CAPTURED but not yet APPLIED:
-//   * target_lufs — needs a measure-and-target loop that doesn't exist
-//     yet. Documented per-preset.
+// Still CAPTURED but not directly APPLIED:
+//   * target_lufs — preset loudness intent only. DeliveryProfile owns
+//     actual LUFS landing through `effective_target_lufs()`, so this
+//     must not grow a second measure-and-target path.
 //   * transient_punch — needs a transient shaper (Phase A5).
 //   * highpass_hz — not in the A2 plan; deferred.
 // ============================================================================
@@ -301,8 +302,8 @@ pub struct PresetCalibration {
     /// Captured for the future transient shaper (Phase A5). Not applied
     /// in A2 since the shaper doesn't exist.
     pub transient_punch: f32,
-    /// Captured target integrated LUFS. Not applied in A2 — we don't
-    /// yet have a measure-and-target loop. Documented per-preset.
+    /// Captured target integrated LUFS. Preset intent only; actual
+    /// render landing is owned by DeliveryProfile/effective_target_lufs().
     pub target_lufs: f32,
     /// Captured recommended true-peak ceiling. Not applied in A2 (would
     /// change the limiter's behavior on existing tests). Phase A3 wires
@@ -326,10 +327,9 @@ pub struct PresetCalibration {
     /// Codex science note — terse rationale for the calibration.
     pub science_note: &'static str,
     /// Static input-gain push in dB. Codex doesn't have a direct
-    /// equivalent (they target loudness via measure-and-target on
-    /// `target_lufs`); we keep this as the preset's loudness intent in
-    /// the absence of a true target loop, so existing real-fixture
-    /// parity tests continue to land on the same dBFS as before.
+    /// equivalent (their reference chain carries preset loudness intent).
+    /// DeliveryProfile owns LUFS landing; this remains a coarse preset
+    /// gain push, not a substitute target loop.
     pub baseline_gain_push_db: f32,
 }
 
@@ -724,8 +724,8 @@ impl ChainCoeffs {
         // forward-referencing.
         //
         // The previous formulation tried `attenuation = source_lufs -
-        // preset.target_lufs`, but `target_lufs` is in the "captured but
-        // not applied" list — the chain doesn't actually hit it. Measured
+        // preset.target_lufs`, but preset `target_lufs` is intent only;
+        // DeliveryProfile owns actual LUFS landing. Measured
         // chain output sat up to ~4 dB above target on heavy presets
         // (Tape -9.5 vs target -13.8; Loud -7.3 vs target -10.4), which
         // left VM noticeably under-compensated and reading as "doesn't
