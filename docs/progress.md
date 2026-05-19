@@ -4853,3 +4853,47 @@ Next recommended slice:
 
 Commit 4: lift album render plumbing into `src-tauri/src/album_render.rs` as a
 sibling to the pure planner in `album.rs`.
+
+## 2026-05-19 - Phase B seven-band EQ slice complete
+
+Goal:
+
+Close out the full B.0 through B.3 seven-band EQ branch with the final
+verification gate required before Dan reviews the merge.
+
+What changed:
+
+- B.0 pinned per-preset chain-output SHA snapshots for the pre-expansion DSP
+  baseline.
+- B.1 expanded the Rust DSP EQ chain to Sub, Low, Low-Mid, Mid, High-Mid,
+  High, and Sparkle while preserving the existing low-mid legacy-path guard.
+- B.2 wired the new EQ settings through TypeScript bindings, frontend defaults,
+  fixtures, mocks, and EQ update typing.
+- B.3 expanded the Visual EQ panel to seven draggable nodes with primary and
+  secondary hierarchy.
+
+Verification:
+
+- `npm test`: 13 files / 81 tests pass.
+- `npm run build`: TypeScript and Vite production build pass.
+- `cargo test --lib`: 174 library tests pass.
+- `cargo test`: full Rust suite passes, including 174 library tests, integration
+  tests, preset SHA snapshot tests, and doc-tests.
+- `AMS_RUN_REAL_FIXTURE=1 cargo test`: full Rust suite passes, including the
+  real-fixture render and metering tests.
+
+Real-audio fixture used:
+
+Yes. The final slow lane ran with `AMS_RUN_REAL_FIXTURE=1`.
+
+What failed or remains partial:
+
+- The optional B.3 commit-message amend was skipped because B.3 was already
+  pushed and this final gate forbids force-pushing the branch.
+- The slow-lane real-fixture tests reported the expected over-60-second runtime
+  notices for the real fixture render and metering cases, then completed green.
+
+Next recommended slice:
+
+Dan review and merge approval. Do not merge or start follow-up work from this
+branch until Dan greenlights it.
