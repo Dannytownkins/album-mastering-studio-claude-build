@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
+    "build:mac": "rm -f src-tauri/target/release/produce_dialog_smoke && tauri build --bundles app,dmg",
     "preview": "vite preview",
     "tauri": "tauri",
     "test": "vitest run",

@@ -3619,4 +3619,53 @@ Same as before — Dan's listening batch from
 `docs/HANDOFF_2026-05-15_evening.md`. The autonomous mechanical queue
 is back to effectively empty.
 
+## 2026-05-18 - macOS app packaging
+
+Goal:
+
+Turn the existing Tauri desktop build into a working macOS app bundle
+and installer DMG on this Mac.
+
+What changed:
+
+- Enabled Tauri bundling and added macOS app output support.
+- Added macOS icon assets (`.icns` plus 8-bit PNG runtime icons).
+- Added `npm run build:mac`, which builds the `.app` and `.dmg`.
+- Set the app identifier to `com.albummasteringstudio.yesmaster`.
+- Added local ad-hoc signing for the Mac bundle.
+- Moved the dialog smoke helper to `src-tauri/examples/` so it stays
+  out of the release app bundle.
+- Added packaging tests for Mac bundle config, icons, signing, and
+  helper-binary exclusion.
+
+Verification:
+
+- `npm test`: 53/53 pass.
+- `cargo test`: fast Rust suite passed after the Cargo/package layout
+  change.
+- `npm run build:mac`: produced both:
+  - `src-tauri/target/release/bundle/macos/YES Master.app`
+  - `src-tauri/target/release/bundle/dmg/YES Master_0.0.0_aarch64.dmg`
+- `codesign --verify --deep --strict`: valid on disk.
+- `hdiutil verify`: DMG checksum valid.
+- Launch smoke: app stayed running for 5 seconds and was shut down.
+
+Real-audio fixture used, if any:
+
+None. This was packaging/runtime startup work, not DSP validation.
+
+What failed or remains partial:
+
+- Initial build was blocked because this Mac did not have Rust/Cargo
+  available. A local Rust toolchain was installed under the Codex
+  workspace for this session.
+- Apple notarization was skipped because no Apple Developer credentials
+  are configured. The app is locally signed and works on this Mac; wide
+  distribution to other Macs would still need Developer ID signing and
+  notarization.
+
+Next recommended slice:
+
+Install the DMG on this Mac and do a manual audio workflow pass:
+import audio, analyze, preview original/mastered, export, and listen.
 

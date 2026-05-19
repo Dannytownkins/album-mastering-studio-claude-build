@@ -1,0 +1,51 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#17191f"/>
+      <stop offset="0.55" stop-color="#29242c"/>
+      <stop offset="1" stop-color="#40321f"/>
+    </linearGradient>
+    <linearGradient id="wave" x1="120" y1="260" x2="904" y2="764">
+      <stop offset="0" stop-color="#58d6c7"/>
+      <stop offset="0.55" stop-color="#f1c766"/>
+      <stop offset="1" stop-color="#ff7a5c"/>
+    </linearGradient>
+  </defs>
+  <rect width="1024" height="1024" rx="220" fill="url(#bg)"/>
+  <circle cx="512" cy="512" r="372" fill="none" stroke="#f7ede0" stroke-width="26" opacity="0.12"/>
+  <path
+    d="M143 547 C227 398 308 390 392 545 C467 684 554 691 636 520 C706 376 789 342 881 468"
+    fill="none"
+    stroke="url(#wave)"
+    stroke-width="74"
+    stroke-linecap="round"
+  />
+  <path
+    d="M176 651 C261 574 337 574 421 651 C497 721 576 724 653 640 C722 565 792 546 862 586"
+    fill="none"
+    stroke="#f7ede0"
+    stroke-width="30"
+    stroke-linecap="round"
+    opacity="0.85"
+  />
+  <text
+    x="512"
+    y="363"
+    text-anchor="middle"
+    font-family="Arial, Helvetica, sans-serif"
+    font-size="132"
+    font-weight="800"
+    letter-spacing="8"
+    fill="#f7ede0"
+  >YES</text>
+  <text
+    x="512"
+    y="811"
+    text-anchor="middle"
+    font-family="Arial, Helvetica, sans-serif"
+    font-size="78"
+    font-weight="700"
+    letter-spacing="10"
+    fill="#f1c766"
+  >MASTER</text>
+</svg>

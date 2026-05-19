@@ -5,10 +5,14 @@ description = "YES Master (Claude build)"
 authors = ["Daniel Kinsner"]
 edition = "2021"
 rust-version = "1.77"
-# Required because `src/bin/produce_dialog_smoke.rs` introduced a second
-# binary target — without this, `cargo run` (and Tauri's dev command) fails
-# with "could not determine which binary to run."
+autobins = false
+# The dialog smoke helper lives under `examples/` so release desktop
+# bundles include only the main app executable.
 default-run = "album-mastering-studio"
+
+[[bin]]
+name = "album-mastering-studio"
+path = "src/main.rs"
 
 [lib]
 name = "album_mastering_studio_lib"
