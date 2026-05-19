@@ -1,6 +1,6 @@
 # YES Master Product Canon
 
-Last updated: 2026-05-15
+Last updated: 2026-05-19
 
 This file is the canonical product mission and locked decisions for YES Master. Future agents must read this before doing product, UX, DSP, or planning work. If another document conflicts with this one, treat this file as the product source of truth.
 
@@ -57,7 +57,7 @@ The app should not claim certification. Actual certification would require indus
 
 Primary user:
 
-- A capable musician or producer on Windows.
+- A capable musician or producer working locally on a desktop machine.
 - Comfortable making taste decisions.
 - Not necessarily technical.
 
@@ -405,13 +405,13 @@ The right boundary is: bring ready-made tracks, then master and audition them de
 
 ## Architecture Direction
 
-YES Master is a single-binary Windows desktop application. Whatever stack it runs on must meet these platform requirements:
+YES Master is a local desktop application. Whatever stack it runs on must meet these platform requirements:
 
 - Low-latency audition with same-playhead Original/Mastered switching.
 - Native audio I/O (file decode, device output) that does not depend on browser audio APIs.
 - Deterministic export rendering that is byte-stable for identical inputs and settings.
 - Offline-first operation; no required cloud calls for core mastering, audition, or export.
-- Windows packaging that installs and launches without separate runtimes for the end user.
+- Desktop packaging that installs and launches without separate runtimes for the end user.
 - Project state, autosave, and undo/redo storage that survives crashes and updates.
 - Testable DSP — algorithms must be reachable from automated tests, not only the UI.
 - A typed command surface so the frontend talks to product concepts, not raw CLI arrays.
