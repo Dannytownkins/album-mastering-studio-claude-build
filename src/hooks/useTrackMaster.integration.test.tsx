@@ -30,7 +30,6 @@ const mocks = vi.hoisted(() => {
     analyzeTracks: vi.fn(),
     renderTrackPreview: vi.fn(),
     renderTrackMaster: vi.fn(),
-    renderAlbumMaster: vi.fn(),
     prepareWaveform: vi.fn(),
     runExportChecks: vi.fn(),
     openOutput: vi.fn(),
@@ -552,52 +551,11 @@ describe("useTrackMaster integration dispatches", () => {
     });
   });
 
-  it("asks where to save the legacy album export and passes that folder to render", async () => {
-    const first = makeTrack("legacy-album-1", "C:/audio/legacy one.wav");
-    const second = makeTrack("legacy-album-2", "C:/audio/legacy two.wav");
-    const outputDir = "/Users/daniel/Desktop/Legacy Album Masters";
-    mocks.api.importTracks.mockResolvedValue([first, second]);
-    mocks.open.mockResolvedValue(outputDir);
-    mocks.api.renderAlbumMaster.mockResolvedValue({
-      ...makeRenderJob(`${outputDir}/album_continuous_1.wav`),
-      kind: "album",
-      target_tracks: [first.id, second.id],
-      output_paths: [
-        `${outputDir}/album_continuous_1.wav`,
-        `${outputDir}/legacy-album-1__master.wav`,
-        `${outputDir}/legacy-album-2__master.wav`,
-      ],
-    });
+  it("does not expose the legacy album export hook action", async () => {
     const harness = await renderHookHarness();
 
-    await act(async () => {
-      await harness.current().importFiles([first.path, second.path]);
-    });
-    await waitFor(() => {
-      expect(harness.current().tracks).toHaveLength(2);
-    });
-
-    await act(async () => {
-      await harness.current().exportAlbum();
-    });
-
-    expect(mocks.open).toHaveBeenCalledWith({
-      directory: true,
-      multiple: false,
-      title: "Choose album export folder",
-    });
-    expect(mocks.api.renderAlbumMaster).toHaveBeenCalledWith(
-      [
-        { id: first.id, path: first.path },
-        { id: second.id, path: second.path },
-      ],
-      DEFAULT_SETTINGS,
-      undefined,
-      outputDir,
-    );
-    expect(harness.current().lastExportReceipt?.outputPath).toBe(
-      `${outputDir}/album_continuous_1.wav`,
-    );
+    expect("exportAlbum" in harness.current()).toBe(false);
+    expect("isExportingAlbum" in harness.current()).toBe(false);
     await act(async () => {
       harness.root.unmount();
     });

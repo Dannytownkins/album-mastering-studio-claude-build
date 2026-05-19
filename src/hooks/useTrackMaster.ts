@@ -913,9 +913,9 @@ export function useTrackMaster() {
   /// Phase B: build + render the album via the new AlbumPlan path. Picks
   /// up the current tracks, per-track analyses, per-track settings,
   /// current arc + intensity, and hands it to the backend. Returns the
-  /// AlbumRenderReport via `albumExportReport` state. Distinct from the
-  /// legacy `exportAlbum` (below) which uses the older
-  /// `render_album_master` command + per-track-override flow.
+  /// AlbumRenderReport via `albumExportReport` state. This is the only
+  /// frontend album export path; the older simple-album hook was removed
+  /// after the UI converged on AlbumPlan export.
   const exportAlbumPlan = useCallback(async () => {
     if (tracks.length === 0) return;
     setAlbumRendering(true);
@@ -1418,47 +1418,6 @@ export function useTrackMaster() {
     ],
   );
 
-  const [isExportingAlbum, setIsExportingAlbum] = useState(false);
-
-  const exportAlbum = useCallback(async () => {
-    if (tracks.length === 0) return;
-    setIsExportingAlbum(true);
-    setError(null);
-    try {
-      // Build per-track overrides from the override set. Only include entries
-      // that actually have settings (most do, since toggleOverrideAlbum seeds
-      // from albumIntent).
-      const perTrackOverrides: Record<string, MasteringSettings> = {};
-      for (const id of overrideAlbum) {
-        const s = settingsMap[id];
-        if (s) perTrackOverrides[id] = s;
-      }
-      const overridesArg =
-        Object.keys(perTrackOverrides).length > 0 ? perTrackOverrides : undefined;
-      const outputDir = await chooseAlbumExportFolder();
-      if (!outputDir) return;
-
-      const job = await api.renderAlbumMaster(
-        tracks.map((t) => ({ id: t.id, path: t.path })),
-        albumIntent,
-        overridesArg,
-        outputDir,
-      );
-      const continuousPath = job.output_paths[0] ?? "";
-      setLastExportReceipt({
-        trackId: tracks[0]?.id ?? "album",
-        outputPath: continuousPath,
-        checks: [],
-        job,
-        kind: "album",
-      });
-    } catch (err) {
-      setError(String(err));
-    } finally {
-      setIsExportingAlbum(false);
-    }
-  }, [tracks, albumIntent, overrideAlbum, settingsMap]);
-
   // Phase 12.2 P3 — explicit Save As / Open Project for .ams.json files.
   // Autosave still runs every 1.5 s into app_data/session.json; these flows
   // let the user park a named snapshot anywhere on disk and reload it.
@@ -1651,8 +1610,6 @@ export function useTrackMaster() {
     reorderTracks,
     albumIntent,
     updateAlbumIntent,
-    isExportingAlbum,
-    exportAlbum,
     overrideAlbum,
     selectedIsOverriding,
     followingAlbumIntent,

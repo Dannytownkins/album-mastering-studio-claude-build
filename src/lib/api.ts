@@ -74,21 +74,6 @@ export const api = {
       outputPath: outputPath ?? null,
     }),
 
-  renderAlbumMaster: (
-    tracks: Array<{ id: TrackId; path: string }>,
-    albumIntent: MasteringSettings,
-    perTrackOverrides?: Record<string, MasteringSettings>,
-    outputDir?: string,
-  ) =>
-    invoke<RenderJob>("render_album_master", {
-      request: {
-        tracks,
-        album_intent: albumIntent,
-        per_track_overrides: perTrackOverrides ?? null,
-      },
-      outputDir: outputDir ?? null,
-    }),
-
   prepareWaveform: (
     trackId: TrackId,
     trackPath: string,

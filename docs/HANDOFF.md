@@ -2,13 +2,13 @@
 
 This document is the entry point for any Claude session — interactive or scheduled — picking up work on this repo. Read this first, then start the loop below.
 
-> **Current snapshot (2026-05-15 evening).** 22 commits today after the Phase A4 morning handoff, every one mechanically gated. Full B1–B7 audit queue resolved, four-layer perf defense for live preview (8 s window + VM cap + coalescer with playback barriers + landing-gain cache), three-tier PCM resolution (local cache → off-thread prewarm cache with target guard → fresh decode) eliminates the 1-2 s decode stall, shared ceiling-bounded landing helper replaces three drift-prone copies, Vitest scaffolded with four `src/lib/` pure-helper modules covering effective-settings / settings-transitions / history-stack. Most recent commit (`74d704f`) addresses four Codex review items: auto-prewarm on import/restore/openProject paths, stale-prewarm-evicts-newer target guard, source_lufs_integrated doc/test-name drift, and LoudnessTarget display extracted to a pure helper. Full snapshot detail in `docs/HANDOFF_2026-05-15_evening.md` (read this — it's the entry point for the next session).
+> **Current snapshot (2026-05-18 evening).** Latest dated handoff is `docs/HANDOFF_2026-05-18_evening.md`; read that first after `CLAUDE.md` and `docs/PRODUCT.md`. It inventories the audio.rs split, macOS packaging, frontend label/readout work, HPF/transient DSP infrastructure, export destination pickers, ADR 0002, self-review against Vera's flags, Album Export dedupe, and the new listening/infrastructure followup docs.
 >
 > **Addendum (2026-05-17 + 2026-05-18).** Codex landed `f85482c` (2026-05-17) closing the deferred Codex item 4: mock-API React/Vitest coverage for auto-prewarm dispatches (restore/import/openProject), Export-LUFS toggle dispatch, and LoudnessTarget force-to-Custom DOM (+6 Vitest tests via a one-line `export` on `LoudnessTarget`). Today (2026-05-18) Claude closed the `audio.rs` split candidate in three sequential mechanical-only commits: `fcd5ec3` extracts `SpectrumRing` + `SpectrumAnalyzer` → `src/spectrum.rs` (175 lines); `03d79e3` extracts `decode_full` + `decode_to_peaks` + Symphonia surface → `src/decode.rs` (220 lines, with engine.rs's 5 call sites updated); `abedc64` extracts `MeteredPcmSource` + `MasteringSource` (+ COEFFS constants, bumped to `pub(crate)`) → `src/sources.rs` (423 lines). Net: `audio.rs` 3,655 → 2,883 lines (-21%). Behavior byte-identical; test matrix unchanged. HEAD: `abedc64`. Full session detail in `docs/progress.md` under `2026-05-18 — audio.rs split refactor (3-pass)`.
 >
-> **Addendum (2026-05-18 evening).** Export destination UX now asks for explicit save locations for track and album exports, the duplicate Album Export button was removed, and deferred taste checks live in `docs/followups/listening-batch-2026-05-19.md`.
+> **Addendum (2026-05-18 evening).** Export destination UX now asks for explicit save locations for track and album exports, the duplicate Album Export button was removed, the legacy frontend `exportAlbum` hook was removed, and deferred taste/infrastructure checks live in `docs/followups/listening-batch-2026-05-19.md` plus `docs/followups/infrastructure-2026-05-19.md`.
 >
-> **Test totals:** `cargo test --lib` **144/144**; `cargo test --target-dir target-tests` full fast lane pass; **Vitest 49/49** across 5 files (was 43 pre-Codex-item-4); `npm run build` clean.
+> **Test totals:** Rust lib **153/153**; Vitest **62/62**; `npm run build` clean. Slow lane last passed with `AMS_RUN_REAL_FIXTURE=1 cargo test -p album-mastering-studio` on the self-review/DSP-comment gate; no slow lane is required for docs/frontend-hook cleanup.
 >
 > **What's open / next.** The autonomous queue is effectively empty of items that don't need Dan's input. Three plausible directions: (1) Dan's listening verification batch — five items queued in the checkpoint, would benefit from a focused listening hour; (2) async live-preview measurement on a worker thread — paused this session pending Dan's input because the cost-benefit shifted with the 4-layer perf defense in place; (3) a new product surface (Reference Track UX, Album Master gaps) — needs Dan's nomination.
 >
@@ -27,15 +27,17 @@ This document is the entry point for any Claude session — interactive or sched
 
 1. `CLAUDE.md` — repo rules, non-negotiables, working style, fast/slow test lanes.
 2. `docs/PRODUCT.md` — product canon and source of truth (now titled **YES Master Product Canon**). Do not modify without Dan's explicit ask.
-3. **`docs/HANDOFF_2026-05-15_evening.md`** — the latest dated handoff. Carries the full 22-commit session inventory, the four-layer perf defense architecture, the decode-stall fix's three-tier cache, the trust-pattern fix consolidation, the `src/lib/` pure-helper pattern, the four Codex review items addressed in `74d704f`, and the deferred follow-up list.
-4. `docs/HANDOFF_2026-05-15_session.md` — the morning handoff (Phase A4 ship + 3 VM hotfixes). Useful for back-context on what was in flight at the start of today.
-5. `docs/checkpoints/checkpoint-2026-05-15-end-of-mechanical-gates-session.md` — session inventory written before the Codex review items landed. Captures architectural state, file-size growth, trust-pattern fix consolidation.
-6. `docs/checkpoints/checkpoint-2026-05-15-post-phase-a4-vm-hotfixes.md` — morning audit checkpoint that opened the B1–B7 queue.
-7. `docs/PRESET_REFERENCE_ANALYSIS_2026-05-14.md` — the calibration analysis that drove Phase A4. Conservative Target Table (lines 252–259) is what landed.
-8. `docs/checkpoints/checkpoint-2026-05-14-pre-preset-retune.md` — the review checkpoint that anchored Phase A4.
-7. `docs/IMPLEMENTATION_PLAN.md` — phase map and gates (back-context; mostly closed).
-8. `docs/progress.md` — append-only slice log; tail entry is "where we are now."
-9. `docs/CLAUDE_WORK_LOOP.md` — work loop format.
+3. **`docs/HANDOFF_2026-05-18_evening.md`** — latest dated handoff and current entry point.
+4. `docs/followups/listening-batch-2026-05-19.md` — deferred subjective checks.
+5. `docs/followups/infrastructure-2026-05-19.md` — distribution/cleanup debt.
+6. `docs/HANDOFF_2026-05-15_evening.md` — prior major architecture snapshot.
+7. `docs/HANDOFF_2026-05-15_session.md` — Phase A4 + VM hotfix back-context.
+8. `docs/checkpoints/checkpoint-2026-05-15-end-of-mechanical-gates-session.md`.
+9. `docs/checkpoints/checkpoint-2026-05-15-post-phase-a4-vm-hotfixes.md`.
+10. `docs/PRESET_REFERENCE_ANALYSIS_2026-05-14.md` — calibration analysis.
+11. `docs/IMPLEMENTATION_PLAN.md` — phase map and gates.
+12. `docs/progress.md` — append-only slice log.
+13. `docs/CLAUDE_WORK_LOOP.md` — work loop format.
 
 Do not re-elicit design that already exists in those docs. The spec is settled. Find the next unfinished slice and work it.
 

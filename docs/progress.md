@@ -3942,3 +3942,47 @@ What failed or remains partial:
 Next recommended slice:
 
 Run full verification and commit/push this review + UX cleanup slice.
+
+## 2026-05-18 evening - handoff inventory + legacy hook cleanup
+
+Goal:
+
+Write a proper 2026-05-18 evening handoff, capture infrastructure debt in repo
+docs, and remove the now-orphaned legacy frontend `exportAlbum` hook.
+
+What changed:
+
+- Added `docs/HANDOFF_2026-05-18_evening.md` with commit inventory, file-size
+  deltas, test totals, closed/open state, and updated read-first pointers.
+- Added `docs/followups/infrastructure-2026-05-19.md` for Apple notarization,
+  backend simple-album cleanup, and tests still co-located in `audio.rs`.
+- Updated `docs/HANDOFF.md` so the new dated handoff is the current entry point.
+- Removed the legacy frontend `exportAlbum` hook action and `isExportingAlbum`
+  state from `useTrackMaster`.
+- Removed the now-unused frontend `api.renderAlbumMaster` wrapper and stale
+  legacy album export hook test.
+
+Verification:
+
+- `npm test -- src/hooks/useTrackMaster.integration.test.tsx`: first failed
+  while the legacy hook was still exposed, then passed after removal.
+- `npm test -- src/hooks/useTrackMaster.integration.test.tsx src/App.album-export.test.tsx`:
+  10/10 pass.
+- `npm test`: 62/62 pass.
+- `npm run build`: clean production build.
+- `cargo test -p album-mastering-studio --lib`: 153/153 pass.
+
+Real-audio fixture used:
+
+No. This batch is docs plus frontend hook/API cleanup only.
+
+What failed or remains partial:
+
+- The Rust `render_album_master` command and simple-album render helpers remain
+  because backend contract tests still use that surface. Captured in
+  `docs/followups/infrastructure-2026-05-19.md` for a deliberate future Rust
+  cleanup slice.
+
+Next recommended slice:
+
+Run full frontend/Rust fast gates, then commit and push.

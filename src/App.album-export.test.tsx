@@ -68,8 +68,6 @@ function baseTrackMasterState(): Record<string, unknown> {
     setAlbumIntensity: vi.fn(),
     setAlbumTitle: vi.fn(),
     exportAlbumPlan: vi.fn(),
-    isExportingAlbum: false,
-    exportAlbum: vi.fn(),
     transport: {
       isPlaying: false,
       currentTimeSec: 0,
