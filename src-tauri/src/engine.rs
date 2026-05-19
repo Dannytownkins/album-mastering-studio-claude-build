@@ -901,6 +901,7 @@ pub async fn render_track_preview(
         &out_dir,
         RenderKind::Preview,
         Some(&on_progress),
+        None,
     )
 }
 
@@ -909,9 +910,11 @@ pub async fn render_track_master(
     track_id: TrackId,
     track_path: String,
     settings: MasteringSettings,
+    output_path: Option<String>,
     app: tauri::AppHandle,
 ) -> CommandResult<RenderJob> {
     let out_dir = render_output_dir(&app, RenderKind::Master)?;
+    let explicit_output_path = output_path.as_deref().map(Path::new);
     let track_id_for_progress = track_id.clone();
     let app_for_progress = app.clone();
     let on_progress = move |fraction: f32| {
@@ -931,6 +934,7 @@ pub async fn render_track_master(
         &out_dir,
         RenderKind::Master,
         Some(&on_progress),
+        explicit_output_path,
     )
 }
 
@@ -1747,7 +1751,26 @@ pub fn mastering_render(
     out_dir: &Path,
     kind: RenderKind,
 ) -> CommandResult<RenderJob> {
-    mastering_render_with_progress(track_id, source_path, settings, out_dir, kind, None)
+    mastering_render_with_progress(track_id, source_path, settings, out_dir, kind, None, None)
+}
+
+pub fn mastering_render_to_path(
+    track_id: TrackId,
+    source_path: &Path,
+    settings: &MasteringSettings,
+    out_dir: &Path,
+    kind: RenderKind,
+    output_path: &Path,
+) -> CommandResult<RenderJob> {
+    mastering_render_with_progress(
+        track_id,
+        source_path,
+        settings,
+        out_dir,
+        kind,
+        None,
+        Some(output_path),
+    )
 }
 
 /// Same as `mastering_render` but accepts an optional progress callback that
@@ -1763,6 +1786,7 @@ pub fn mastering_render_with_progress(
     out_dir: &Path,
     kind: RenderKind,
     on_progress: Option<&dyn Fn(f32)>,
+    output_path: Option<&Path>,
 ) -> CommandResult<RenderJob> {
     let source_path_str = source_path.to_string_lossy().to_string();
     if source_path_str.is_empty() {
@@ -1887,7 +1911,10 @@ pub fn mastering_render_with_progress(
         sample_rate: pcm.sample_rate,
         bit_depth,
     };
-    let out_path = unique_output_path(out_dir, source_path, &track_id, kind)?;
+    let out_path = match output_path {
+        Some(path) => explicit_output_path(path)?,
+        None => unique_output_path(out_dir, source_path, &track_id, kind)?,
+    };
     write_wav(&out_path, &samples, pcm.sample_rate, pcm.channels, bit_depth)?;
     if let Some(cb) = on_progress {
         cb(1.0);
@@ -1903,6 +1930,24 @@ pub fn mastering_render_with_progress(
         output_paths: vec![out_path.to_string_lossy().to_string()],
         measurements: Some(measurements),
     })
+}
+
+fn explicit_output_path(path: &Path) -> CommandResult<PathBuf> {
+    if path.as_os_str().is_empty() {
+        return Err(CommandError::InvalidPath("empty output path".to_string()));
+    }
+    if path.file_name().is_none() {
+        return Err(CommandError::InvalidPath(format!(
+            "output path must include a file name: {}",
+            path.to_string_lossy()
+        )));
+    }
+    if let Some(parent) = path.parent() {
+        if !parent.as_os_str().is_empty() {
+            std::fs::create_dir_all(parent).map_err(|e| CommandError::Io(e.to_string()))?;
+        }
+    }
+    Ok(path.to_path_buf())
 }
 
 fn unique_output_path(

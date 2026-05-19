@@ -65,6 +65,18 @@ const DEFAULT_SETTINGS: MasteringSettings = {
   },
 };
 
+function suggestedMasterFilename(track: ImportedTrack): string {
+  const withoutExtension = track.display_name.replace(/\.[^/.]+$/, "");
+  const safeBase =
+    withoutExtension.replace(/[^a-z0-9-_]+/gi, "_").replace(/^_+|_+$/g, "") ||
+    "master";
+  return `${safeBase}__master.wav`;
+}
+
+function ensureWavExtension(path: string): string {
+  return /\.wav$/i.test(path) ? path : `${path}.wav`;
+}
+
 export type PlaybackKindUI = "source" | "master";
 
 export interface ExportReceipt {
@@ -981,14 +993,21 @@ export function useTrackMaster() {
 
   const exportMaster = useCallback(async () => {
     if (!selectedTrackId || !selectedAnalysis) return;
-    setIsExporting(true);
     setError(null);
     try {
       if (!selectedTrack) return;
+      const chosenPath = await save({
+        defaultPath: suggestedMasterFilename(selectedTrack),
+        filters: [{ name: "WAV audio", extensions: ["wav"] }],
+      });
+      if (!chosenPath) return;
+      const chosenOutputPath = ensureWavExtension(chosenPath);
+      setIsExporting(true);
       const job = await api.renderTrackMaster(
         selectedTrackId,
         selectedTrack.path,
         selectedSettings,
+        chosenOutputPath,
       );
       const outputPath = job.output_paths[0] ?? "";
       // Codex audit 2026-05-13 P0 fix: the receipt must describe the

@@ -786,6 +786,27 @@ fn mastering_render_writes_processed_wav() {
     assert_eq!(spec.bits_per_sample, 24);
 }
 
+#[test]
+fn mastering_render_writes_to_explicit_output_path() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let in_path = tmp.path().join("input.wav");
+    let chosen_path = tmp.path().join("chosen").join("dan-master.wav");
+    write_sine_wav(&in_path, 44_100, 0.5, 440.0, 2);
+
+    let job = engine::mastering_render_to_path(
+        TrackId("explicit-output".to_string()),
+        &in_path,
+        &default_settings(),
+        tmp.path(),
+        RenderKind::Master,
+        &chosen_path,
+    )
+    .expect("render to chosen output path");
+
+    assert_eq!(job.output_paths, vec![chosen_path.to_string_lossy().to_string()]);
+    assert!(chosen_path.exists(), "chosen output file not written");
+}
+
 /// Codex audit 2026-05-13 P0 regression: the export receipt must describe
 /// the rendered output, not the source analysis. Synthesizes a loud sine,
 /// renders with a known LUFS target (StreamingUniversal → -14 LUFS), and

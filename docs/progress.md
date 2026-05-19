@@ -3792,3 +3792,52 @@ Next recommended slice:
 Objective UX work: add an export destination picker so Dan can choose
 where WAV/MP3 exports are written instead of hunting in Application
 Support.
+
+## 2026-05-18 - export destination picker + transient placement correction
+
+Goal:
+
+Close the cross-session plan gap before the next UX slice, then make Track
+Master export ask Dan where to save the WAV instead of silently writing into
+Application Support.
+
+What changed:
+
+- Moved transient shaping after the multiband compressor so Punch/Loud attack
+  lift is not immediately fed into compressor gain reduction.
+- Added comments locking in the intentional HPF topology: cascaded 2-biquad
+  Butterworth / 4-pole subsonic cleanup, not an accidental LR4 reuse.
+- Added `docs/adr/0002-cross-machine-plan-handoffs.md` so future plan-to-ship
+  handoffs land implementation decisions in the repo when sessions/machines
+  change.
+- Track Master export now opens a Save dialog, suggests `<track>__master.wav`,
+  appends `.wav` if needed, and passes the chosen path to the Rust renderer.
+- Rust render path now supports an explicit output file path while preserving
+  the old unique Application Support path for callers that do not provide one.
+
+Verification:
+
+- `cargo test -p album-mastering-studio --lib transient -- --nocapture`: 4/4 pass.
+- `cargo test -p album-mastering-studio --test contracts mastering_render_writes_to_explicit_output_path -- --nocapture`: 1/1 pass.
+- `npm test -- --run src/hooks/useTrackMaster.integration.test.tsx`: 6/6 pass.
+- `npm test`: 58/58 pass.
+- `npm run build`: clean production build.
+- `AMS_RUN_REAL_FIXTURE=1 cargo test -p album-mastering-studio`: full suite passed, including real-fixture tests.
+
+Real-audio fixture used:
+
+Yes. `AMS_RUN_REAL_FIXTURE=1` slow lane passed because the transient placement
+change touches DSP behavior.
+
+What failed or remains partial:
+
+- Homebrew's Rust install had cleaned up an older `llhttp`, which broke the
+  existing Homebrew Node binary. `brew reinstall node` repaired Node and the
+  frontend tests then ran cleanly.
+- This picker covers Track Master export. Album export still writes to the app
+  render folder and can get its own directory-picker slice if needed.
+
+Next recommended slice:
+
+Run the Mac app and verify the Save dialog appears before Track Master export;
+then consider an album export directory picker as a separate objective UX slice.

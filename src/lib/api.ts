@@ -65,11 +65,13 @@ export const api = {
     trackId: TrackId,
     trackPath: string,
     settings: MasteringSettings,
+    outputPath?: string,
   ) =>
     invoke<RenderJob>("render_track_master", {
       trackId,
       trackPath,
       settings,
+      outputPath: outputPath ?? null,
     }),
 
   renderAlbumMaster: (

@@ -11,9 +11,11 @@ import {
 } from "vitest";
 
 import type {
+  AnalysisResult,
   ImportedTrack,
   MasteringSettings,
   ProjectState,
+  RenderJob,
   WaveformPeaks,
 } from "../bindings";
 import { useTrackMaster } from "./useTrackMaster";
@@ -142,6 +144,50 @@ function makeWaveform(trackId: string): WaveformPeaks {
     samples_per_pixel: 512,
     total_samples: 0,
     sample_rate: 44_100,
+  };
+}
+
+function makeAnalysis(trackId: string): AnalysisResult {
+  return {
+    track_id: trackId,
+    lufs_integrated: -14,
+    lufs_short_term_max: -10,
+    true_peak_dbtp: -1,
+    dynamic_range_lu: 8,
+    spectral_balance: { low: 0.33, mid: 0.34, high: 0.33 },
+    transient_density: 0.5,
+    stereo_width: 0.5,
+    recommended_universal: DEFAULT_SETTINGS,
+    measured_at_iso: "2026-05-17T00:00:00.000Z",
+    inferred_role: null,
+    role_confidence: null,
+    inferred_character: null,
+    character_confidence: null,
+    spectral_balance_6band: null,
+    transient_flux: null,
+    stereo_correlation: null,
+    dynamic_range_p95_p10_db: null,
+    lufs_short_term_max_3s: null,
+    energy_density_score: null,
+  };
+}
+
+function makeRenderJob(path: string): RenderJob {
+  return {
+    id: "render-1",
+    kind: "master",
+    target_tracks: ["export-1"],
+    status: { status: "done" },
+    progress: 1,
+    started_at_iso: "2026-05-17T00:00:00.000Z",
+    output_paths: [path],
+    measurements: {
+      lufs_integrated: -14,
+      true_peak_dbtp: -1,
+      dynamic_range_lu: 8,
+      sample_rate: 44_100,
+      bit_depth: 24,
+    },
   };
 }
 
@@ -315,6 +361,71 @@ describe("useTrackMaster integration dispatches", () => {
         false,
       );
     });
+    await act(async () => {
+      harness.root.unmount();
+    });
+  });
+
+  it("asks where to save a track master and passes that path to render", async () => {
+    const track = makeTrack("export-1", "C:/audio/export source.wav");
+    mocks.api.importTracks.mockResolvedValue([track]);
+    mocks.api.analyzeTracks.mockResolvedValue([makeAnalysis(track.id)]);
+    mocks.save.mockResolvedValue("/Users/daniel/Desktop/exported-master");
+    mocks.api.renderTrackMaster.mockResolvedValue(
+      makeRenderJob("/Users/daniel/Desktop/exported-master.wav"),
+    );
+    mocks.api.runExportChecks.mockResolvedValue([]);
+    const harness = await renderHookHarness();
+
+    await act(async () => {
+      await harness.current().importFiles([track.path]);
+    });
+    await waitFor(() => {
+      expect(harness.current().selectedTrackId).toBe(track.id);
+    });
+
+    await act(async () => {
+      await harness.current().exportMaster();
+    });
+
+    expect(mocks.save).toHaveBeenCalledWith({
+      defaultPath: "export-1__master.wav",
+      filters: [{ name: "WAV audio", extensions: ["wav"] }],
+    });
+    expect(mocks.api.renderTrackMaster).toHaveBeenCalledWith(
+      track.id,
+      track.path,
+      DEFAULT_SETTINGS,
+      "/Users/daniel/Desktop/exported-master.wav",
+    );
+    expect(harness.current().lastExportReceipt?.outputPath).toBe(
+      "/Users/daniel/Desktop/exported-master.wav",
+    );
+    await act(async () => {
+      harness.root.unmount();
+    });
+  });
+
+  it("does not render when the export save dialog is cancelled", async () => {
+    const track = makeTrack("export-cancel", "C:/audio/export cancel.wav");
+    mocks.api.importTracks.mockResolvedValue([track]);
+    mocks.api.analyzeTracks.mockResolvedValue([makeAnalysis(track.id)]);
+    mocks.save.mockResolvedValue(null);
+    const harness = await renderHookHarness();
+
+    await act(async () => {
+      await harness.current().importFiles([track.path]);
+    });
+    await waitFor(() => {
+      expect(harness.current().selectedTrackId).toBe(track.id);
+    });
+
+    await act(async () => {
+      await harness.current().exportMaster();
+    });
+
+    expect(mocks.save).toHaveBeenCalled();
+    expect(mocks.api.renderTrackMaster).not.toHaveBeenCalled();
     await act(async () => {
       harness.root.unmount();
     });

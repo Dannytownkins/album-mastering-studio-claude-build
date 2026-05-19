@@ -683,6 +683,11 @@ impl ChainCoeffs {
         let effective_mid_db = preset.presence_db * preset_scale + settings.eq_mid_db;
         let effective_high_db = preset.air_db * preset_scale + settings.eq_high_db;
 
+        // Intentionally a cascaded 2-biquad Butterworth (4-pole / 24 dB per
+        // octave), even though standalone HPF does not need LR4 sum-flat
+        // crossover behavior. The goal here is mastering-grade subsonic
+        // cleanup: firm rumble removal below the cutoff while leaving the
+        // audible low band essentially intact.
         let sub_highpass = if preset.highpass_hz > 0.0 {
             BiquadCoeffs::butter_hp(sr, preset.highpass_hz.clamp(20.0, 40.0), BUTTERWORTH_Q)
         } else {
@@ -1799,18 +1804,6 @@ impl MasteringChain {
             y = state.high.process(&self.coeffs.high, y);
             y = state.warmth.process(&self.coeffs.warmth, y);
             y = state.presence_air.process(&self.coeffs.presence_air, y);
-            if self.coeffs.transient_amount.abs() > 1.0e-5 {
-                y = process_transient_shaper_sample(
-                    y,
-                    self.coeffs.transient_amount,
-                    &mut state.transient_fast_env,
-                    &mut state.transient_slow_env,
-                    self.coeffs.transient_fast_attack_alpha,
-                    self.coeffs.transient_fast_release_alpha,
-                    self.coeffs.transient_slow_attack_alpha,
-                    self.coeffs.transient_slow_release_alpha,
-                );
-            }
             frame[ch] = y;
         }
         // Phase 12.2 — 3-band multiband downward compressor (LR4 split,
@@ -1821,6 +1814,25 @@ impl MasteringChain {
         // slider is untouched.
         if self.coeffs.compression_active {
             self.apply_multiband_compressor(frame, channels);
+        }
+        // Transient shaping sits after the multiband compressor so Punch/Loud
+        // can add attack without immediately feeding that lift into compressor
+        // gain reduction. Musical tuning is still per-preset, but the topology
+        // keeps the shaper's mechanical effect predictable.
+        for ch in 0..channels {
+            let state = &mut self.states[ch];
+            if self.coeffs.transient_amount.abs() > 1.0e-5 {
+                frame[ch] = process_transient_shaper_sample(
+                    frame[ch],
+                    self.coeffs.transient_amount,
+                    &mut state.transient_fast_env,
+                    &mut state.transient_slow_env,
+                    self.coeffs.transient_fast_attack_alpha,
+                    self.coeffs.transient_fast_release_alpha,
+                    self.coeffs.transient_slow_attack_alpha,
+                    self.coeffs.transient_slow_release_alpha,
+                );
+            }
         }
         // Width: only meaningful for stereo. The `≈ 1` guard skips the M/S
         // dance when the user hasn't touched the slider, keeping the
@@ -2028,18 +2040,6 @@ impl MasteringChain {
         y = state.high.process(&self.coeffs.high, y);
         y = state.warmth.process(&self.coeffs.warmth, y);
         y = state.presence_air.process(&self.coeffs.presence_air, y);
-        if self.coeffs.transient_amount.abs() > 1.0e-5 {
-            y = process_transient_shaper_sample(
-                y,
-                self.coeffs.transient_amount,
-                &mut state.transient_fast_env,
-                &mut state.transient_slow_env,
-                self.coeffs.transient_fast_attack_alpha,
-                self.coeffs.transient_fast_release_alpha,
-                self.coeffs.transient_slow_attack_alpha,
-                self.coeffs.transient_slow_release_alpha,
-            );
-        }
         if self.coeffs.compression_active {
             let state = &mut self.states[idx];
             let low_a = state.comp_split.low_lp1.process(&self.coeffs.comp_low_lp, y);
@@ -2109,6 +2109,19 @@ impl MasteringChain {
                 sum_y += bands[b] * g_lin * makeup_lin[b];
             }
             y = sum_y;
+        }
+        if self.coeffs.transient_amount.abs() > 1.0e-5 {
+            let state = &mut self.states[idx];
+            y = process_transient_shaper_sample(
+                y,
+                self.coeffs.transient_amount,
+                &mut state.transient_fast_env,
+                &mut state.transient_slow_env,
+                self.coeffs.transient_fast_attack_alpha,
+                self.coeffs.transient_fast_release_alpha,
+                self.coeffs.transient_slow_attack_alpha,
+                self.coeffs.transient_slow_release_alpha,
+            );
         }
         if self.coeffs.saturation_amount > 0.0 {
             let drive = 1.0 + self.coeffs.saturation_amount * 2.0;
