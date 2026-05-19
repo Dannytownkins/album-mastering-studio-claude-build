@@ -300,7 +300,7 @@ interface Band {
 }
 
 const BANDS: readonly Band[] = [
-  { id: "sub",      label: "SUB",      hz: 80,    color: "TBD",     kind: "peak",       tier: "secondary", qOctaves: 1.1 },
+  { id: "sub",      label: "SUB",      hz: 80,    color: "TBD",     kind: "peak",       tier: "secondary", qOctaves: 1.2 },
   { id: "low",      label: "LOW",      hz: 200,   color: "#22d3ee", kind: "shelf-low",  tier: "primary",   qOctaves: 0   },
   { id: "low-mid",  label: "LOW-MID",  hz: 400,   color: "#4ade80", kind: "peak",       tier: "secondary", qOctaves: 1.0 },
   { id: "mid",      label: "MID",      hz: 1500,  color: "#a78bfa", kind: "peak",       tier: "primary",   qOctaves: 1.2 },
@@ -318,7 +318,7 @@ const BANDS: readonly Band[] = [
 | Hit-target radius | 18 | 18 |
 | Fill opacity | 1.0 | 0.85 |
 | Outline halo | 1.5px ring | none |
-| Label opacity | 1.0 | 0.7 |
+| Label opacity | 1.0 | 0.85 |
 | Drag interaction | Vertical | Vertical |
 | Double-click reset | Yes | Yes |
 
@@ -389,13 +389,15 @@ The original plan claimed "slow-lane byte-identical fixture output" — that ove
 
 **Revised gate** (established in Commit 0): per-preset SHA snapshots of `process_frame_inplace` output on a fixed synthetic input (deterministic pink noise via `synth_pink_stereo` — the existing pattern at `tests/preset_distinctness.rs:68`). After the 7-band extension, all SHAs must match — proves the chain's audible behavior is unchanged for every preset.
 
+**Determinism confirmed.** `synth_pink_stereo` at `tests/preset_distinctness.rs:68-106` uses a fixed-seed LCG (`let mut state: u32 = 0xCAFE_BABE` with constants `1_103_515_245` / `12345`). Same input args produce the same output bytes across runs. The Commit 0 SHA strategy is safe to lean on.
+
 **Why not real-fixture SHAs:**
 
 - Real fixtures live in private-audio-fixtures/ (not committed); SHAs would only verify on machines with the fixture.
 - Synthetic input is portable and runs in fast lane.
 - The proof "new biquads at 0 dB are identity" is mathematical — synthetic input is sufficient to verify; real input doesn't strengthen the proof.
 
-**Cross-platform note:** the chain contains `tanh` in the saturation stage (`dsp.rs:1867+`), which is platform-dependent in some implementations. If Mac and Windows produce different SHAs, the test gets OS-conditional constants — same pattern as the existing `#[cfg(target_os = "windows")]` test at `engine.rs`. Empirical verification on both platforms is part of the Commit 0 acceptance.
+**Cross-platform note:** the chain contains `tanh` in the saturation stage (`dsp.rs:1867+`), which CAN be platform-dependent depending on the libm implementation. **Verify empirically first** — Rust's `f32::tanh` may already be cross-platform deterministic on standard targets, in which case the concern is moot. Commit 0 acceptance includes running on both Mac and Windows; if SHAs match, no gating needed; if they diverge, OS-gated `#[cfg(target_os = "...")]` constants are acceptable in-slice (same pattern as the existing `#[cfg(target_os = "windows")]` test at `engine.rs`). **A portable tanh implementation (polynomial approximation, `libm::tanhf`, etc.) is explicitly out of scope for this slice** — it would change current audio output and is its own DSP-output-changing slice to handle deliberately.
 
 ### 17. Existing Rust test files needing fixture updates
 
@@ -490,15 +492,17 @@ If any Commit 0 SHA differs, the implementation is wrong — stop and debug.
 
 ## Flagged uncertainties
 
-### 1. Color choices for the 3 new bands
+### 1. Color choices for the 3 new bands — Commit 3 implementer picks (not "TBD" at ship)
 
-Existing 4 colors are hardcoded hex values, not drawn from `KnobTone`. Starting suggestions:
+Existing 4 colors are hardcoded hex values, not drawn from `KnobTone`. The "TBD" placeholders in the §10 BANDS example are illustrative only — **Commit 3 must ship with real hex values, not "TBD" strings.** The Commit 3 implementer picks final colors at implementation time from the existing palette family (the inline hex values in `BANDS` and `TONE_COLOR` at `Knob.tsx:30+`) and ships them. Dan can adjust in a tiny follow-up slice if any choice doesn't sit right after seeing it rendered.
+
+Starting suggestions for the implementer to riff from (NOT prescriptive):
 
 - `sub` (80 Hz): muted blue/slate — deep/foundation
 - `high-mid` (3500 Hz): muted amber/gold — warm-mid between purple and blue
 - `sparkle` (12 kHz): pale gold or pale pink — top-end shimmer
 
-Final choices validated against existing CSS tokens. If Dan / design pass produces specific hex values, lock in Commit 3.
+**Hard rule: Commit 3 ships with non-placeholder hex values.** If the implementer can't make a confident choice, surface that as a chat checkpoint before pushing Commit 3 — don't ship "TBD".
 
 ### 2. Sparkle slope at 12 kHz (0.7 vs 0.5)
 
@@ -510,7 +514,7 @@ Plan defaults to slope 0.7 to match existing 6 kHz / 10 kHz convention. Gentler 
 
 ### 4. Cross-platform SHA portability
 
-`tanh` in saturation may produce different bits on Mac vs Windows. Commit 0 establishes SHAs empirically; if cross-platform divergence shows up, gate constants with `#[cfg(target_os = "...")]`.
+`tanh` in saturation MAY produce different bits on Mac vs Windows. **Verify empirically first** (Commit 0 runs on both platforms). If SHAs match cross-platform, no gating needed. If they diverge, OS-gated `#[cfg(target_os = "...")]` constants are acceptable in-slice. **Portable tanh (polynomial approximation, `libm::tanhf`) is explicitly out of scope** — that's a DSP-output-changing slice to land deliberately later. See §16 for full sequencing.
 
 ### 5. `PresetCalibration` field ordering
 
@@ -518,7 +522,7 @@ The struct has `#[derive(Debug, Clone, Copy)]` only at `dsp.rs:279`, no `Deseria
 
 ### 6. `qOctaves` values for sub and high-mid in `VisualEqPanel`
 
-Suggesting `sub` qOctaves≈1.1 and `high-mid` qOctaves≈1.0 by analogy with the existing `low-mid` mapping (DSP Q=0.9 → UI qOctaves=1.0). Affects visual response-curve approximation only, not audio.
+Plan uses `sub` qOctaves=**1.2** and `high-mid` qOctaves=1.0, derived from the existing mapping precedent: low_mid (DSP Q=0.9) → qOctaves=1.0; mid (DSP Q=0.8) → qOctaves=1.2. Since sub shares DSP Q=0.8 with mid, it inherits mid's qOctaves=1.2 (originally drafted as 1.1; corrected after Codex caught the math). high_mid shares DSP Q=0.9 with low_mid, inheriting qOctaves=1.0. Both values affect the visual response-curve approximation only, not audio. The formula at `VisualEqPanel.tsx:97` (`sigma = qOctaves * 0.5 / 2.355`) confirms qOctaves directly represents the Gaussian's FWHM in octaves.
 
 ---
 
@@ -535,7 +539,7 @@ NOT part of this slice:
 - **`science_note` tooltip on preset orbs.** Separate future slice.
 - **Product positioning copy in README/onboarding.** Separate future slice.
 - **Fixing `process_sample`'s pre-existing `low_mid` skip.** Separate slice afterward (see §process_sample divergence).
-- **Extending `apply_album_shadow` to the 3 new bands.** `album_render.rs:237` currently biases low/low-mid/mid/high only; the 3 new bands stay 4-band on the album-character side until a future slice extends per-album-character biasing. Conscious deferral.
+- **Extending `apply_album_shadow` to the 3 new bands.** `album_render.rs:237` currently biases low/low-mid/mid/high only; the 3 new bands stay 4-band on the album-character side. **In this slice the new bands are user offsets only** — preset baselines default to 0.0 dB AND there's no album-character bias, so the new bands contribute only what the user drags in. The deferral is audibly inert at slice-land (0.0 + 0.0 = 0.0). It only becomes audibly visible after a separate listening slice tunes per-preset Sub/High-Mid/Sparkle baselines; that slice should reconsider extending `apply_album_shadow` to the new bands in the same pass.
 
 ---
 
@@ -552,4 +556,4 @@ Per CLAUDE.md commit-shape convention, each commit includes a `Verification:` bl
 
 ---
 
-*Plan drafted by Vera, 2026-05-19. Revised same day after Codex review. Awaiting Dan's approval before implementation begins.*
+*Drafted by Vera; revised to incorporate Codex review pushbacks (compile order, byte-identity gate, `process_sample` divergence, TS fixture list, sub qOctaves math, secondary label opacity, color-decision sequencing, tanh portability scoping). Awaiting Dan's approval before implementation begins.*
