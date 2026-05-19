@@ -4132,3 +4132,53 @@ What failed or remains partial:
 Next recommended slice:
 
 Run full fast gates, commit, push, then proceed to final eagle-eye audit.
+
+## 2026-05-19 - cold-pickup documentation wrap-up
+
+Goal:
+
+Make the repo ready for a cold pickup by the next agent/session: current
+handoff inventory, explicit uncertainty, platform-neutral product wording,
+current README, and stale plan/checklist cleanup.
+
+What changed:
+
+- Rewrote `docs/HANDOFF_2026-05-18_evening.md` around the current pushed state,
+  including post-`8705702` commits through `9e6b544`, updated test totals, and
+  a new Confidence and Uncertainty section.
+- Updated README from from-zero framing to current-state/project-entry framing.
+- Updated PRODUCT/CLAUDE/IMPLEMENTATION_PLAN wording from Windows-specific
+  product identity to private local desktop mastering app, while keeping
+  platform-specific build commands as implementation details.
+- Updated `CLAUDE.md` and `docs/IMPLEMENTATION_PLAN.md` with both PowerShell
+  and bash verification commands.
+- Marked Phase 14 as PARTIAL with current Mac/Windows packaging status and
+  deferred signing/notarization items.
+- Updated Phase 8 and Phase 11 notes for destination pickers, HPF
+  infrastructure, transient infrastructure, and listening follow-ups.
+- Kept the changelog decision explicit: no separate `CHANGELOG.md`; commit
+  history plus `docs/progress.md` are the change record.
+- Renamed the Windows-only Rust path test cfg to `#[cfg(target_os = "windows")]`
+  so docs and code say the same thing.
+
+Verification:
+
+- `git ls-files .DS_Store`: no tracked `.DS_Store` files.
+- `npm test`: 73/73 pass.
+- `cargo test --lib` from `src-tauri`: 154/154 pass.
+- `npm run build`: clean production build.
+- `git diff --check`: clean.
+
+Real-audio fixture used:
+
+No. This batch is documentation plus test metadata only.
+
+What failed or remains partial:
+
+- Windows installer execution remains a Windows-machine task.
+- Mac distribution to non-development machines remains unsigned/notarization
+  follow-up work.
+
+Next recommended slice:
+
+Run full fast gates, commit/push, then perform the final eagle-eye audit.
