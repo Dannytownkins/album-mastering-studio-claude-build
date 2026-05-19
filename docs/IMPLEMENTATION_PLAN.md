@@ -8,7 +8,8 @@ This repo is now the active Tauri + Rust implementation. Older Codex/Python refe
 
 ## Current Strategic Direction
 
-Build a top-tier private local desktop mastering app around two modes:
+Build a top-tier private cross-platform desktop mastering app — Mac and
+Windows targeted; Linux deferred — around two modes:
 
 1. Track Master.
 2. Album Master.
@@ -535,7 +536,7 @@ Establish baselines, then refine budgets per phase.
 
 ## Phase 14: Release And Installer Hardening
 
-**Status: PARTIAL.** Mac packaging shipped 2026-05-18 (`build:mac`, `.app` + DMG, ad-hoc signed). Windows packaging script shipped 2026-05-19 (`build:windows`, MSI + NSIS setup EXE targets). Windows installer execution + Authenticode signing are deferred to `docs/followups/infrastructure-2026-05-19.md`. Apple Developer notarization is deferred to the same follow-up doc.
+**Status: PARTIAL.** Mac packaging shipped 2026-05-18 (`build:mac`, `.app` + DMG, ad-hoc signed). Windows packaging script shipped 2026-05-19 (`build:windows`, MSI + NSIS setup EXE targets) with a `bundle.windows` config block. Windows installer execution + Authenticode signing are deferred to `docs/followups/infrastructure-2026-05-19.md`. Apple Developer notarization is deferred to the same follow-up doc.
 
 Goal: make the app usable outside the repo.
 

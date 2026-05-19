@@ -19,7 +19,8 @@ Do not read `docs/reference/` by default. Those files are optional Codex-path co
 
 ## Product Non-Negotiables
 
-- Private local desktop mastering app.
+- Private cross-platform desktop mastering app — Mac and Windows targeted;
+  Linux deferred.
 - Track Master first, Album Master near-term.
 - Universal-first workflow: drop audio, analyze, safe settings, preview, export.
 - Real-time or near-real-time audition is required for final Track Master quality.
@@ -74,6 +75,7 @@ real-audio fixture tests only run when explicitly opted in.
 # Frontend from repo root
 npm test
 npm run build
+npm run build:windows  # Windows packaging only; emits NSIS .exe + MSI
 
 # Backend from src-tauri/
 cd src-tauri
@@ -86,6 +88,7 @@ cargo test             # full suite with real-fixture tests skipped
 # Frontend from repo root
 npm test
 npm run build
+npm run build:mac      # macOS packaging only; emits .app + DMG
 
 # Backend from src-tauri/
 cd src-tauri
