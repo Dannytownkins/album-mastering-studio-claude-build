@@ -9,7 +9,7 @@ This document is the entry point for any Claude session — interactive or sched
 - Code signing: macOS is currently ad-hoc signed for local use; wider macOS distribution needs Apple Developer ID + notarization. Windows distribution needs Authenticode signing once YES Master leaves Dan's own machines.
 - Save/export paths: the Tauri dialog plugin returns native paths on each OS (`/` on macOS/Linux, `\` on Windows). Frontend tests now pin both separator styles flowing through to render unchanged.
 
-> **Current snapshot (2026-05-19 Mac pickup).** YES Master is treated as a private cross-platform desktop mastering app - Mac and Windows targeted; Linux deferred. Latest dated handoff is `docs/HANDOFF_2026-05-19_evening.md`; read that first after `CLAUDE.md` and `docs/PRODUCT.md`, then read the tail of `docs/progress.md`. Current pushed `master` tip is `871d3ae` or newer; it contains the full Phase B seven-band EQ slice, the post-merge Album Master/Visual EQ CSS polish (`4aba442`), and the cross-machine handoff corrections. The safety tag `pre-eq-7-band-2026-05-19` is pushed to origin at `450a14f`.
+> **Current snapshot (2026-05-19 Mac pickup).** YES Master is treated as a private cross-platform desktop mastering app - Mac and Windows targeted; Linux deferred. Latest dated handoff is `docs/HANDOFF_2026-05-19_evening.md`; read that first after `CLAUDE.md` and `docs/PRODUCT.md`, then read the tail of `docs/progress.md`. Current `master` contains the full Phase B seven-band EQ slice, the post-merge Album Master/Visual EQ CSS polish (`4aba442`), the cross-machine handoff corrections, and the Mac SHA portability closeout recorded in `docs/progress.md`. The safety tag `pre-eq-7-band-2026-05-19` is pushed to origin at `450a14f`.
 >
 > **Prior session detail.** The 22-commit Phase A4 session lives in `docs/HANDOFF_2026-05-15_evening.md`; the 2026-05-18 audio split and evening inventory live in `docs/HANDOFF_2026-05-18_evening.md`.
 >
@@ -21,9 +21,11 @@ This document is the entry point for any Claude session — interactive or sched
 >
 > **Addendum (2026-05-19 Phase B).** The seven-band EQ expansion landed on master through `b424b36`; it adds Sub, Low-Mid, High-Mid, and Sparkle Visual EQ nodes around the existing Low/Mid/High Tone Shape knobs while preserving byte-identical chain-output SHA snapshots. Post-merge CSS polish at `4aba442` removed the duplicate Album Master album-order row, prevented desktop vertical scrolling in Album Master at Dan's native Windows resolution, and reduced the primary EQ node/halo thickness.
 >
-> **Test totals:** Latest full Phase B final gate on Windows: Rust lib **174/174**, Vitest **81/81**, `npm run build` clean, full `cargo test` green, and `AMS_RUN_REAL_FIXTURE=1 cargo test` green. Latest post-merge CSS/docs fast gate is recorded in `docs/progress.md`; no slow lane is required for handoff-only changes.
+> **Addendum (2026-05-19 Mac SHA closeout).** The first Mac `cargo test preset_byte_identity` run produced stable Mac-specific SHAs for the eight named presets while Custom stayed identical. `src-tauri/src/dsp.rs` now keeps Windows and macOS SHA snapshots side-by-side, selected by OS, so both machines are guarded without changing the audio path.
 >
-> **What's open / next.** Immediate Mac-laptop pass: pull latest `master`, fetch tags, run `cargo test preset_byte_identity` first from `src-tauri/` to close the Windows-to-Mac SHA portability question, then run the normal fast gates. If the Mac has Tauri packaging prerequisites, `npm run build:mac` is the local package build. Private audio fixtures are intentionally not tracked; only run the real-fixture slow lane on the Mac if Dan intentionally brings those files over.
+> **Test totals:** Latest full Phase B final gate on Windows: Rust lib **174/174**, Vitest **81/81**, `npm run build` clean, full `cargo test` green, and `AMS_RUN_REAL_FIXTURE=1 cargo test` green. Latest Mac pickup gate: `cargo test preset_byte_identity` 10/10 after OS-gated SHAs, Vitest **81/81**, `npm run build` clean, Rust lib **173/173**, full `cargo test` green, and `npm run build:mac` produced `.app` + `.dmg`. The 174→173 Rust lib count drift is recorded in `docs/progress.md`; no failure was observed.
+>
+> **What's open / next.** Listening-taste work for Sub / High-Mid / Sparkle is still deferred until Dan has studio monitors. While that is blocked, the practical non-listening options are the documented infrastructure/cleanup follow-ups: `apply_album_shadow` support for the new bands, the separate `process_sample` low-mid fix slice, the `album_render` dead-code decision, the optional `science_note` tooltip, or the eagle-eye audit. Private audio fixtures are intentionally not tracked; only run the real-fixture slow lane on the Mac if Dan intentionally brings those files over.
 >
 > **Codex owns the UI lane** for the moment. Do not edit `src/App.tsx`, `src/App.css`, `src/components/RightRail.tsx`, or `src/components/AlbumPanel.tsx` from the Claude side unless a UI change strictly forces it AND you've pulled latest. App.tsx WAS touched this session for the B7 / LoudnessTarget fixes; coordinate before any further App.tsx work.
 >
@@ -45,7 +47,7 @@ This document is the entry point for any Claude session — interactive or sched
 
 ## Mac pickup prompt
 
-Use this when starting the Mac-laptop Codex session:
+Historical prompt used for the first Mac pickup after the Windows seven-band EQ merge:
 
 ```text
 We are picking up YES Master on the Mac laptop after the 2026-05-19 Windows seven-band EQ merge.
@@ -54,7 +56,7 @@ Please:
 1. Pull latest master and tags: git pull --ff-only && git fetch --tags.
 2. Read CLAUDE.md, docs/PRODUCT.md, docs/HANDOFF.md, docs/HANDOFF_2026-05-19_evening.md, docs/followups/infrastructure-2026-05-19.md, and the tail of docs/progress.md.
 3. Confirm HEAD is 871d3ae or newer and tag pre-eq-7-band-2026-05-19 points at 450a14f.
-4. From src-tauri, run cargo test preset_byte_identity first. This is the first Mac check for the Windows-pinned Phase B SHA snapshots.
+4. From src-tauri, run cargo test preset_byte_identity first. This was the first Mac check for the Windows-pinned Phase B SHA snapshots and is now closed by the Mac SHA closeout progress entry.
 5. From the repo root, run npm install if needed, npm test, npm run build, and npm run build:mac if local Tauri packaging prerequisites are installed.
 6. From src-tauri, run cargo test --lib and cargo test. Run AMS_RUN_REAL_FIXTURE=1 cargo test only if the private real fixture exists locally on the Mac.
 7. Do not start listening-taste changes, async worker changes, Reference Track UX, Album Master dashboard/report work, dead-code cleanup, or process_sample fixes until Dan nominates the next slice.

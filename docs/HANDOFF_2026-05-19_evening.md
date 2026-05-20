@@ -8,7 +8,7 @@
 >
 > **Slice-final verification (`b424b36`, Windows):** `npm test` 13 files / 81 tests pass · `npm run build` clean · `cargo test --lib` 174/174 · `cargo test` full suite green (lib + integration + SHA snapshots + doc-tests) · `AMS_RUN_REAL_FIXTURE=1 cargo test` full suite green including real-fixture render + metering. All five gates locked in via `docs/progress.md`'s slice-complete entry. **All of this work — implementation, verification, merge — happened on Dan's Windows machine.**
 >
-> **What's open / next.** Slice landed on master via fast-forward; `codex/eq-7-band-expansion` is retained until Dan deletes it. The CSS/AlbumPanel tweaks are committed on master at `4aba442`; there is no local stash to recover and the worktree is expected clean after pull. Per-preset listening tune-up for Sub/High-Mid/Sparkle is the natural follow-up only when Dan nominates it. Mac SHA verification is still pending (see Confidence below). Several deferred items captured below (see Deferred Follow-ups).
+> **What's open / next.** Slice landed on master via fast-forward; `codex/eq-7-band-expansion` is retained until Dan deletes it. The CSS/AlbumPanel tweaks are committed on master at `4aba442`; there is no local stash to recover and the worktree is expected clean after pull. Mac SHA verification is now closed by the follow-up recorded in `docs/progress.md`: macOS keeps its own preset SHA snapshots beside the Windows ones. Per-preset listening tune-up for Sub/High-Mid/Sparkle remains deferred until Dan has studio monitors. Several non-listening items are captured below (see Deferred Follow-ups).
 
 ---
 
@@ -95,8 +95,8 @@ These are choices made during planning/review that future readers won't see in t
 - The 10 per-preset chain-output SHAs from Commit B.0 remain unchanged after B.1's DSP extension — byte-identity gate held mathematically (new biquads at 0.0 dB are identity for all input).
 - Visual smoke at three viewports confirmed via Codex's agent-browser run: 7 nodes + 7 hit targets + 3 primary halos + 4 secondary nodes, no edge collisions.
 
-**Documented but pending verification:**
-- **Cross-platform SHA portability (now: Mac run pending, not Windows).** Commit B.0 SHAs were established on Windows. Dan switches back to Mac next; the next opportunity to verify cross-platform behavior is when the Mac runs `cargo test`. If `f32::tanh` happens to be cross-platform deterministic on standard targets, SHAs match and no gating needed. If they diverge, OS-gated `#[cfg(target_os = "...")]` constants are acceptable as a small in-slice fix; portable tanh stays a future DSP-output-changing slice.
+**Verified later on Mac:**
+- **Cross-platform SHA portability closed.** Commit B.0 SHAs were established on Windows. The first Mac run showed the expected OS-level drift for the eight named presets, while Custom and the deterministic seed check stayed stable. The follow-up stores macOS SHA constants beside the Windows constants and selects by OS, preserving the byte-identity gate on both machines without changing the audio path.
 - Visual smoke at the smallest viewport (1366×768) confirmed by Codex on Windows; Dan's human ear-listen pass on real studio monitors deferred until next monitor session.
 
 **Known minor uncertainty:**
@@ -125,7 +125,7 @@ In rough order of natural sequencing:
 
 3. **`process_sample` low_mid fix.** Pre-existing latent divergence preserved verbatim in this slice. Fix is its own slice that adds `state.low_mid` between `state.low` and `state.mid` in `process_sample` (`dsp.rs:2127-2129`), accepts the byte-identity change explicitly, removes the guard test alongside the byte-identity update.
 
-4. **Cross-platform SHA portability.** Pending empirical Mac verification of the Windows-pinned Commit 0 SHAs. If divergent, OS-gated constants in-slice; portable tanh as its own DSP-output-changing slice.
+4. **Cross-platform SHA portability.** Closed by the Mac SHA follow-up recorded in `docs/progress.md`: Windows and macOS preset snapshots are both pinned. Portable tanh remains a future DSP-output-changing slice only if the project later decides it needs one.
 
 5. **B.3 commit message stays bare.** Codex correctly skipped the optional amend (would have required force-pushing the branch, which the kickoff forbade). Audit trail is preserved via the slice-complete `b424b36` entry in `docs/progress.md` and via this handoff. Closed — not actionable.
 
@@ -152,7 +152,7 @@ This whole session ran on Dan's Windows machine. Dan is switching back to Mac ne
 
 - **In-flight CSS tweaks were committed to master** at `4aba442 css tweaks` (5 files: `src/App.css`, `src/App.layout-css.test.ts`, `src/App.tsx`, `src/components/AlbumPanel.tsx`, `src/components/VisualEqPanel.tsx`). Mac will pick them up on `git pull --ff-only`.
 - **First action on Mac:** `git pull --ff-only && git fetch --tags` on master. Master tip should be `871d3ae` or newer, and `pre-eq-7-band-2026-05-19` should resolve to `450a14f`.
-- **Cross-platform SHA verification — first opportunity.** On Mac, run `cargo test preset_byte_identity` first. If 10/10 pass with no SHA diff, cross-platform portability is confirmed and that uncertainty closes. If any SHA differs, the test will name the divergent preset — that's the signal to add `#[cfg(target_os = "...")]` constants for those specific presets in a small follow-up slice.
+- **Cross-platform SHA verification closed.** The Mac pickup run added macOS-specific constants for the eight named preset snapshots; `cargo test preset_byte_identity` now passes 10/10 on Mac.
 - **Safety tag already pushed to origin** at session-close — Mac will see it after `git fetch --tags`. No action needed.
 - **Private fixtures do not move through git.** The normal fast gates and `cargo test preset_byte_identity` do not need `private-audio-fixtures/`. Run `AMS_RUN_REAL_FIXTURE=1 cargo test` on the Mac only if Dan intentionally brings the private fixture directory to that machine.
 - **Mac package build:** after the fast gates, run `npm run build:mac` only if local Tauri/macOS packaging prerequisites are installed. This should emit `.app` and `.dmg` artifacts.

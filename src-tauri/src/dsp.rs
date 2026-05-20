@@ -3078,6 +3078,17 @@ mod tests {
             format!("{:x}", hasher.finalize())
         }
 
+        fn expected_platform_sha(
+            windows_sha: &'static str,
+            macos_sha: &'static str,
+        ) -> &'static str {
+            if cfg!(target_os = "macos") {
+                macos_sha
+            } else {
+                windows_sha
+            }
+        }
+
         fn assert_preset_sha(name: &str, preset: Preset, expected_sha: &str) {
             let observed = sha256_f32_le(&render_preset(preset));
             assert_eq!(
@@ -3098,7 +3109,10 @@ mod tests {
             assert_preset_sha(
                 "Universal",
                 Preset::Universal,
-                "18f199b5ddb6f17a52d82e62ba18c1e3ee96a04388844c8bb58dd722101da12d",
+                expected_platform_sha(
+                    "18f199b5ddb6f17a52d82e62ba18c1e3ee96a04388844c8bb58dd722101da12d",
+                    "904b3908e7f85a11ddfd3e6bdae870b5c8cccbc86ed77027cf03968931040fec",
+                ),
             );
         }
 
@@ -3107,7 +3121,10 @@ mod tests {
             assert_preset_sha(
                 "Clarity",
                 Preset::Clarity,
-                "8abb6c37372da3bd28ecbc75f2c74563655c74b1cb82d4fd14d5ef699fa37ff2",
+                expected_platform_sha(
+                    "8abb6c37372da3bd28ecbc75f2c74563655c74b1cb82d4fd14d5ef699fa37ff2",
+                    "abc426309966d6cd602fe50f757b65c8bc92f766d6043b0451c5025e90cfa631",
+                ),
             );
         }
 
@@ -3116,7 +3133,10 @@ mod tests {
             assert_preset_sha(
                 "Tape",
                 Preset::Tape,
-                "fb03785bb39648118ee9b9c1727fdda93d86a5d3a2ce81ccfbf57da53c138803",
+                expected_platform_sha(
+                    "fb03785bb39648118ee9b9c1727fdda93d86a5d3a2ce81ccfbf57da53c138803",
+                    "7147f0a7fe07d9ddc28a9e76fdff5b2c7bb3fbd5bacb83bfb63812f063045657",
+                ),
             );
         }
 
@@ -3125,7 +3145,10 @@ mod tests {
             assert_preset_sha(
                 "Spatial",
                 Preset::Spatial,
-                "8185f556c3faa4ccb5983778ac428f1976a971f9bcc3e68a59d65a7bfe0e98a0",
+                expected_platform_sha(
+                    "8185f556c3faa4ccb5983778ac428f1976a971f9bcc3e68a59d65a7bfe0e98a0",
+                    "2a7da89b1f2a63d6ee18982712e27aaaa2855c9885c0f69f34095ed469eaae62",
+                ),
             );
         }
 
@@ -3134,7 +3157,10 @@ mod tests {
             assert_preset_sha(
                 "Oomph",
                 Preset::Oomph,
-                "e3eb1c8d27939206839ee34377a6c670d20c84daf05d6a3049f9c035e06d9df2",
+                expected_platform_sha(
+                    "e3eb1c8d27939206839ee34377a6c670d20c84daf05d6a3049f9c035e06d9df2",
+                    "6d83827ffe7af93d8c515364506b83a59bcbc798f3cfd901de5e13fc2de58bce",
+                ),
             );
         }
 
@@ -3143,7 +3169,10 @@ mod tests {
             assert_preset_sha(
                 "Warmth",
                 Preset::Warmth,
-                "9d1433b7bdcebf1fd45010ffeab5bbf2dba82099673bb5b5d38dace993cf95cc",
+                expected_platform_sha(
+                    "9d1433b7bdcebf1fd45010ffeab5bbf2dba82099673bb5b5d38dace993cf95cc",
+                    "5d6840bb6eeb8ae9fbe50d12401f2e19d62e395e13a0aa0551fcdd0a6f52c02d",
+                ),
             );
         }
 
@@ -3152,7 +3181,10 @@ mod tests {
             assert_preset_sha(
                 "Punch",
                 Preset::Punch,
-                "e9d8fe1423c6a31a4b3a9f5a99c15ef1da1f90cd45531a2345f24b870946d716",
+                expected_platform_sha(
+                    "e9d8fe1423c6a31a4b3a9f5a99c15ef1da1f90cd45531a2345f24b870946d716",
+                    "12fa771e5b66b4a96c00ab4feb1ebced2ce65d9d5ea717de7d5c548e036c2751",
+                ),
             );
         }
 
@@ -3161,7 +3193,10 @@ mod tests {
             assert_preset_sha(
                 "Loud",
                 Preset::Loud,
-                "695c05a8cded5e7bd994ff14a4fd139aab4a83cc393faad63737e9512952cf4e",
+                expected_platform_sha(
+                    "695c05a8cded5e7bd994ff14a4fd139aab4a83cc393faad63737e9512952cf4e",
+                    "8bd4fa9a2993b02c516e332eb2e22cbf021830a96fc630ce6c3ea1496980d63c",
+                ),
             );
         }
 

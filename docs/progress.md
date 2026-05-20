@@ -4955,3 +4955,54 @@ Next recommended slice:
 On the Mac laptop, pull master and tags, run `cargo test preset_byte_identity`
 first, then the normal fast gates. Do not start follow-up cleanup or listening
 tuning until Dan nominates the next slice.
+
+## 2026-05-19 - Mac SHA portability closeout
+
+Goal:
+
+Close the Windows-to-Mac SHA portability question for the Phase B seven-band EQ
+byte-identity snapshots before starting any listening-taste work.
+
+What changed:
+
+- Added macOS-specific preset SHA snapshots for the eight named presets in
+  `src-tauri/src/dsp.rs`, while keeping the established Windows snapshots.
+- Left Custom on the shared snapshot because it matched on Mac and Windows.
+- Updated the handoff docs so future sessions do not treat Mac SHA verification
+  as pending.
+
+Verification:
+
+- Initial `cargo test preset_byte_identity`: reproduced the expected Mac SHA
+  drift; 2 passed and 8 named preset snapshots failed against Windows SHAs.
+- `cargo test preset_byte_identity`: 10 SHA snapshot tests pass after adding
+  macOS constants.
+- `npm test`: 13 files / 81 tests pass.
+- `npm run build`: TypeScript and Vite production build pass.
+- `cargo test --lib`: 173 library tests pass on Mac.
+- `cargo test`: full Rust suite passes, including 173 library tests,
+  integration tests, preset SHA snapshot tests, and doc-tests.
+- `npm run build:mac`: emits
+  `src-tauri/target/release/bundle/macos/YES Master.app` and
+  `src-tauri/target/release/bundle/dmg/YES Master_0.0.0_aarch64.dmg`.
+- `git diff --check`: clean.
+
+Real-audio fixture used:
+
+No. The private fixture directory was not needed for the SHA portability check
+or the Mac fast/package gates.
+
+What failed or remains partial:
+
+- The Rust lib test count is 173 on this Mac run, while the Windows Phase B
+  handoff quoted 174. No test failed; this is count drift to keep visible.
+- `cargo fmt --check` reports broad pre-existing formatting drift across Rust
+  files, so no project-wide format pass was applied for this narrow slice.
+- Listening-taste checks remain blocked until Dan has studio monitors again.
+
+Next recommended slice:
+
+Pick a non-listening follow-up while Dan is away from studio monitors:
+`apply_album_shadow` support for the three new EQ bands, the separate
+`process_sample` low-mid fix, the `album_render` dead-code decision, the
+optional `science_note` tooltip, or the eagle-eye audit.
