@@ -5006,3 +5006,43 @@ Pick a non-listening follow-up while Dan is away from studio monitors:
 `apply_album_shadow` support for the three new EQ bands, the separate
 `process_sample` low-mid fix, the `album_render` dead-code decision, the
 optional `science_note` tooltip, or the eagle-eye audit.
+
+## 2026-05-19 - Export completion polish
+
+Goal:
+
+Add useful, nearly invisible UI polish to the export flow without turning it
+into a gimmick.
+
+What changed:
+
+- Upgraded the export receipt with a quiet result medallion: Clean, Review, or
+  Needs attention.
+- Added a compact completed journey rail: Analyze → Master → Quality → Saved.
+- Made saved file rows easier to scan by separating the file name from the full
+  path.
+- Added subtle tick detail to the existing render progress bar.
+- Added tests that pin the clean and warning receipt states.
+
+Verification:
+
+- `npx vitest run src/App.album-export.test.tsx`: 3 tests pass.
+- `npm test`: 13 files / 83 tests pass.
+- `npm run build`: TypeScript and Vite production build pass.
+- Browser preview at `http://127.0.0.1:1420/`: loads with no console errors.
+- `git diff --check`: clean.
+
+Real-audio fixture used:
+
+No. This was frontend polish only.
+
+What failed or remains partial:
+
+- Browser preview cannot naturally show a completed export receipt because the
+  browser save-dialog mock cancels export saves. Receipt states are covered by
+  the focused React tests.
+
+Next recommended slice:
+
+Continue with subtle utility polish: waveform playhead/A-B transition polish,
+Visual EQ neutral snap affordance, or preset selection lock-in feedback.

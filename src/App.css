@@ -780,11 +780,18 @@ button.primary:disabled {
   flex: 1 1 100px;
   min-width: 80px;
   height: 6px;
-  background: var(--bg-2);
+  background:
+    repeating-linear-gradient(
+      90deg,
+      rgba(236, 240, 250, 0.08) 0 1px,
+      transparent 1px 24px
+    ),
+    var(--bg-2);
   border: 1px solid var(--border-strong);
   border-radius: 999px;
   overflow: hidden;
   box-shadow: inset 0 1px 0 rgba(0, 0, 0, 0.4);
+  position: relative;
 }
 
 .render-progress-fill {
@@ -792,6 +799,15 @@ button.primary:disabled {
   background: linear-gradient(90deg, var(--accent-deep), var(--accent-bright));
   box-shadow: 0 0 8px rgba(77, 139, 255, 0.45);
   transition: width 100ms linear;
+  position: relative;
+}
+
+.render-progress-fill::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(90deg, transparent, rgba(236, 240, 250, 0.32), transparent);
+  opacity: 0.45;
 }
 
 .live-update-badge {
@@ -2379,22 +2395,134 @@ button.primary:disabled {
   border: 1px solid var(--border-strong);
   border-radius: var(--radius);
   padding: 1.4rem 1.6rem;
-  max-width: 560px;
+  max-width: 620px;
   width: 100%;
   box-shadow: var(--shadow-1);
 }
 
-.receipt header {
-  display: flex;
-  justify-content: space-between;
+.receipt-header {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
   align-items: center;
+  gap: 0.9rem;
   margin-bottom: 0.8rem;
+}
+
+.receipt-title-group {
+  min-width: 0;
+}
+
+.receipt-eyebrow {
+  display: block;
+  margin-bottom: 0.22rem;
+  color: var(--text-2);
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
 }
 
 .receipt h2 {
   margin: 0;
   font-size: 1.05rem;
   font-weight: 600;
+}
+
+.receipt-medallion {
+  display: grid;
+  place-items: center;
+  min-width: 96px;
+  min-height: 52px;
+  padding: 0.5rem 0.75rem;
+  border: 1px solid var(--border-strong);
+  border-radius: 999px;
+  background: rgba(22, 26, 36, 0.72);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
+  text-align: center;
+}
+
+.receipt-medallion-label {
+  color: var(--text-0);
+  font-size: 0.9rem;
+  font-weight: 700;
+  line-height: 1.1;
+}
+
+.receipt-medallion-detail {
+  margin-top: 0.16rem;
+  color: var(--text-2);
+  font-size: 0.68rem;
+  font-weight: 650;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.receipt-medallion-clean {
+  border-color: rgba(108, 208, 138, 0.44);
+  background: rgba(25, 48, 34, 0.5);
+}
+
+.receipt-medallion-review {
+  border-color: rgba(255, 184, 107, 0.44);
+  background: rgba(58, 43, 22, 0.5);
+}
+
+.receipt-medallion-attention {
+  border-color: rgba(255, 118, 118, 0.44);
+  background: rgba(64, 29, 32, 0.5);
+}
+
+.receipt-journey {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0.35rem;
+  list-style: none;
+  padding: 0;
+  margin: 0 0 1rem;
+}
+
+.receipt-journey-step {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 0.42rem;
+  min-width: 0;
+  color: var(--text-2);
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.receipt-journey-step:not(:last-child)::after {
+  content: "";
+  position: absolute;
+  left: calc(0.5rem + 0.42rem);
+  right: -0.15rem;
+  top: 0.5rem;
+  height: 1px;
+  background: linear-gradient(90deg, rgba(108, 208, 138, 0.45), rgba(108, 208, 138, 0.08));
+}
+
+.receipt-journey-dot {
+  width: 0.5rem;
+  height: 0.5rem;
+  border-radius: 50%;
+  background: #6cd08a;
+  box-shadow: 0 0 0 3px rgba(108, 208, 138, 0.12);
+  flex: 0 0 auto;
+  position: relative;
+  z-index: 1;
+}
+
+.receipt-section-title {
+  margin: 0 0 0.45rem;
+  color: var(--text-2);
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
 }
 
 .receipt-paths {
@@ -2409,7 +2537,7 @@ button.primary:disabled {
   font-size: 0.78rem;
   color: var(--text-1);
   background: var(--bg-2);
-  padding: 0.5rem 0.75rem;
+  padding: 0.58rem 0.75rem;
   border-radius: var(--radius-sm);
   word-break: break-all;
   display: block;
@@ -2418,6 +2546,24 @@ button.primary:disabled {
   border: 1px solid var(--border);
   cursor: pointer;
   transition: border-color 0.1s, color 0.1s;
+}
+
+.receipt-path-name {
+  display: block;
+  margin-bottom: 0.22rem;
+  color: var(--text-0);
+  font-family: inherit;
+  font-size: 0.82rem;
+  font-weight: 700;
+  word-break: break-word;
+}
+
+.receipt-path-full {
+  display: block;
+  color: var(--text-2);
+  font-family: inherit;
+  font-size: 0.72rem;
+  line-height: 1.35;
 }
 
 .receipt-path:hover {

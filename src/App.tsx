@@ -2315,15 +2315,39 @@ function ExportReceiptCard({
   };
   const isAlbum = receipt.kind === "album";
   const paths = receipt.job.output_paths;
+  const quality = exportQualitySummary(receipt.checks);
+  const journeySteps = ["Analyze", "Master", "Quality", "Saved"];
   return (
     <div className="receipt-backdrop" onClick={onClose}>
       <div className="receipt" onClick={(e) => e.stopPropagation()}>
-        <header>
-          <h2>{isAlbum ? "Album export complete" : "Export complete"}</h2>
+        <header className="receipt-header">
+          <div className="receipt-title-group">
+            <span className="receipt-eyebrow">
+              {isAlbum ? "Album master" : "Track master"}
+            </span>
+            <h2>{isAlbum ? "Album export complete" : "Export complete"}</h2>
+          </div>
+          <div className={`receipt-medallion receipt-medallion-${quality.tone}`}>
+            <span className="receipt-medallion-label">{quality.label}</span>
+            <span className="receipt-medallion-detail receipt-summary">
+              {quality.detail}
+            </span>
+          </div>
           <button type="button" className="toast-close" onClick={onClose} aria-label="Close">
             ×
           </button>
         </header>
+        <ol className="receipt-journey" aria-label="Export steps">
+          {journeySteps.map((step) => (
+            <li key={step} className="receipt-journey-step is-complete">
+              <span className="receipt-journey-dot" aria-hidden />
+              <span>{step}</span>
+            </li>
+          ))}
+        </ol>
+        <div className="receipt-section-title">
+          {paths.length === 1 ? "Saved file" : "Saved files"}
+        </div>
         <div className="receipt-paths">
           {paths.map((path, i) => (
             <button
@@ -2333,13 +2357,19 @@ function ExportReceiptCard({
               onClick={() => reveal(path)}
               title="Reveal in file manager"
             >
-              {isAlbum && i === 0 ? "▸ Continuous album · " : ""}
-              {path}
+              <span className="receipt-path-name">
+                {isAlbum && i === 0 ? "Continuous album" : fileNameFromPath(path)}
+              </span>
+              <span className="receipt-path-full">
+                {isAlbum && i === 0 ? `${fileNameFromPath(path)} · ` : ""}
+                {path}
+              </span>
             </button>
           ))}
         </div>
         {receipt.checks.length > 0 && (
           <div className="receipt-checks">
+            <div className="receipt-section-title">Quality notes</div>
             {receipt.checks.map((c, i) => (
               <CheckRow key={i} check={c} />
             ))}
@@ -2348,6 +2378,42 @@ function ExportReceiptCard({
       </div>
     </div>
   );
+}
+
+function exportQualitySummary(checks: QualityCheck[]): {
+  tone: "clean" | "review" | "attention";
+  label: string;
+  detail: string;
+} {
+  const critical = checks.filter((c) => c.level === "critical").length;
+  const warning = checks.filter((c) => c.level === "warning").length;
+  if (critical > 0) {
+    return {
+      tone: "attention",
+      label: "Needs attention",
+      detail: pluralize(critical, "critical item"),
+    };
+  }
+  if (warning > 0) {
+    return {
+      tone: "review",
+      label: "Review",
+      detail: pluralize(warning, "item to review"),
+    };
+  }
+  return {
+    tone: "clean",
+    label: "Clean",
+    detail: checks.length > 0 ? "No issues detected" : "Saved",
+  };
+}
+
+function pluralize(count: number, singular: string): string {
+  return `${count} ${singular}${count === 1 ? "" : "s"}`;
+}
+
+function fileNameFromPath(path: string): string {
+  return path.split(/[\\/]/).filter(Boolean).pop() ?? path;
 }
 
 function CheckRow({ check }: { check: QualityCheck }) {

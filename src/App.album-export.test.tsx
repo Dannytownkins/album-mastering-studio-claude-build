@@ -3,7 +3,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import App from "./App";
-import type { ImportedTrack } from "./bindings";
+import type { ImportedTrack, QualityCheck, RenderJob } from "./bindings";
 
 (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean })
   .IS_REACT_ACT_ENVIRONMENT = true;
@@ -28,6 +28,30 @@ const track: ImportedTrack = {
   sample_rate: 44_100,
   channels: 2,
 };
+
+const cleanCheck: QualityCheck = {
+  level: "info",
+  code: "export_ok",
+  message: "No export issues detected.",
+};
+
+const warningCheck: QualityCheck = {
+  level: "warning",
+  code: "streaming_headroom_low",
+  message: "Streaming headroom is tight.",
+};
+
+function renderJob(outputPaths: string[]): RenderJob {
+  return {
+    id: "render-job-1",
+    kind: "master",
+    target_tracks: [track.id],
+    status: { status: "done" },
+    progress: 1,
+    started_at_iso: "2026-05-19T00:00:00Z",
+    output_paths: outputPaths,
+  };
+}
 
 function baseTrackMasterState(): Record<string, unknown> {
   return {
@@ -141,6 +165,65 @@ describe("album export actions", () => {
       (button) => button.textContent?.trim() === "Export Album",
     );
     expect(exportButtons).toHaveLength(1);
+    await act(async () => {
+      root.unmount();
+    });
+  });
+
+  it("shows a quiet export journey and clean result on completed exports", async () => {
+    mocks.tm = {
+      ...baseTrackMasterState(),
+      lastExportReceipt: {
+        trackId: track.id,
+        outputPath: "/Users/daniel/Masters/album-track-1__master.wav",
+        checks: [cleanCheck],
+        job: renderJob(["/Users/daniel/Masters/album-track-1__master.wav"]),
+        kind: "track",
+      },
+    };
+
+    const { container, root } = await renderApp();
+
+    expect(container.querySelector(".receipt-medallion-clean")?.textContent).toContain(
+      "Clean",
+    );
+    const steps = Array.from(container.querySelectorAll(".receipt-journey-step"));
+    expect(steps.map((step) => step.textContent?.trim())).toEqual([
+      "Analyze",
+      "Master",
+      "Quality",
+      "Saved",
+    ]);
+    expect(container.querySelector(".receipt-path-name")?.textContent).toBe(
+      "album-track-1__master.wav",
+    );
+
+    await act(async () => {
+      root.unmount();
+    });
+  });
+
+  it("marks completed exports for review when quality checks warn", async () => {
+    mocks.tm = {
+      ...baseTrackMasterState(),
+      lastExportReceipt: {
+        trackId: track.id,
+        outputPath: "/Users/daniel/Masters/album-track-1__master.wav",
+        checks: [warningCheck],
+        job: renderJob(["/Users/daniel/Masters/album-track-1__master.wav"]),
+        kind: "track",
+      },
+    };
+
+    const { container, root } = await renderApp();
+
+    expect(container.querySelector(".receipt-medallion-review")?.textContent).toContain(
+      "Review",
+    );
+    expect(container.querySelector(".receipt-summary")?.textContent).toContain(
+      "1 item to review",
+    );
+
     await act(async () => {
       root.unmount();
     });
