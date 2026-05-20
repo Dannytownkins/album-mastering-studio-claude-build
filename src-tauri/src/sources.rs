@@ -298,6 +298,19 @@ impl Iterator for MasteringSource {
                 }
                 if let Some(update) = latest {
                     self.coeffs_generation = update.generation;
+                    // If a crossfade is already in progress, promote the
+                    // current pending chain to main BEFORE installing the new
+                    // pending. Without this, sustained updates (knob sweeps)
+                    // re-arm the 512-frame crossfade every check interval,
+                    // self.chain stays frozen at the pre-sweep coefficients,
+                    // and the source runs 2x DSP for the entire sweep while
+                    // the output remains weighted ~75% toward the stale
+                    // chain. Promoting first bounds the 2x window to a single
+                    // COEFFS_CROSSFADE_FRAMES interval per update and keeps
+                    // the audible chain tracking the latest settings.
+                    if let Some(prev_pending) = self.pending_chain.take() {
+                        self.chain = prev_pending;
+                    }
                     self.pending_chain =
                         Some(crate::dsp::MasteringChain::with_coeffs_inheriting_state(
                             update.coeffs,

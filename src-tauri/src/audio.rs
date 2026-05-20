@@ -2696,6 +2696,91 @@ mod tests {
     }
 
     #[test]
+    fn mastering_source_tracks_latest_under_sustained_updates() {
+        // Reproduces the realtime stutter / laggy-knob symptom: pre-Fix-A,
+        // sustained coefficient updates (knob sweep) re-armed the crossfade
+        // every check interval, leaving self.chain frozen at the pre-sweep
+        // settings. Output stayed dominated by the stale chain and the
+        // source ran 2x DSP for the whole sweep.
+        //
+        // Post-Fix-A, each mid-fade update promotes the prior pending chain
+        // to main before installing the new one, so the audible chain
+        // converges to the latest settings within at most one
+        // COEFFS_CROSSFADE_FRAMES window.
+        let sample_rate = 44_100;
+        let channels: u16 = 2;
+        let total_frames = 16_384;
+        let samples = sine_signal(total_frames, sample_rate, channels);
+
+        let initial_settings = settings_with_intensity(0.0);
+        let initial_chain =
+            MasteringChain::new(sample_rate, channels as usize, &initial_settings);
+        let (coeffs_tx, coeffs_rx) = mpsc::channel::<LiveCoeffUpdate>();
+        let peak = Arc::new(AtomicU32::new(0));
+        let lufs = Arc::new(AtomicI32::new(i32::MIN));
+        let integrated_lufs = Arc::new(AtomicI32::new(i32::MIN));
+        let mut source = MasteringSource::new(
+            samples,
+            channels,
+            sample_rate,
+            initial_chain,
+            coeffs_rx,
+            peak,
+            lufs,
+            integrated_lufs,
+            Arc::new(SpectrumRing::new()),
+        );
+
+        let loud_settings = settings_with_intensity(1.0);
+        let loud_coeffs = ChainCoeffs::from_settings(sample_rate, &loud_settings);
+
+        // Pre-update baseline window, then a sustained stream of "loud"
+        // updates at twice the check interval rate so every coeff check
+        // finds something pending.
+        let baseline_samples = 1024_usize;
+        let send_every = 64_usize;
+        let total_samples = total_frames * channels as usize;
+        let mut output: Vec<f32> = Vec::with_capacity(total_samples);
+        let mut gen_counter: u64 = 0;
+        for i in 0..total_samples {
+            if i >= baseline_samples && i % send_every == 0 {
+                gen_counter += 1;
+                coeffs_tx
+                    .send(LiveCoeffUpdate {
+                        generation: gen_counter,
+                        coeffs: loud_coeffs.clone(),
+                    })
+                    .expect("send loud coeffs");
+            }
+            match source.next() {
+                Some(s) => output.push(s),
+                None => break,
+            }
+        }
+        assert!(gen_counter > 0, "test should have sent updates");
+
+        // Compare the late steady-state region against the pre-update
+        // baseline. Intensity 0.0 -> 1.0 raises Universal gain push from
+        // ~0.6 dB to ~2.4 dB (~1.23x RMS). Pre-Fix-A this jump never
+        // materialized under sustained updates because self.chain was
+        // never promoted; post-Fix-A the late RMS clearly tracks loud.
+        let warmup_skip = 512_usize;
+        let pre_steady = &output[warmup_skip..baseline_samples];
+        let late_start = output.len().saturating_sub(4096);
+        let late_steady = &output[late_start..];
+        let rms_pre = rms(pre_steady);
+        let rms_late = rms(late_steady);
+        let ratio = rms_late / rms_pre;
+        assert!(
+            ratio > 1.15,
+            "Fix A regression: source did not converge to loud settings under \
+             sustained updates. rms_pre={rms_pre:.4}, rms_late={rms_late:.4}, \
+             ratio={ratio:.3}. This indicates the crossfade is being \
+             permanently reset and self.chain is frozen at the initial chain."
+        );
+    }
+
+    #[test]
     fn decode_cache_lookup_returns_pcm_on_path_and_mtime_match() {
         let pcm = DecodedPcm {
             samples: vec![0.1, 0.2, 0.3, 0.4],
