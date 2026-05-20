@@ -30,7 +30,12 @@ export type KnobTone =
 // Solid color per tone — used for the accent arc, indicator notch, and the
 // CSS variable that downstream halo/glow rules reference via color-mix.
 const TONE_COLOR: Record<KnobTone, string> = {
-  blue: "#4d8bff",
+  // `blue` is aligned with VisualEqPanel.tsx's HIGH band (#60a5fa) so the
+  // Tone Shape HIGH knob and its 6 kHz EQ node read as the same color.
+  // `cyan` and `purple` likewise match the LOW (200 Hz, #22d3ee) and MID
+  // (1.5 kHz, #a78bfa) band nodes — keep these three in lockstep if either
+  // palette changes.
+  blue: "#60a5fa",
   cyan: "#22d3ee",
   green: "#34d399",
   purple: "#a78bfa",
@@ -53,9 +58,11 @@ type KnobProps = {
   centerValue?: boolean;
   caption?: string;
   disabled?: boolean;
-  /// Color identity for this knob's accent ring + indicator. Used to give
-  /// each band a distinct character (Low=cyan, Mid=green, High=purple, etc.)
-  /// like the reference UI. Defaults to blue (matches --accent-bright).
+  /// Color identity for this knob's accent ring + indicator. The Tone
+  /// Shape knobs match their corresponding 7-band EQ nodes in
+  /// VisualEqPanel.tsx — Low=cyan (#22d3ee, 200 Hz), Mid=purple (#a78bfa,
+  /// 1.5 kHz), High=blue (#60a5fa, 6 kHz). Other places use the remaining
+  /// tones for their own band identity. Defaults to blue.
   tone?: KnobTone;
 };
 
