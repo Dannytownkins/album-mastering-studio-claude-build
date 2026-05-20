@@ -1231,6 +1231,13 @@ fn process_audio_command(
                         if let Some(cached) = s.landing_gain_cache.get(&settings) {
                             coeffs.export_landing_gain_lin = cached;
                             s.live_landing_gain_lin = cached;
+                            // The current live generation needs no measurement.
+                            // Any pending (settings, gen) captured during an
+                            // earlier in-flight miss is now for a generation
+                            // the user has moved past — drop it so the
+                            // worker-drain doesn't spend a pass on stale
+                            // settings the next time the active worker returns.
+                            s.lufs_worker_pending = None;
                         } else {
                             // Cache miss — apply coefficients now with the
                             // last-known landing scalar (audio keeps flowing)
@@ -1259,6 +1266,13 @@ fn process_audio_command(
                         // gain at 1.0. The next play_master will
                         // populate the decode cache and the next
                         // UpdateChain will compute through the cache.
+                    } else {
+                        // Preview LUFS is off for this update; the live
+                        // chain uses the default landing scalar from
+                        // from_settings. Same reasoning as the cache-hit
+                        // branch: any pending measurement is for an older
+                        // generation that's no longer the live setting.
+                        s.lufs_worker_pending = None;
                     }
                     let _ = tx.send(LiveCoeffUpdate { generation, coeffs });
                 }
@@ -1523,6 +1537,23 @@ fn handle_play(
         .ok()
         .and_then(|m| m.modified().ok());
     let pcm = resolve_pcm_with_caches(state.as_ref(), prewarm_cache, path, &canonical, mtime)?;
+
+    // Track-change cache invalidation. The decoded_cache write a few lines
+    // below would otherwise look "same path" to the next play_master, which
+    // skips its own staleness clear and reuses landing-gain entries that
+    // were measured against the PRIOR track's PCM. Mirror the predicate
+    // play_master uses so an Original-track switch wipes stale gains for
+    // both UpdateChain cache lookups and the worker-drain's pending check.
+    let cache_stale = should_invalidate_landing_cache(
+        state.as_ref().and_then(|s| s.decoded_cache.as_ref()),
+        &canonical,
+        mtime,
+    );
+    if cache_stale {
+        if let Some(s) = state.as_mut() {
+            s.landing_gain_cache.clear();
+        }
+    }
 
     if state.is_none() {
         let (stream, handle) = rodio::OutputStream::try_default()
