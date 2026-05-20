@@ -363,6 +363,47 @@ describe("useTrackMaster integration dispatches", () => {
     });
   });
 
+  it("bakes delivery profile defaults into editable Advanced fields and lets Custom inherit them", async () => {
+    const track = makeTrack("profile-1", "C:/audio/profile.wav");
+    mocks.api.importTracks.mockResolvedValue([track]);
+    const harness = await renderHookHarness();
+
+    await act(async () => {
+      await harness.current().importFiles([track.path]);
+    });
+    await waitFor(() => {
+      expect(harness.current().selectedTrackId).toBe(track.id);
+    });
+
+    await act(async () => {
+      harness.current().setDeliveryProfile("loud-rock");
+    });
+    expect(harness.current().selectedSettings.delivery_profile).toBe("loud-rock");
+    expect(harness.current().selectedSettings.advanced.lufs_offset_db).toBe(-10.5);
+    expect(harness.current().selectedSettings.advanced.ceiling_dbtp).toBe(-1);
+    expect(harness.current().selectedSettings.advanced.bit_depth).toBe(24);
+
+    await act(async () => {
+      harness.current().setDeliveryProfile("cd");
+    });
+    expect(harness.current().selectedSettings.delivery_profile).toBe("cd");
+    expect(harness.current().selectedSettings.advanced.lufs_offset_db).toBe(-14);
+    expect(harness.current().selectedSettings.advanced.ceiling_dbtp).toBe(-1);
+    expect(harness.current().selectedSettings.advanced.bit_depth).toBe(16);
+
+    await act(async () => {
+      harness.current().setDeliveryProfile("custom");
+    });
+    expect(harness.current().selectedSettings.delivery_profile).toBe("custom");
+    expect(harness.current().selectedSettings.advanced.lufs_offset_db).toBe(-14);
+    expect(harness.current().selectedSettings.advanced.ceiling_dbtp).toBe(-1);
+    expect(harness.current().selectedSettings.advanced.bit_depth).toBe(16);
+
+    await act(async () => {
+      harness.root.unmount();
+    });
+  });
+
   it("prewarms the first track when opening a project from disk", async () => {
     const track = makeTrack("project-1", "C:/audio/project.wav");
     mocks.open.mockResolvedValue("C:/projects/test.ams.json");
@@ -655,6 +696,78 @@ describe("useTrackMaster integration dispatches", () => {
       `${outputDir}/album_continuous_1.wav`,
     );
     expect(lastExportDirectory(localStorage, "album")).toBe(outputDir);
+    await act(async () => {
+      harness.root.unmount();
+    });
+  });
+
+  it("renders album-following tracks with album intent rather than stale per-track settings", async () => {
+    const first = makeTrack("album-intent-1", "C:/audio/album intent one.wav");
+    const second = makeTrack("album-intent-2", "C:/audio/album intent two.wav");
+    const plan = makeAlbumPlan([first.id, second.id]);
+    const outputDir = "/Users/daniel/Desktop/Album Masters";
+    mocks.api.importTracks.mockResolvedValue([first, second]);
+    mocks.api.analyzeTracks.mockResolvedValue([
+      makeAnalysis(first.id),
+      makeAnalysis(second.id),
+    ]);
+    mocks.open.mockResolvedValue(outputDir);
+    mocks.api.planAlbum.mockResolvedValue(plan);
+    mocks.api.renderAlbumPlan.mockResolvedValue({
+      album_wav_path: `${outputDir}/album_continuous_1.wav`,
+      manifest_path: `${outputDir}/manifest.json`,
+      tracks: [],
+    });
+    const harness = await renderHookHarness();
+
+    await act(async () => {
+      await harness.current().importFiles([first.path, second.path]);
+    });
+    await waitFor(() => {
+      expect(harness.current().tracks).toHaveLength(2);
+    });
+
+    await act(async () => {
+      harness.current().setMode("album");
+    });
+    await act(async () => {
+      harness.current().setDeliveryProfile("cd");
+    });
+    expect(harness.current().followingAlbumIntent).toBe(true);
+    expect(harness.current().selectedSettings.delivery_profile).toBe("cd");
+
+    await act(async () => {
+      await harness.current().exportAlbumPlan();
+    });
+
+    const renderTracks = mocks.api.renderAlbumPlan.mock.calls.at(-1)?.[1];
+    expect(renderTracks).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          track_id: first.id,
+          settings: expect.objectContaining({
+            delivery_profile: "cd",
+            advanced: expect.objectContaining({
+              lufs_offset_db: -14,
+              ceiling_dbtp: -1,
+              bit_depth: 16,
+            }),
+          }),
+        }),
+        expect.objectContaining({
+          track_id: second.id,
+          settings: expect.objectContaining({
+            delivery_profile: "cd",
+            advanced: expect.objectContaining({
+              lufs_offset_db: -14,
+              ceiling_dbtp: -1,
+              bit_depth: 16,
+            }),
+          }),
+        }),
+      ]),
+    );
+
     await act(async () => {
       harness.root.unmount();
     });

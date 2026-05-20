@@ -6,6 +6,8 @@ import type {
   MasteringSettings,
 } from "../bindings";
 import {
+  effectiveBitDepth,
+  effectiveCeilingDbtp,
   effectiveLoudnessTarget,
   LOUDNESS_PROFILES,
   loudnessTargetDisplay,
@@ -123,6 +125,30 @@ describe("effectiveLoudnessTarget", () => {
     const on: MasteringSettings = { ...off, volume_match: true };
     expect(effectiveLoudnessTarget(off)).toBe(-12);
     expect(effectiveLoudnessTarget(on)).toBe(-12);
+  });
+});
+
+describe("effectiveCeilingDbtp", () => {
+  it("returns the profile ceiling when delivery_profile is non-Custom", () => {
+    const settings = makeSettings("vinyl-premaster", { ceiling_dbtp: -0.5 });
+    expect(effectiveCeilingDbtp(settings)).toBe(-3);
+  });
+
+  it("falls through to advanced.ceiling_dbtp when delivery_profile is Custom", () => {
+    const settings = makeSettings("custom", { ceiling_dbtp: -0.5 });
+    expect(effectiveCeilingDbtp(settings)).toBe(-0.5);
+  });
+});
+
+describe("effectiveBitDepth", () => {
+  it("returns the profile bit depth when delivery_profile is non-Custom", () => {
+    const settings = makeSettings("cd", { bit_depth: 24 });
+    expect(effectiveBitDepth(settings)).toBe(16);
+  });
+
+  it("falls through to advanced.bit_depth when delivery_profile is Custom", () => {
+    const settings = makeSettings("custom", { bit_depth: 32 });
+    expect(effectiveBitDepth(settings)).toBe(32);
   });
 });
 

@@ -125,6 +125,9 @@ describe("MasterOutPanel", () => {
     );
 
     expect(container.textContent).toContain("LIVE");
+    expect(container.textContent).toContain("Momentary");
+    expect(container.textContent).toContain("Since Play");
+    expect(container.textContent).toContain("Live Peak");
     expect(container.textContent).toContain("-9.7");
     expect(container.textContent).toContain("-10.5");
     expect(container.textContent).toContain("-8.5");

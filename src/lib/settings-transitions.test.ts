@@ -10,6 +10,7 @@ import type {
 import {
   applyAdvancedWithProfileFlip,
   applyChainDispatchOverrides,
+  applyDeliveryProfileSelection,
   shouldFlipToCustomOnLoudnessPick,
   SHADOWED_ADVANCED_KEYS,
 } from "./settings-transitions";
@@ -168,6 +169,52 @@ describe("applyAdvancedWithProfileFlip (B7 — auto-flip-to-Custom)", () => {
     expect(next.eq_mid_db).toBe(3.5);
     expect(next.preset).toEqual({ kind: "tape" });
     expect(next.volume_match).toBe(prev.volume_match);
+  });
+});
+
+describe("applyDeliveryProfileSelection", () => {
+  it("writes a named profile's target, ceiling, and bit depth into Advanced", () => {
+    const prev = makeSettings("loud-rock", {
+      lufs_offset_db: -10.5,
+      ceiling_dbtp: -1,
+      bit_depth: 24,
+    });
+
+    const next = applyDeliveryProfileSelection(prev, "cd");
+
+    expect(next.delivery_profile).toBe("cd");
+    expect(next.advanced.lufs_offset_db).toBe(-14);
+    expect(next.advanced.ceiling_dbtp).toBe(-1);
+    expect(next.advanced.bit_depth).toBe(16);
+  });
+
+  it("makes Custom inherit the currently effective profile values", () => {
+    const prev = makeSettings("vinyl-premaster", {
+      lufs_offset_db: -9,
+      ceiling_dbtp: -0.5,
+      bit_depth: 16,
+    });
+
+    const next = applyDeliveryProfileSelection(prev, "custom");
+
+    expect(next.delivery_profile).toBe("custom");
+    expect(next.advanced.lufs_offset_db).toBe(-18);
+    expect(next.advanced.ceiling_dbtp).toBe(-3);
+    expect(next.advanced.bit_depth).toBe(24);
+  });
+
+  it("preserves non-delivery advanced controls when selecting a profile", () => {
+    const prev = makeSettings("streaming-universal", {
+      warmth: 0.4,
+      presence_air: 0.6,
+      compression_density: 0.2,
+    });
+
+    const next = applyDeliveryProfileSelection(prev, "broadcast-us");
+
+    expect(next.advanced.warmth).toBe(0.4);
+    expect(next.advanced.presence_air).toBe(0.6);
+    expect(next.advanced.compression_density).toBe(0.2);
   });
 });
 

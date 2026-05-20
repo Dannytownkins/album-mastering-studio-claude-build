@@ -31,6 +31,8 @@ import {
 } from "./bindings";
 import type { ExportReceipt, PlaybackKindUI } from "./hooks/useTrackMaster";
 import {
+  effectiveBitDepth,
+  effectiveCeilingDbtp,
   LOUDNESS_PROFILES,
   loudnessTargetDisplay,
 } from "./lib/effective-settings";
@@ -1691,7 +1693,7 @@ function AdvancedPanel({
         onOutputGain={onOutputGain}
       />
       <PerBandCompressorCard settings={settings} a={a} onUpdate={update} />
-      <DeliveryFormatCard a={a} update={update} />
+      <DeliveryFormatCard settings={settings} update={update} />
     </>
   );
 }
@@ -1745,6 +1747,8 @@ function AdvancedControlsCard({
   onOutputGain: (db: number) => void;
 }) {
   const a = settings.advanced;
+  const effectiveLufsTarget = loudnessTargetDisplay(settings).current;
+  const effectiveCeiling = effectiveCeilingDbtp(settings);
   return (
     <details className="panel rail-card rail-card-advanced">
       <summary className="panel-head panel-head-summary">
@@ -1764,7 +1768,7 @@ function AdvancedControlsCard({
         />
         <NumberField
           label="LUFS target"
-          value={a.lufs_offset_db}
+          value={effectiveLufsTarget}
           step={0.5}
           min={-24}
           max={-6}
@@ -1773,7 +1777,7 @@ function AdvancedControlsCard({
         />
         <NumberField
           label="Ceiling"
-          value={a.ceiling_dbtp}
+          value={effectiveCeiling}
           step={0.1}
           min={-3}
           max={0}
@@ -1930,15 +1934,17 @@ function PerBandCompressorCard({
 }
 
 function DeliveryFormatCard({
-  a,
+  settings,
   update,
 }: {
-  a: MasteringSettings["advanced"];
+  settings: MasteringSettings;
   update: (
     field: keyof MasteringSettings["advanced"],
     value: number | boolean | null,
   ) => void;
 }) {
+  const a = settings.advanced;
+  const effectiveBitDepthValue = effectiveBitDepth(settings);
   return (
     <section className="panel rail-card rail-card-format">
       <header className="panel-head">
@@ -1947,7 +1953,7 @@ function DeliveryFormatCard({
       <div className="rail-card-body">
         <SelectField
           label="Bit depth"
-          value={a.bit_depth}
+          value={effectiveBitDepthValue}
           options={[
             { value: null, label: "Auto" },
             { value: 16, label: "16-bit" },

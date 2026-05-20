@@ -10,6 +10,7 @@ import {
 import {
   applyAdvancedWithProfileFlip,
   applyChainDispatchOverrides,
+  applyDeliveryProfileSelection,
 } from "../lib/settings-transitions";
 import {
   appendToPast,
@@ -964,7 +965,9 @@ export function useTrackMaster() {
       );
       const renderTracks: import("../lib/api").AlbumTrackRenderInput[] =
         plan.tracks.map((entry) => {
-          const settings = settingsMap[entry.track_id] ?? albumIntent;
+          const settings = overrideAlbum.has(entry.track_id)
+            ? settingsMap[entry.track_id] ?? albumIntent
+            : albumIntent;
           const sourceTrack = tracks.find((t) => t.id === entry.track_id);
           return {
             track_id: entry.track_id,
@@ -995,10 +998,9 @@ export function useTrackMaster() {
   const setDeliveryProfile = useCallback(
     (profile: MasteringSettings["delivery_profile"]) => {
       if (!selectedTrackId) return;
-      updateSettings(selectedTrackId, (prev) => ({
-        ...prev,
-        delivery_profile: profile,
-      }));
+      updateSettings(selectedTrackId, (prev) =>
+        applyDeliveryProfileSelection(prev, profile),
+      );
     },
     [selectedTrackId, updateSettings],
   );

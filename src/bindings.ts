@@ -98,6 +98,28 @@ export const DELIVERY_PROFILE_TARGET_LUFS: Record<DeliveryProfile, number | null
   "custom": null,
 };
 
+export const DELIVERY_PROFILE_CEILING_DBTP: Record<DeliveryProfile, number | null> = {
+  "streaming-universal": -1.0,
+  "apple-music": -1.0,
+  "cd": -1.0,
+  "vinyl-premaster": -3.0,
+  "loud-rock": -1.0,
+  "broadcast-eu": -1.0,
+  "broadcast-us": -2.0,
+  "custom": null,
+};
+
+export const DELIVERY_PROFILE_BIT_DEPTH: Record<DeliveryProfile, number | null> = {
+  "streaming-universal": 24,
+  "apple-music": 24,
+  "cd": 16,
+  "vinyl-premaster": 24,
+  "loud-rock": 24,
+  "broadcast-eu": 24,
+  "broadcast-us": 24,
+  "custom": null,
+};
+
 /// Phase B — Album Master mode types. Mirror of the Rust types in
 /// types.rs; the four AlbumArcKind values map to the same 6-point
 /// curves the Rust runtime cosine-resamples to actual track count.

@@ -1,9 +1,5 @@
-// Phase 12.2 P2 — right-rail master-out / quality panels.
-//
-// Drives all readouts off the user's most-recent analysis (`selectedAnalysis`).
-// In v1 this is source-side data — the rendered master is not re-analyzed
-// here yet. A follow-up slice will trigger a re-analyze after preview /
-// export so the readouts reflect what was actually delivered.
+// Right-rail master-out / quality panels. MasterOutPanel is live transport
+// telemetry only; QualityCheckPanel owns source/export analysis.
 
 import type { ReactNode } from "react";
 import type { AnalysisResult, QualityCheck } from "../bindings";
@@ -156,12 +152,12 @@ export function MasterOutPanel({
           unit="LUFS"
         />
         <Readout
-          label="Integrated"
+          label="Since Play"
           value={integratedDisplay}
           unit="LUFS"
         />
         <Readout
-          label="Peak"
+          label="Live Peak"
           value={peakDisplay}
           unit="dBFS"
         />

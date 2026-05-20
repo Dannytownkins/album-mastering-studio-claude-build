@@ -13,7 +13,11 @@
 // direction. Extracting the rule lets it live alongside its tests.
 
 import type { MasteringSettings } from "../bindings";
-import { DELIVERY_PROFILE_TARGET_LUFS } from "../bindings";
+import {
+  DELIVERY_PROFILE_BIT_DEPTH,
+  DELIVERY_PROFILE_CEILING_DBTP,
+  DELIVERY_PROFILE_TARGET_LUFS,
+} from "../bindings";
 
 /// The four quick-select options on the LoudnessTarget dropdown.
 /// Single source of truth for both the rendered options AND the
@@ -44,6 +48,22 @@ export function effectiveLoudnessTarget(
     return profileTarget;
   }
   return settings.advanced.lufs_offset_db ?? null;
+}
+
+export function effectiveCeilingDbtp(settings: MasteringSettings): number | null {
+  const profileCeiling = DELIVERY_PROFILE_CEILING_DBTP[settings.delivery_profile];
+  if (profileCeiling !== null && profileCeiling !== undefined) {
+    return profileCeiling;
+  }
+  return settings.advanced.ceiling_dbtp ?? null;
+}
+
+export function effectiveBitDepth(settings: MasteringSettings): number | null {
+  const profileBitDepth = DELIVERY_PROFILE_BIT_DEPTH[settings.delivery_profile];
+  if (profileBitDepth !== null && profileBitDepth !== undefined) {
+    return profileBitDepth;
+  }
+  return settings.advanced.bit_depth ?? null;
 }
 
 /// Match a LUFS value to a quick-select dropdown option id. Returns

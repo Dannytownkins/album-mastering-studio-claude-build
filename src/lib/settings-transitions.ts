@@ -18,6 +18,16 @@ import type {
   MasteringSettings,
   TrackId,
 } from "../bindings";
+import {
+  DELIVERY_PROFILE_BIT_DEPTH,
+  DELIVERY_PROFILE_CEILING_DBTP,
+  DELIVERY_PROFILE_TARGET_LUFS,
+} from "../bindings";
+import {
+  effectiveBitDepth,
+  effectiveCeilingDbtp,
+  effectiveLoudnessTarget,
+} from "./effective-settings";
 
 /// Keys on `AdvancedSettings` that a non-Custom `DeliveryProfile`
 /// would shadow at render time (see `MasteringSettings::effective_*`
@@ -69,6 +79,39 @@ export function applyAdvancedWithProfileFlip(
     ...prev,
     advanced,
     delivery_profile: nextProfile,
+  };
+}
+
+/// Delivery profile picker write rule. Selecting a named profile writes
+/// that profile's visible delivery defaults into the editable Advanced
+/// fields as well as changing the enum. Selecting Custom inherits the
+/// currently effective values, so Custom means "keep what I was seeing
+/// and let me override it" instead of falling back to stale hidden state.
+export function applyDeliveryProfileSelection(
+  prev: MasteringSettings,
+  profile: DeliveryProfile,
+): MasteringSettings {
+  if (profile === "custom") {
+    return {
+      ...prev,
+      delivery_profile: "custom",
+      advanced: {
+        ...prev.advanced,
+        lufs_offset_db: effectiveLoudnessTarget(prev),
+        ceiling_dbtp: effectiveCeilingDbtp(prev),
+        bit_depth: effectiveBitDepth(prev),
+      },
+    };
+  }
+  return {
+    ...prev,
+    delivery_profile: profile,
+    advanced: {
+      ...prev.advanced,
+      lufs_offset_db: DELIVERY_PROFILE_TARGET_LUFS[profile],
+      ceiling_dbtp: DELIVERY_PROFILE_CEILING_DBTP[profile],
+      bit_depth: DELIVERY_PROFILE_BIT_DEPTH[profile],
+    },
   };
 }
 
