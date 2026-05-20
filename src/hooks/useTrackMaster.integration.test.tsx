@@ -462,6 +462,55 @@ describe("useTrackMaster integration dispatches", () => {
     });
   });
 
+  it("keeps live settings edits on the fast updateChain path even when LUFS preview is enabled", async () => {
+    const track = makeTrack("live-fast-1", "C:/audio/live fast.wav");
+    mocks.api.importTracks.mockResolvedValue([track]);
+    const harness = await renderHookHarness();
+
+    await act(async () => {
+      await harness.current().importFiles([track.path]);
+    });
+    await waitFor(() => {
+      expect(harness.current().selectedTrackId).toBe(track.id);
+    });
+
+    await act(async () => {
+      await harness.current().setPlaybackKind("master");
+    });
+    await act(async () => {
+      await harness.current().togglePlay();
+    });
+    await waitFor(() => {
+      expect(mocks.api.playMaster).toHaveBeenCalled();
+    });
+
+    mocks.api.updateChain.mockClear();
+    await act(async () => {
+      harness.current().setExportLufsPreview(true);
+    });
+    await waitFor(() => {
+      expect(mocks.api.updateChain).toHaveBeenCalledWith(
+        expect.objectContaining({ intensity: 0.5 }),
+        true,
+      );
+    });
+
+    mocks.api.updateChain.mockClear();
+    await act(async () => {
+      harness.current().setIntensity(0.72);
+    });
+    await waitFor(() => {
+      expect(mocks.api.updateChain).toHaveBeenCalledWith(
+        expect.objectContaining({ intensity: 0.72 }),
+        false,
+      );
+    });
+
+    await act(async () => {
+      harness.root.unmount();
+    });
+  });
+
   it("asks where to save a track master and passes that path to render", async () => {
     const track = makeTrack("export-1", "C:/audio/export source.wav");
     mocks.api.importTracks.mockResolvedValue([track]);
