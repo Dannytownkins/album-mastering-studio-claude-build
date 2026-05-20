@@ -1,6 +1,6 @@
 # Handoff — YES Master — 2026-05-19 Evening
 
-**Status:** Slice merged to master at `b424b36` via fast-forward on 2026-05-19. Current pushed `master` tip is `871d3ae` after post-merge CSS polish and handoff corrections. Safety tag `pre-eq-7-band-2026-05-19` is retained and pushed to origin as rollback anchor.
+**Status:** Slice merged to master at `b424b36` via fast-forward on 2026-05-19. Current pushed `master` tip is `f516ee4` or newer after post-merge CSS polish, Mac SHA closeout, realtime-control recovery, and Tone Shape knob color alignment. Safety tag `pre-eq-7-band-2026-05-19` is retained and pushed to origin as rollback anchor.
 
 > **Current snapshot.** The 7-band EQ expansion landed across four commits on `codex/eq-7-band-expansion`, on top of master tip `ce11a83`. Safety tag `pre-eq-7-band-2026-05-19` is set at the pre-slice master. The slice expands the user-facing EQ from 4 bands to 7: knob-bound primary bands (Low / Mid / High at 200 / 1500 / 6000 Hz) keep their two control surfaces; new drag-only secondary bands (Sub / High-Mid / Sparkle at 80 / 3500 / 12000 Hz) join the existing Low-Mid (400 Hz) on the Visual EQ. All 8 presets default new band baselines to 0.0 dB; listening-batch tune-up is deferred. Per-preset SHA snapshots establish a byte-identity gate before any DSP change went in, and the gate held cleanly through all four commits. Post-merge CSS polish at `4aba442` removed the duplicate Album Master album-order row, removed desktop vertical scrolling pressure in Album Master, and reduced primary Visual EQ node/halo thickness.
 >
@@ -9,6 +9,8 @@
 > **Slice-final verification (`b424b36`, Windows):** `npm test` 13 files / 81 tests pass · `npm run build` clean · `cargo test --lib` 174/174 · `cargo test` full suite green (lib + integration + SHA snapshots + doc-tests) · `AMS_RUN_REAL_FIXTURE=1 cargo test` full suite green including real-fixture render + metering. All five gates locked in via `docs/progress.md`'s slice-complete entry. **All of this work — implementation, verification, merge — happened on Dan's Windows machine.**
 >
 > **What's open / next.** Slice landed on master via fast-forward; `codex/eq-7-band-expansion` is retained until Dan deletes it. The CSS/AlbumPanel tweaks are committed on master at `4aba442`; there is no local stash to recover and the worktree is expected clean after pull. Mac SHA verification is now closed by the follow-up recorded in `docs/progress.md`: macOS keeps its own preset SHA snapshots beside the Windows ones. Per-preset listening tune-up for Sub/High-Mid/Sparkle remains deferred until Dan has studio monitors. Several non-listening items are captured below (see Deferred Follow-ups).
+
+> **2026-05-20 realtime-control addendum.** Master has moved past this original handoff after Dan reported fast-knob stutter, delayed live controls, LUFS/meter confusion, delivery-profile wiring issues, and a Tone Shape/Visual EQ color mismatch. The recovery batch now on `master` includes: `04f7cfa` delivery profile + album intent wiring; `477696d` / `a4d205c` / `2259f9f` live LUFS preview/control-path fixes; `3b97f5c` output-thread crossfade promotion so coefficient sweeps cannot keep the source in a permanent 2x-DSP crossfade; `457e244` plus `cf98360` single-in-flight LUFS worker, track epoch safety, and stale cache/pending cleanup; `e823f23` rAF-gated latest-wins frontend `updateChain`; `53d8c74` live-update diagnostic counters; and `f516ee4` knob-tone alignment (Low cyan -> 200 Hz, Mid purple -> 1.5 kHz, High blue -> 6 kHz). Next pickup should retest aggressive live sweeps by ear before assuming realtime behavior is closed.
 
 ---
 
@@ -43,13 +45,14 @@ master (post-merge):
   ce11a83  Revise EQ 7-band plan v1.2; ADR 0002 addendum on plan claims
 ```
 
-`master` and `origin/master` are expected to match at `871d3ae` or newer before the Mac pickup begins.
+`master` and `origin/master` are expected to match at `f516ee4` or newer before the next pickup begins.
 
 **Post-merge state:**
 - Fast-forward merge of `codex/eq-7-band-expansion` → `master` landed 5 commits (`3042708` through `b424b36`) on `2026-05-19`.
 - Safety tag `pre-eq-7-band-2026-05-19` retained; delete only after a confidence window of stable use.
 - Branch `codex/eq-7-band-expansion` retained; can be deleted whenever convenient.
 - CSS/AlbumPanel tweaks committed post-merge at `4aba442`; no local stash is required for the Mac pickup.
+- Realtime-control recovery and knob-tone alignment committed post-Mac-pickup through `f516ee4`; no local stash is required for the next pickup.
 
 ---
 
@@ -145,13 +148,14 @@ In rough order of natural sequencing:
 - Tone Shape stays at 3 knobs (Low/Mid/High). Adding more knobs for the new bands is a product change requiring a fresh design pass, not a 7-band-expansion follow-up.
 - The byte-identity gate (per-preset SHA snapshots in `dsp.rs` `mod preset_byte_identity`) is the reference contract for "the chain's audible behavior is unchanged." Any future DSP slice should either preserve those SHAs OR update them deliberately alongside an accepted byte-identity-changing change. Don't update them silently to make tests pass.
 - The `pre-eq-7-band-2026-05-19` safety tag **was pushed to origin** at session-close (points at `450a14f`, the master tip before B.0 landed). Available from any clone via `git fetch --tags`. Delete only after a confidence window of stable use.
+- Realtime recovery commits after `5913ea7` were code-reviewed/spot-checked during the 2026-05-20 Windows session, but this addendum did not rerun the full verification suite. Next machine should run `npm test`, `npm run build`, and `cargo test --lib` before using the state as a fresh baseline; run the real-fixture slow lane only if the private fixture directory is intentionally present.
 
 ## Cross-Machine Handoff — Windows → Mac
 
 This whole session ran on Dan's Windows machine. Dan is switching back to Mac next. Sequencing items that matter at the machine switch:
 
 - **In-flight CSS tweaks were committed to master** at `4aba442 css tweaks` (5 files: `src/App.css`, `src/App.layout-css.test.ts`, `src/App.tsx`, `src/components/AlbumPanel.tsx`, `src/components/VisualEqPanel.tsx`). Mac will pick them up on `git pull --ff-only`.
-- **First action on Mac:** `git pull --ff-only && git fetch --tags` on master. Master tip should be `871d3ae` or newer, and `pre-eq-7-band-2026-05-19` should resolve to `450a14f`.
+- **First action on Mac:** `git pull --ff-only && git fetch --tags` on master. Master tip should be `f516ee4` or newer, and `pre-eq-7-band-2026-05-19` should resolve to `450a14f`.
 - **Cross-platform SHA verification closed.** The Mac pickup run added macOS-specific constants for the eight named preset snapshots; `cargo test preset_byte_identity` now passes 10/10 on Mac.
 - **Safety tag already pushed to origin** at session-close — Mac will see it after `git fetch --tags`. No action needed.
 - **Private fixtures do not move through git.** The normal fast gates and `cargo test preset_byte_identity` do not need `private-audio-fixtures/`. Run `AMS_RUN_REAL_FIXTURE=1 cargo test` on the Mac only if Dan intentionally brings the private fixture directory to that machine.
