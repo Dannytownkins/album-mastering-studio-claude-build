@@ -75,6 +75,7 @@ pub fn run() {
             audio::stop_playback,
             audio::seek_playback,
             audio::set_loop_region,
+            audio::get_diag_counters,
             exports::run_export_checks,
             exports::open_output,
             project::save_project,

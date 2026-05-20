@@ -1,9 +1,87 @@
 use crate::types::*;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicI32, AtomicU32, Ordering};
+use std::sync::atomic::{AtomicI32, AtomicU32, AtomicU64, Ordering};
 use std::sync::mpsc::{self, RecvTimeoutError, Sender};
 use std::sync::{Arc, Mutex, RwLock};
 use std::time::Duration;
+
+// ============================================================================
+// Diagnostic counters — temporary instrumentation for the realtime-stutter
+// remediation work (Fix A / B / C, 2026-05-20). Process-wide statics rather
+// than per-player fields to keep the wiring touch-free; there's only ever
+// one AudioPlayer instance. Frontend reads via `get_diag_counters`.
+//
+// Remove after the metrics have been validated on live material and the
+// project is back to "no observable realtime issues" — track this with the
+// next handoff cadence.
+// ============================================================================
+
+/// Snapshot returned by `get_diag_counters`. Plain u64 values (no atomics)
+/// so the Tauri serializer is happy. All counts are cumulative since
+/// process start.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct DiagCountersSnapshot {
+    /// Times `UpdateChain` was dispatched on the audio command thread
+    /// (post-coalescing — coalesced-away intermediate updates do NOT
+    /// count). Compare against the TS-side updateChain attempts to see
+    /// how aggressively the rAF gate is collapsing.
+    pub update_chain_dispatched: u64,
+    /// Times a `lufs-preview-landing` worker thread was spawned. Bounded
+    /// by the single-in-flight gate plus the latest-pending follow-up
+    /// drain — should track the number of distinct settings the user
+    /// landed on with Preview LUFS enabled, NOT the number of cache
+    /// misses.
+    pub lufs_workers_spawned: u64,
+    /// Times a worker returned and its `PreviewLandingReady` was applied
+    /// (epoch + generation matched the current live state).
+    pub lufs_workers_applied: u64,
+    /// Times a worker returned and was cached but NOT applied to live
+    /// output (epoch matched, generation had moved on). These are the
+    /// "wasted but recovered" measurements — the cache catches them so
+    /// a wiggle-back to the prior knob position is still a cache hit.
+    pub lufs_workers_cached_only: u64,
+    /// Times a worker's result was rejected wholesale because the
+    /// track had changed since spawn. These would have poisoned the
+    /// new track's landing-gain cache pre-Fix-C.
+    pub lufs_workers_rejected_stale_epoch: u64,
+    /// Times an `UpdateChain` arrived with Preview LUFS on + cache miss
+    /// while a worker was already in flight — the latest-pending slot
+    /// captured it for the drain on completion.
+    pub lufs_workers_queued: u64,
+    /// `MasteringSource` mid-fade coefficient promotions: a coefficient
+    /// check fired, a new update arrived, AND a prior crossfade was
+    /// already in progress. Pre-Fix-A this counter would stay at 0 (the
+    /// crossfade simply got re-armed indefinitely); post-Fix-A it
+    /// rises during sweeps as each in-progress fade closes out before
+    /// the next opens.
+    pub mid_fade_promotions: u64,
+}
+
+pub(crate) static UPDATE_CHAIN_DISPATCHED: AtomicU64 = AtomicU64::new(0);
+pub(crate) static LUFS_WORKERS_SPAWNED: AtomicU64 = AtomicU64::new(0);
+pub(crate) static LUFS_WORKERS_APPLIED: AtomicU64 = AtomicU64::new(0);
+pub(crate) static LUFS_WORKERS_CACHED_ONLY: AtomicU64 = AtomicU64::new(0);
+pub(crate) static LUFS_WORKERS_REJECTED_STALE_EPOCH: AtomicU64 = AtomicU64::new(0);
+pub(crate) static LUFS_WORKERS_QUEUED: AtomicU64 = AtomicU64::new(0);
+pub(crate) static MID_FADE_PROMOTIONS: AtomicU64 = AtomicU64::new(0);
+
+fn snapshot_diag_counters() -> DiagCountersSnapshot {
+    DiagCountersSnapshot {
+        update_chain_dispatched: UPDATE_CHAIN_DISPATCHED.load(Ordering::Relaxed),
+        lufs_workers_spawned: LUFS_WORKERS_SPAWNED.load(Ordering::Relaxed),
+        lufs_workers_applied: LUFS_WORKERS_APPLIED.load(Ordering::Relaxed),
+        lufs_workers_cached_only: LUFS_WORKERS_CACHED_ONLY.load(Ordering::Relaxed),
+        lufs_workers_rejected_stale_epoch: LUFS_WORKERS_REJECTED_STALE_EPOCH
+            .load(Ordering::Relaxed),
+        lufs_workers_queued: LUFS_WORKERS_QUEUED.load(Ordering::Relaxed),
+        mid_fade_promotions: MID_FADE_PROMOTIONS.load(Ordering::Relaxed),
+    }
+}
+
+#[tauri::command]
+pub async fn get_diag_counters() -> CommandResult<DiagCountersSnapshot> {
+    Ok(snapshot_diag_counters())
+}
 
 /// Sentinel dBFS value reported when the peak window saw no signal. JSON can't
 /// round-trip -inf, so we use a finite "well below audible" floor instead.
@@ -910,7 +988,7 @@ fn try_spawn_lufs_preview_worker(
         channels,
     );
     let command_tx = command_tx.clone();
-    std::thread::Builder::new()
+    let spawn_result = std::thread::Builder::new()
         .name("lufs-preview-landing".to_string())
         .spawn(move || {
             let gain = export_landing_gain_lin_for_preview(
@@ -926,8 +1004,13 @@ fn try_spawn_lufs_preview_worker(
                 settings,
                 gain,
             });
-        })
-        .is_ok()
+        });
+    if spawn_result.is_ok() {
+        LUFS_WORKERS_SPAWNED.fetch_add(1, Ordering::Relaxed);
+        true
+    } else {
+        false
+    }
 }
 
 /// Cache-less variant of the audio thread's UpdateChain coefficient
@@ -1136,6 +1219,7 @@ fn process_audio_command(
             settings,
             preview_lufs_landing,
         } => {
+            UPDATE_CHAIN_DISPATCHED.fetch_add(1, Ordering::Relaxed);
             if let Some(s) = state.as_mut() {
                 let sample_rate = s.live_sample_rate;
                 let generation = s.live_coeff_generation.wrapping_add(1);
@@ -1158,6 +1242,7 @@ fn process_audio_command(
                             // one OS thread regardless of UpdateChain rate.
                             coeffs.export_landing_gain_lin = s.live_landing_gain_lin;
                             if s.lufs_worker_in_flight {
+                                LUFS_WORKERS_QUEUED.fetch_add(1, Ordering::Relaxed);
                                 s.lufs_worker_pending = Some((settings.clone(), generation));
                             } else if try_spawn_lufs_preview_worker(
                                 s.decoded_cache.as_ref(),
@@ -1193,6 +1278,7 @@ fn process_audio_command(
                     // touching either here would either poison the new
                     // track's cache or wrongly free the slot the current-
                     // epoch worker still holds. Drop silently.
+                    LUFS_WORKERS_REJECTED_STALE_EPOCH.fetch_add(1, Ordering::Relaxed);
                 } else {
                     // Always cache the completed measurement, even if a
                     // newer UpdateChain has already moved generation past
@@ -1205,6 +1291,7 @@ fn process_audio_command(
                         // landing scalar and emit a corrective LiveCoeffUpdate
                         // so the audio output thread crossfades to the
                         // accurate gain.
+                        LUFS_WORKERS_APPLIED.fetch_add(1, Ordering::Relaxed);
                         s.live_landing_gain_lin = gain;
                         if let Some(tx) = s.live_coeffs_tx.as_ref() {
                             let mut coeffs = crate::dsp::ChainCoeffs::from_settings(
@@ -1214,6 +1301,8 @@ fn process_audio_command(
                             coeffs.export_landing_gain_lin = gain;
                             let _ = tx.send(LiveCoeffUpdate { generation, coeffs });
                         }
+                    } else {
+                        LUFS_WORKERS_CACHED_ONLY.fetch_add(1, Ordering::Relaxed);
                     }
                     // Worker is no longer running. Drain any pending
                     // measurement and kick off the follow-up if it isn't

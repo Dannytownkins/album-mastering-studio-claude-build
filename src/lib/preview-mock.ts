@@ -204,6 +204,17 @@ export async function mockInvoke<T>(
     case "delete_user_preset":
       return null as unknown as T;
 
+    case "get_diag_counters":
+      return {
+        update_chain_dispatched: 0,
+        lufs_workers_spawned: 0,
+        lufs_workers_applied: 0,
+        lufs_workers_cached_only: 0,
+        lufs_workers_rejected_stale_epoch: 0,
+        lufs_workers_queued: 0,
+        mid_fade_promotions: 0,
+      } as unknown as T;
+
     case "list_user_presets":
       return [] as unknown as T;
 

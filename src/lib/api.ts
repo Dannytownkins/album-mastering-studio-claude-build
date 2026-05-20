@@ -38,6 +38,18 @@ export interface AlbumTrackRenderInput {
   settings: MasteringSettings;
 }
 
+// Temporary diagnostic snapshot — mirrors `audio::DiagCountersSnapshot`.
+// See `audio::get_diag_counters` for field semantics.
+export interface DiagCountersSnapshot {
+  update_chain_dispatched: number;
+  lufs_workers_spawned: number;
+  lufs_workers_applied: number;
+  lufs_workers_cached_only: number;
+  lufs_workers_rejected_stale_epoch: number;
+  lufs_workers_queued: number;
+  mid_fade_promotions: number;
+}
+
 // Tauri 2 auto-converts camelCase invoke arg keys to snake_case Rust parameter
 // names. So `trackId` here lands as `track_id` in the Rust handler signature.
 // Sending snake_case keys directly does NOT work — Tauri's command arg parser
@@ -167,6 +179,11 @@ export const api = {
     invoke<null>("seek_playback", { positionSec }),
   setLoopRegion: (region: LoopRegion | null) =>
     invoke<null>("set_loop_region", { region }),
+
+  // Temporary instrumentation for the realtime-stutter remediation
+  // (Fix A / B / C). Returns cumulative counters since process start;
+  // remove after listening verification is complete.
+  getDiagCounters: () => invoke<DiagCountersSnapshot>("get_diag_counters"),
 
   // Phase B — album-mode planning + render.
   planAlbum: (

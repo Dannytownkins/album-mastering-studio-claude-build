@@ -22,6 +22,12 @@ use std::time::Duration;
 
 use crate::spectrum::SpectrumRing;
 
+// Temporary instrumentation for the realtime-stutter remediation work.
+// See `audio::MID_FADE_PROMOTIONS` for the snapshot exposure and
+// removal cadence — the counter lives in audio.rs to colocate with the
+// `DiagCountersSnapshot`; we import it here so the per-frame increment
+// path stays local to `MasteringSource::next`.
+
 pub(crate) struct LiveCoeffUpdate {
     pub(crate) generation: u64,
     pub(crate) coeffs: crate::dsp::ChainCoeffs,
@@ -310,6 +316,7 @@ impl Iterator for MasteringSource {
                     // the audible chain tracking the latest settings.
                     if let Some(prev_pending) = self.pending_chain.take() {
                         self.chain = prev_pending;
+                        crate::audio::MID_FADE_PROMOTIONS.fetch_add(1, Ordering::Relaxed);
                     }
                     self.pending_chain =
                         Some(crate::dsp::MasteringChain::with_coeffs_inheriting_state(
